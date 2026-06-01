@@ -1,0 +1,15 @@
+{
+  "url": "https://example.test/status",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "actionHint": "read_status",
+  "snapshot": {
+    "role": "region",
+    "name": "Main",
+    "children": [
+      { "role": "heading", "name": "Service Status" },
+      { "role": "status", "name": "All systems operational" },
+      { "role": "button", "name": "Refresh" },
+      { "role": "link", "name": "History" }
+    ]
+  }
+}

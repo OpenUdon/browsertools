@@ -1,0 +1,10 @@
+{
+  "url": "https://example.test/catalogue",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "actionHint": "list_items",
+  "markdown": "## Catalogue\n\n- Item A\n- Item B\n",
+  "extracted": [
+    { "key": "item_name", "type": "string", "selector": ".item-title", "value": "Item A" },
+    { "key": "item_price", "type": "number", "selector": ".item-price", "value": "4.99" }
+  ]
+}

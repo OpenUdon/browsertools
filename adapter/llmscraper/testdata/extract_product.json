@@ -1,0 +1,18 @@
+{
+  "url": "https://example.test/products/1",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "actionHint": "get_product",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "title": { "type": "string" },
+      "price": { "type": "number" },
+      "inStock": { "type": "boolean" }
+    }
+  },
+  "extracted": {
+    "title": "Example Widget",
+    "price": 9.99,
+    "inStock": true
+  }
+}

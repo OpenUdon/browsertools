@@ -1,0 +1,16 @@
+{
+  "url": "https://example.test/article/42",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "actionHint": "read_article",
+  "scrapeId": "fc-abc123",
+  "markdown": "## Article Title\n\nContent goes here.",
+  "extract": {
+    "title": "Article Title",
+    "author": "Jane Smith",
+    "wordCount": 250
+  },
+  "links": [
+    "https://example.test/article/43",
+    "https://example.test/article/44"
+  ]
+}
