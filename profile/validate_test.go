@@ -90,8 +90,8 @@ func TestJSONYAMLRoundTrip(t *testing.T) {
 		t.Fatalf("load yaml: %v", err)
 	}
 
-	if fromJSON.Profile != fromYAML.Profile {
-		t.Errorf("profile mismatch: json=%q yaml=%q", fromJSON.Profile, fromYAML.Profile)
+	if fromJSON.Schema != fromYAML.Schema {
+		t.Errorf("profile mismatch: json=%q yaml=%q", fromJSON.Schema, fromYAML.Schema)
 	}
 	if fromJSON.Info.Title != fromYAML.Info.Title {
 		t.Errorf("title mismatch: json=%q yaml=%q", fromJSON.Info.Title, fromYAML.Info.Title)

@@ -23,7 +23,9 @@ import (
 // required top-level fields for convenient access; action internals are left
 // loosely typed until the draft builder needs them.
 type Profile struct {
-	Profile         string            `json:"profile" yaml:"profile"`
+	// Schema holds the profile identifier, always "uws.browser.1.5".
+	// The JSON/YAML key is "profile" (matching the wire format).
+	Schema          string            `json:"profile" yaml:"profile"`
 	Info            Info              `json:"info" yaml:"info"`
 	ObservationKind string            `json:"observationKind" yaml:"observationKind"`
 	Evidence        Evidence          `json:"evidence" yaml:"evidence"`
@@ -42,7 +44,15 @@ type Info struct {
 	LoginStateRequired bool   `json:"loginStateRequired,omitempty" yaml:"loginStateRequired,omitempty"`
 }
 
-// Evidence records how and when the profile was learned.
+// Evidence records how and when the profile was learned from UI observation.
+//
+// LearnedAt is the timestamp when the evidence collection session concluded and
+// the profile was generated. It is a profile-level timestamp recorded once.
+//
+// Contrast with evidence.Record.ObservedAt, which is a per-observation timestamp
+// recorded by each adapter at the moment a specific UI state was captured. The
+// two fields serve different clocks: LearnedAt marks the profile generation event;
+// ObservedAt marks individual UI observations that fed into the draft.
 type Evidence struct {
 	LearnedAt string `json:"learnedAt" yaml:"learnedAt"`
 	Source    string `json:"source,omitempty" yaml:"source,omitempty"`
