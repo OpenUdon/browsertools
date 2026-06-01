@@ -1,0 +1,48 @@
+{
+  "overlayVersion": "1",
+  "overlayId": "example-status-overlay-001",
+  "wrapperOpenAPI": "./wrapper.openapi.yaml",
+  "browserProfile": "./browser-profile.yaml",
+  "reviewBundle": {
+    "profile": {
+      "profile": "uws.browser.1.5",
+      "info": { "title": "Example Status Service", "origin": "https://status.example.test" },
+      "observationKind": "accessibility_snapshot",
+      "evidence": { "learnedAt": "2026-01-01T00:00:00Z", "source": "synthetic_fixture" },
+      "confidence": "medium",
+      "expiresAfter": "P30D",
+      "verification": { "lastVerifiedAt": "2026-01-01T00:00:00Z", "successfulRuns": 1 },
+      "actions": {
+        "get_status": {
+          "sequence": [{ "navigate": "/status" }],
+          "sideEffects": ["read_only"],
+          "confirmationPolicy": { "required": false }
+        }
+      }
+    },
+    "validation": { "valid": true },
+    "evidence": {
+      "origins": ["https://status.example.test"],
+      "observationKind": "accessibility_snapshot",
+      "tools": ["synthetic"],
+      "recordCount": 1
+    },
+    "gaps": [],
+    "confidenceRationale": "confidence=medium; evidence_records=1",
+    "expiryNote": "profile expires after P30D from last verification; revalidate before use in production",
+    "origins": { "origins": ["https://status.example.test"] },
+    "sideEffects": {
+      "hasWriteActions": false,
+      "actionsRequiringConfirmation": [],
+      "actionsWithSideEffects": { "get_status": ["read_only"] }
+    }
+  },
+  "operationMappings": {
+    "getStatus": {
+      "openAPIOperationId": "getStatus",
+      "profileActionName": "get_status",
+      "confidenceNote": "direct path mapping; stable as of 2026-01"
+    }
+  },
+  "lifecycle": "reviewed"
+}

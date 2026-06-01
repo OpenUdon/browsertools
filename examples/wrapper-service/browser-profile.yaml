@@ -1,0 +1,37 @@
+profile: uws.browser.1.5
+info:
+  title: Example Status Service
+  origin: https://status.example.test
+  loginStateRequired: false
+
+observationKind: accessibility_snapshot
+
+evidence:
+  learnedAt: "2026-01-01T00:00:00Z"
+  source: synthetic_fixture
+
+confidence: medium
+expiresAfter: P30D
+
+verification:
+  lastVerifiedAt: "2026-01-01T00:00:00Z"
+  successfulRuns: 1
+
+actions:
+  get_status:
+    description: Reads the current service status and incident list.
+    sequence:
+      - navigate: "/status"
+      - wait_for: { navigation: load }
+    outputs:
+      overall_status:
+        type: string
+        source: a11y
+        locator: { role: status, name: "Overall" }
+      incident_count:
+        type: integer
+        source: microdata
+        property: activeIncidents
+    sideEffects: [read_only]
+    confirmationPolicy:
+      required: false

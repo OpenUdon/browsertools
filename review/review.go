@@ -194,6 +194,9 @@ func buildOriginSummary(draft map[string]any) OriginSummary {
 		}
 	}
 	sort.Strings(origins)
+	if origins == nil {
+		origins = []string{}
+	}
 	return OriginSummary{Origins: origins}
 }
 

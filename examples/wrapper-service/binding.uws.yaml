@@ -1,0 +1,45 @@
+uws: "1.5.0"
+info:
+  title: Status Wrapper Service — dual binding example
+  summary: >
+    Demonstrates two equivalent binding options for a browser-backed wrapper
+    service: (A) bind directly to the browser-profile action; (B) bind to the
+    wrapper service's OpenAPI operation. Both are valid; choose based on whether
+    the wrapper HTTP service is stable and available.
+  version: "1.0.0"
+
+sourceDescriptions:
+  - name: status-profile
+    type: browser-profile
+    url: ./browser-profile.yaml
+
+  - name: status-api
+    type: openapi
+    url: ./wrapper.openapi.yaml
+
+operations:
+  # Option A: direct browser-profile binding
+  - operationId: get_status_browser
+    sourceDescription: status-profile
+    sourceOperationId: get_status
+    outputs:
+      overallStatus: "$response.body.overall_status"
+      incidentCount: "$response.body.incident_count"
+
+  # Option B: wrapper HTTP API binding
+  - operationId: get_status_api
+    sourceDescription: status-api
+    sourceOperationId: getStatus
+    outputs:
+      overallStatus: "$response.body.overallStatus"
+      incidentCount: "$response.body.incidentCount"
+
+workflows:
+  - workflowId: check_status
+    type: sequence
+    steps:
+      # Use whichever source is available; prefer the API when stable.
+      - stepId: fetch
+        operationRef: get_status_api   # swap to get_status_browser if API unavailable
+    outputs:
+      status: "$steps.fetch.outputs.overallStatus"

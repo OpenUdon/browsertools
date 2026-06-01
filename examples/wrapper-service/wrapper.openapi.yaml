@@ -1,0 +1,29 @@
+openapi: "3.1.0"
+info:
+  title: Example Status Wrapper Service
+  version: "1.0.0"
+  description: >
+    Stable HTTP wrapper around the example.test status page.
+    This OpenAPI document describes the wrapper service's HTTP API.
+    The browser interactions behind this API are described in
+    browser-profile.yaml and linked via overlay.json.
+
+paths:
+  /status:
+    get:
+      operationId: getStatus
+      summary: Get current service status
+      responses:
+        "200":
+          description: Current service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  overallStatus:
+                    type: string
+                    enum: [operational, degraded, outage]
+                  incidentCount:
+                    type: integer
+                    minimum: 0
