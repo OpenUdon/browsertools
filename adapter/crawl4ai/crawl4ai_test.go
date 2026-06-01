@@ -91,3 +91,39 @@ func TestImportMissingOriginError(t *testing.T) {
 		t.Error("expected error for missing origin, got nil")
 	}
 }
+
+func TestImportMissingObservedAtError(t *testing.T) {
+	a := &Adapter{}
+	raw := []byte(`{"url":"https://example.test/catalogue"}`)
+	_, err := a.Import(raw, adapter.Options{
+		Origin:          "https://example.test",
+		RedactionStatus: evidence.RedactionNotRequired,
+	})
+	if err == nil {
+		t.Fatal("expected error for missing observedAt, got nil")
+	}
+}
+
+func TestImportFixtureOriginSafety(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "missing url", raw: `{"observedAt":"2026-01-01T00:00:00Z"}`},
+		{name: "malformed url", raw: `{"url":"://bad","observedAt":"2026-01-01T00:00:00Z"}`},
+		{name: "unsupported scheme", raw: `{"url":"ftp://example.test/catalogue","observedAt":"2026-01-01T00:00:00Z"}`},
+		{name: "origin mismatch", raw: `{"url":"https://other.test/catalogue","observedAt":"2026-01-01T00:00:00Z"}`},
+	}
+	a := &Adapter{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := a.Import([]byte(tt.raw), adapter.Options{
+				Origin:          "https://example.test",
+				RedactionStatus: evidence.RedactionNotRequired,
+			})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}

@@ -26,6 +26,7 @@ func New() Sidecar {
 		OperationMappings: map[string]OperationMapping{},
 	}
 }
+
 type Lifecycle string
 
 const (

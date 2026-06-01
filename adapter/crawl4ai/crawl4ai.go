@@ -66,10 +66,13 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	if err := json.Unmarshal(raw, &fix); err != nil {
 		return nil, fmt.Errorf("crawl4ai: parse fixture: %w", err)
 	}
+	if err := adapter.ValidateFixtureOrigin("crawl4ai", fix.URL, opts.Origin); err != nil {
+		return nil, err
+	}
 
 	observedAt := fix.ObservedAt
 	if observedAt == "" {
-		observedAt = time.Now().UTC().Format(time.RFC3339)
+		return nil, fmt.Errorf("crawl4ai: observedAt is required")
 	} else {
 		t, err := time.Parse(time.RFC3339, observedAt)
 		if err != nil {

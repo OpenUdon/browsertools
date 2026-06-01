@@ -7,14 +7,14 @@ info:
 observationKind: accessibility_snapshot
 
 evidence:
-  learnedAt: "2026-01-01T00:00:00Z"
+  learnedAt: "2026-06-01T00:00:00Z"
   source: synthetic_fixture
 
 confidence: medium
 expiresAfter: P30D
 
 verification:
-  lastVerifiedAt: "2026-01-01T00:00:00Z"
+  lastVerifiedAt: "2026-06-01T00:00:00Z"
   successfulRuns: 1
 
 actions:

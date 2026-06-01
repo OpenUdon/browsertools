@@ -174,6 +174,8 @@ func buildAction(hint string, records []evidence.Record, opts Options) (map[stri
 	confirmationPolicy := map[string]any{"required": false}
 
 	action := map[string]any{
+		"description":        fmt.Sprintf("Draft action generated from evidence for %q.", hint),
+		"parameters":         map[string]any{"type": "object", "properties": map[string]any{}},
 		"sequence":           sequence,
 		"sideEffects":        sideEffects,
 		"confirmationPolicy": confirmationPolicy,
@@ -188,35 +190,43 @@ func buildAction(hint string, records []evidence.Record, opts Options) (map[stri
 // Returns nil if there are no locators (the action will rely on navigate only).
 // Returns an error if there are multiple ambiguous locators and no ReviewDecision.
 func resolveLocator(hint string, records []evidence.Record, decisions map[string]ReviewDecision) (*evidence.CandidateLocator, error) {
-	// Collect all unique locators across the group.
-	seen := map[string]evidence.CandidateLocator{}
-	var ordered []string
+	// Collect all locators across the group. Duplicate role/name candidates are
+	// kept because adapter ambiguity notes are evidence that still requires an
+	// explicit reviewer decision.
+	var candidates []evidence.CandidateLocator
+	seen := map[string]bool{}
+	hasAmbiguityNote := false
 	for _, rec := range records {
 		for _, loc := range rec.CandidateLocators {
 			key := loc.Role + "|" + loc.Name
-			if _, exists := seen[key]; !exists {
-				seen[key] = loc
-				ordered = append(ordered, key)
+			seen[key] = true
+			if loc.AmbiguityNote != "" {
+				hasAmbiguityNote = true
 			}
+			candidates = append(candidates, loc)
 		}
 	}
-	if len(ordered) == 0 {
+	if len(candidates) == 0 {
 		return nil, nil
 	}
-	if len(ordered) == 1 {
-		loc := seen[ordered[0]]
+	if len(seen) == 1 && !hasAmbiguityNote {
+		loc := candidates[0]
 		return &loc, nil
 	}
 
-	// Multiple distinct locators — check for a review decision.
+	// Multiple distinct locators, or one logical locator with explicit adapter
+	// ambiguity evidence, require a reviewer decision.
 	dec, ok := decisions[hint]
 	if !ok {
-		return nil, fmt.Errorf("build: action %q has %d ambiguous locators with different role/name; supply a ReviewDecision to resolve", hint, len(ordered))
+		if hasAmbiguityNote {
+			return nil, fmt.Errorf("build: action %q has ambiguous locator evidence; supply a ReviewDecision to resolve", hint)
+		}
+		return nil, fmt.Errorf("build: action %q has %d ambiguous locators with different role/name; supply a ReviewDecision to resolve", hint, len(seen))
 	}
-	if dec.ChosenLocatorIndex < 0 || dec.ChosenLocatorIndex >= len(ordered) {
-		return nil, fmt.Errorf("build: ReviewDecision for %q has out-of-range index %d (have %d locators)", hint, dec.ChosenLocatorIndex, len(ordered))
+	if dec.ChosenLocatorIndex < 0 || dec.ChosenLocatorIndex >= len(candidates) {
+		return nil, fmt.Errorf("build: ReviewDecision for %q has out-of-range index %d (have %d locators)", hint, dec.ChosenLocatorIndex, len(candidates))
 	}
-	loc := seen[ordered[dec.ChosenLocatorIndex]]
+	loc := candidates[dec.ChosenLocatorIndex]
 	return &loc, nil
 }
 

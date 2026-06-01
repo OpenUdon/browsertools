@@ -140,7 +140,7 @@ the two for review, export, and later revalidation.
 
 Minimum sidecar contract:
 
-- `overlayVersion: browsertools.openapi-overlay.v1`
+- `overlayVersion: "1"`
 - `overlayId`: stable identifier for the sidecar artifact.
 - `wrapperOpenAPI`: reference to the wrapper OpenAPI document and version or
   digest reviewed against this sidecar.
@@ -148,9 +148,9 @@ Minimum sidecar contract:
   version or digest.
 - `reviewBundle`: reference to the Browsertools review bundle that supports
   the mapping.
-- `operationMappings`: list of wrapper-to-browser mappings.
+- `operationMappings`: object keyed by wrapper OpenAPI `operationId`.
 
-Each `operationMappings` entry should identify:
+Each `operationMappings` value should identify:
 
 - the wrapper OpenAPI operation, by `operationId` or operation ref
 - the browser profile action, by action ID or ref
@@ -163,12 +163,12 @@ Each `operationMappings` entry should identify:
 Overlay lifecycle:
 
 ```text
-draft -> reviewed -> exported -> stale/revalidate
+draft -> reviewed -> exported -> stale
 ```
 
 `draft` means generated or edited but not accepted. `reviewed` means a human or
 policy gate accepted the mapping. `exported` means the sidecar was emitted next
-to a wrapper OpenAPI/profile bundle. `stale/revalidate` means the wrapper
+to a wrapper OpenAPI/profile bundle. `stale` means the wrapper
 OpenAPI, browser profile, review bundle, or observed UI has changed enough that
 the mapping must be checked again.
 
@@ -301,7 +301,9 @@ credential/session storage, or runtime retry/session policy.
 
 ## Example Future CLI Shape
 
-These commands are directional; implementation has not been scaffolded yet.
+Browsertools is scaffolded as a Go module. These commands remain planned CLI
+entry points; current verification uses `go test ./...`, `go vet ./...`, and
+`git diff --check`.
 
 ```bash
 browsertools validate-profile ./profiles/example.yaml

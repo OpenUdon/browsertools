@@ -95,6 +95,42 @@ func TestImportMissingRedactionStatusError(t *testing.T) {
 	}
 }
 
+func TestImportMissingObservedAtError(t *testing.T) {
+	a := &Adapter{}
+	raw := []byte(`{"url":"https://example.test/article/42"}`)
+	_, err := a.Import(raw, adapter.Options{
+		Origin:          "https://example.test",
+		RedactionStatus: evidence.RedactionNotRequired,
+	})
+	if err == nil {
+		t.Fatal("expected error for missing observedAt, got nil")
+	}
+}
+
+func TestImportFixtureOriginSafety(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "missing url", raw: `{"observedAt":"2026-01-01T00:00:00Z"}`},
+		{name: "malformed url", raw: `{"url":"://bad","observedAt":"2026-01-01T00:00:00Z"}`},
+		{name: "unsupported scheme", raw: `{"url":"ftp://example.test/article/42","observedAt":"2026-01-01T00:00:00Z"}`},
+		{name: "origin mismatch", raw: `{"url":"https://other.test/article/42","observedAt":"2026-01-01T00:00:00Z"}`},
+	}
+	a := &Adapter{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := a.Import([]byte(tt.raw), adapter.Options{
+				Origin:          "https://example.test",
+				RedactionStatus: evidence.RedactionNotRequired,
+			})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
 // TestImportTypeInference tests that extract field types are inferred correctly.
 func TestImportTypeInference(t *testing.T) {
 	a := &Adapter{}

@@ -65,13 +65,7 @@ func TestBuildMissingConfirmationGap(t *testing.T) {
 	actions["read_status"].(map[string]any)["confirmationPolicy"] = map[string]any{"required": false}
 
 	b := Build(d, nil)
-	found := false
-	for _, g := range b.Gaps {
-		if g.Kind == GapMissingConfirmation {
-			found = true
-		}
-	}
-	if !found {
+	if !hasGap(b, GapMissingConfirmation) {
 		t.Error("expected GapMissingConfirmation gap, got none")
 	}
 }
@@ -82,14 +76,17 @@ func TestBuildExpiredEvidenceGap(t *testing.T) {
 	// Set lastVerifiedAt well in the past so P30D has definitely elapsed.
 	d["verification"].(map[string]any)["lastVerifiedAt"] = "2020-01-01T00:00:00Z"
 	b := Build(d, nil)
-	found := false
-	for _, g := range b.Gaps {
-		if g.Kind == GapExpiredEvidence {
-			found = true
-		}
-	}
-	if !found {
+	if !hasGap(b, GapExpiredEvidence) {
 		t.Error("expected GapExpiredEvidence gap, got none")
+	}
+}
+
+func TestBuildMalformedExpiryGap(t *testing.T) {
+	d := baseDraft(t)
+	d["verification"].(map[string]any)["lastVerifiedAt"] = "not-a-time"
+	b := Build(d, nil)
+	if !hasGap(b, GapExpiredEvidence) {
+		t.Error("expected GapExpiredEvidence gap for malformed lastVerifiedAt, got none")
 	}
 }
 
@@ -108,14 +105,43 @@ func TestBuildCSSFallbackGap(t *testing.T) {
 		},
 	}
 	b := Build(d, nil)
-	found := false
-	for _, g := range b.Gaps {
-		if g.Kind == GapCSSFallbackReason {
-			found = true
-		}
-	}
-	if !found {
+	if !hasGap(b, GapCSSFallbackReason) {
 		t.Error("expected GapCSSFallbackReason gap, got none")
+	}
+}
+
+func TestBuildUnresolvedOutputValidationGap(t *testing.T) {
+	d := baseDraft(t)
+	actions := d["actions"].(map[string]any)
+	action := actions["read_status"].(map[string]any)
+	action["outputs"] = map[string]any{
+		"items": map[string]any{
+			"type":           "array",
+			"source":         "css",
+			"selector":       ".item-list li",
+			"fallbackReason": "no_structured_data",
+			// validation absent
+		},
+	}
+	b := Build(d, nil)
+	if !hasGap(b, GapUnresolvedOutput) {
+		t.Error("expected GapUnresolvedOutput gap, got none")
+	}
+}
+
+func TestBuildMissingOriginCoverageGap(t *testing.T) {
+	d := baseDraft(t)
+	records := []evidence.Record{{
+		Origin:          "https://other.test",
+		ObservationKind: evidence.ObservationA11ySnapshot,
+		ObservedAt:      "2026-01-01T00:00:00Z",
+		ActionHint:      "read_status",
+		RedactionStatus: evidence.RedactionNotRequired,
+		Provenance:      evidence.Provenance{Tool: "synthetic"},
+	}}
+	b := Build(d, records)
+	if !hasGap(b, GapMissingOriginCoverage) {
+		t.Error("expected GapMissingOriginCoverage gap, got none")
 	}
 }
 
@@ -135,13 +161,7 @@ func TestBuildAmbiguousLocatorGap(t *testing.T) {
 		},
 	}}
 	b := Build(d, records)
-	found := false
-	for _, g := range b.Gaps {
-		if g.Kind == GapAmbiguousLocator {
-			found = true
-		}
-	}
-	if !found {
+	if !hasGap(b, GapAmbiguousLocator) {
 		t.Error("expected GapAmbiguousLocator gap, got none")
 	}
 }
@@ -181,4 +201,13 @@ func TestBuildSideEffectSummary(t *testing.T) {
 	if len(b.SideEffects.ActionsRequiringConfirmation) == 0 {
 		t.Error("expected ActionsRequiringConfirmation to be non-empty")
 	}
+}
+
+func hasGap(b *Bundle, kind GapKind) bool {
+	for _, g := range b.Gaps {
+		if g.Kind == kind {
+			return true
+		}
+	}
+	return false
 }

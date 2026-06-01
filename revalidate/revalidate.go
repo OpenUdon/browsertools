@@ -12,10 +12,13 @@
 //     info.origin allowlist.
 //   - Locators: each action that has CandidateLocators in the evidence must
 //     have at least one locator present (non-empty Role).
+//   - Ambiguity: locator evidence carrying AmbiguityNote must be resolved
+//     before promotion.
+//   - Outputs: each action output must have a valid source-specific shape.
 //   - Expiry: verification.lastVerifiedAt + expiresAfter must not have elapsed.
 //   - CSS fallback: outputs with source=css must carry a fallbackReason.
 //   - Side-effect confirmation: actions with non-read_only sideEffects must
-//     have confirmationPolicy.required=true.
+//     have confirmationPolicy.required=true and a post-action wait.
 package revalidate
 
 import (
@@ -26,6 +29,7 @@ import (
 
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/internal/duration"
+	"github.com/OpenUdon/browsertools/internal/profilechecks"
 )
 
 // ErrLiveNotSupported is returned by LiveRevalidator. Live browser revalidation
@@ -36,11 +40,14 @@ var ErrLiveNotSupported = errors.New("live browser revalidation is not supported
 type CheckKind string
 
 const (
-	CheckOriginMismatch          CheckKind = "origin_mismatch"
-	CheckMissingLocator          CheckKind = "missing_locator"
-	CheckExpired                 CheckKind = "expired"
-	CheckCSSMissingFallback      CheckKind = "css_missing_fallback_reason"
-	CheckSideEffectNoConfirm     CheckKind = "side_effect_no_confirmation"
+	CheckOriginMismatch       CheckKind = "origin_mismatch"
+	CheckMissingLocator       CheckKind = "missing_locator"
+	CheckAmbiguousLocator     CheckKind = "ambiguous_locator"
+	CheckExpired              CheckKind = "expired"
+	CheckInvalidOutputShape   CheckKind = "invalid_output_shape"
+	CheckCSSMissingFallback   CheckKind = "css_missing_fallback_reason"
+	CheckSideEffectNoConfirm  CheckKind = "side_effect_no_confirmation"
+	CheckSideEffectNoSafeWait CheckKind = "side_effect_no_safe_wait"
 )
 
 // Failure is a single revalidation check failure.
@@ -91,8 +98,10 @@ func Check(prof map[string]any, records []evidence.Record) Result {
 	failures = append(failures, checkOrigins(prof, records)...)
 	failures = append(failures, checkLocators(prof, records)...)
 	failures = append(failures, checkExpiry(prof)...)
-	failures = append(failures, checkCSSFallbacks(prof)...)
-	failures = append(failures, checkSideEffects(prof)...)
+	failures = append(failures, semanticFailures(profilechecks.CheckOutputs(prof))...)
+	failures = append(failures, semanticFailures(profilechecks.CheckCSSFallbacks(prof))...)
+	failures = append(failures, semanticFailures(profilechecks.CheckSideEffectConfirmation(prof))...)
+	failures = append(failures, semanticFailures(profilechecks.CheckSideEffectSafeWait(prof))...)
 
 	sort.SliceStable(failures, func(i, j int) bool {
 		if failures[i].Kind != failures[j].Kind {
@@ -141,10 +150,15 @@ func checkLocators(prof map[string]any, records []evidence.Record) []Failure {
 			continue
 		}
 		hasLocator := false
+		var ambiguityNote string
 		for _, rec := range recs {
-			if len(rec.CandidateLocators) > 0 && rec.CandidateLocators[0].Role != "" {
-				hasLocator = true
-				break
+			for _, loc := range rec.CandidateLocators {
+				if loc.Role != "" {
+					hasLocator = true
+				}
+				if loc.AmbiguityNote != "" && ambiguityNote == "" {
+					ambiguityNote = loc.AmbiguityNote
+				}
 			}
 		}
 		if !hasLocator {
@@ -152,6 +166,13 @@ func checkLocators(prof map[string]any, records []evidence.Record) []Failure {
 				Kind:    CheckMissingLocator,
 				Field:   fmt.Sprintf("actions.%s", hint),
 				Message: fmt.Sprintf("action %q has no candidate locators in evidence; add accessibility snapshot evidence before promoting", hint),
+			})
+		}
+		if ambiguityNote != "" {
+			failures = append(failures, Failure{
+				Kind:    CheckAmbiguousLocator,
+				Field:   fmt.Sprintf("actions.%s", hint),
+				Message: fmt.Sprintf("action %q has unresolved ambiguous locator evidence: %s", hint, ambiguityNote),
 			})
 		}
 	}
@@ -197,78 +218,31 @@ func checkExpiry(prof map[string]any) []Failure {
 	return nil
 }
 
-// checkCSSFallbacks verifies every css-source output carries a fallbackReason.
-func checkCSSFallbacks(prof map[string]any) []Failure {
-	actions, _ := prof["actions"].(map[string]any)
-	var failures []Failure
-	for _, name := range sortedMapKeys(actions) {
-		action, _ := actions[name].(map[string]any)
-		if action == nil {
-			continue
-		}
-		outputs, _ := action["outputs"].(map[string]any)
-		for outName, rawOut := range outputs {
-			out, _ := rawOut.(map[string]any)
-			if out == nil {
-				continue
-			}
-			if src, _ := out["source"].(string); src == "css" {
-				if reason, _ := out["fallbackReason"].(string); reason == "" {
-					failures = append(failures, Failure{
-						Kind:    CheckCSSMissingFallback,
-						Field:   fmt.Sprintf("actions.%s.outputs.%s.fallbackReason", name, outName),
-						Message: fmt.Sprintf("output %q uses css source but has no fallbackReason; add one before promoting", outName),
-					})
-				}
-			}
-		}
+func semanticFailures(issues []profilechecks.Issue) []Failure {
+	failures := make([]Failure, 0, len(issues))
+	for _, issue := range issues {
+		failures = append(failures, Failure{
+			Kind:    checkKind(issue.Rule),
+			Field:   issue.Field,
+			Message: issue.Message,
+		})
 	}
 	return failures
 }
 
-// checkSideEffects verifies non-read_only actions have confirmationPolicy.required=true.
-func checkSideEffects(prof map[string]any) []Failure {
-	actions, _ := prof["actions"].(map[string]any)
-	var failures []Failure
-	for _, name := range sortedMapKeys(actions) {
-		action, _ := actions[name].(map[string]any)
-		if action == nil {
-			continue
-		}
-		hasWrite := false
-		switch v := action["sideEffects"].(type) {
-		case []any:
-			for _, e := range v {
-				if s, _ := e.(string); s != "" && s != "read_only" {
-					hasWrite = true
-				}
-			}
-		case []string:
-			for _, s := range v {
-				if s != "read_only" {
-					hasWrite = true
-				}
-			}
-		}
-		if !hasWrite {
-			continue
-		}
-		policy, _ := action["confirmationPolicy"].(map[string]any)
-		if policy == nil {
-			failures = append(failures, Failure{
-				Kind:    CheckSideEffectNoConfirm,
-				Field:   fmt.Sprintf("actions.%s.confirmationPolicy", name),
-				Message: fmt.Sprintf("action %q has write side effects but no confirmationPolicy", name),
-			})
-		} else if req, _ := policy["required"].(bool); !req {
-			failures = append(failures, Failure{
-				Kind:    CheckSideEffectNoConfirm,
-				Field:   fmt.Sprintf("actions.%s.confirmationPolicy.required", name),
-				Message: fmt.Sprintf("action %q has write side effects but confirmationPolicy.required=false", name),
-			})
-		}
+func checkKind(rule profilechecks.Rule) CheckKind {
+	switch rule {
+	case profilechecks.RuleInvalidOutputShape:
+		return CheckInvalidOutputShape
+	case profilechecks.RuleCSSMissingFallback:
+		return CheckCSSMissingFallback
+	case profilechecks.RuleSideEffectNoConfirm:
+		return CheckSideEffectNoConfirm
+	case profilechecks.RuleSideEffectNoSafeWait:
+		return CheckSideEffectNoSafeWait
+	default:
+		return CheckKind(rule)
 	}
-	return failures
 }
 
 // --- helpers ---

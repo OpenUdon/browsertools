@@ -48,6 +48,14 @@ func TestBuildMinimal(t *testing.T) {
 	if !ok || actions["read_status"] == nil {
 		t.Error("expected action read_status in draft")
 	}
+	action := actions["read_status"].(map[string]any)
+	if action["description"] == "" {
+		t.Error("expected action description scaffold")
+	}
+	params, ok := action["parameters"].(map[string]any)
+	if !ok || params["type"] != "object" {
+		t.Fatalf("expected object parameters scaffold, got %+v", action["parameters"])
+	}
 }
 
 // TestBuildDeterministic verifies that two calls with the same input produce
@@ -146,6 +154,39 @@ func TestBuildAmbiguousLocatorResolvedByDecision(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected chosen locator (link/Cancel) in sequence")
+	}
+}
+
+func TestBuildAmbiguousNoteRefusedAfterRoleNameDedup(t *testing.T) {
+	rec := baseRecord("save")
+	rec.CandidateLocators = []evidence.CandidateLocator{
+		{Role: "button", Name: "Save", AmbiguityNote: "two buttons match"},
+		{Role: "button", Name: "Save", AmbiguityNote: "two buttons match"},
+	}
+	_, err := Build([]evidence.Record{rec}, baseOpts())
+	if err == nil {
+		t.Fatal("expected error for duplicate same-role/name ambiguity, got nil")
+	}
+}
+
+func TestBuildAmbiguousNoteResolvedByDecision(t *testing.T) {
+	rec := baseRecord("save")
+	rec.CandidateLocators = []evidence.CandidateLocator{
+		{Role: "button", Name: "Save", AmbiguityNote: "two buttons match"},
+		{Role: "button", Name: "Save", AmbiguityNote: "two buttons match"},
+	}
+	opts := baseOpts()
+	opts.ReviewDecisions = map[string]ReviewDecision{
+		"save": {ActionHint: "save", ChosenLocatorIndex: 0, Note: "use reviewed first match"},
+	}
+	result, err := Build([]evidence.Record{rec}, opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	action := result.Draft["actions"].(map[string]any)["save"].(map[string]any)
+	seq := action["sequence"].([]any)
+	if _, ok := seq[1].(map[string]any)["click"]; !ok {
+		t.Fatalf("expected click step, got %+v", seq)
 	}
 }
 

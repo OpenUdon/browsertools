@@ -3,6 +3,7 @@ package playwright
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/OpenUdon/browsertools/adapter"
@@ -93,6 +94,18 @@ func TestImportInvalidJSON(t *testing.T) {
 	}
 }
 
+func TestImportMissingObservedAtError(t *testing.T) {
+	a := &Adapter{}
+	raw := []byte(`{"url":"https://example.test/status","snapshot":{"role":"region"}}`)
+	_, err := a.Import(raw, adapter.Options{
+		Origin:          "https://example.test",
+		RedactionStatus: evidence.RedactionNotRequired,
+	})
+	if err == nil {
+		t.Fatal("expected error for missing observedAt, got nil")
+	}
+}
+
 // TestNoLiveBrowserRequired confirms that the adapter works entirely on
 // saved fixtures without any network calls.
 func TestNoLiveBrowserRequired(t *testing.T) {
@@ -119,5 +132,68 @@ func TestNoLiveBrowserRequired(t *testing.T) {
 	}
 	if len(records) != 1 || len(records[0].CandidateLocators) != 1 {
 		t.Errorf("unexpected result: %+v", records)
+	}
+}
+
+func TestImportFixtureOriginSafety(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "missing url",
+			raw:  `{"observedAt":"2026-01-01T00:00:00Z","snapshot":{"role":"region"}}`,
+		},
+		{
+			name: "malformed url",
+			raw:  `{"url":"://bad","observedAt":"2026-01-01T00:00:00Z","snapshot":{"role":"region"}}`,
+		},
+		{
+			name: "unsupported scheme",
+			raw:  `{"url":"ftp://example.test/status","observedAt":"2026-01-01T00:00:00Z","snapshot":{"role":"region"}}`,
+		},
+		{
+			name: "origin mismatch",
+			raw:  `{"url":"https://other.test/status","observedAt":"2026-01-01T00:00:00Z","snapshot":{"role":"region"}}`,
+		},
+	}
+	a := &Adapter{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := a.Import([]byte(tt.raw), adapter.Options{
+				Origin:          "https://example.test",
+				RedactionStatus: evidence.RedactionNotRequired,
+			})
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestImportDuplicateRoleNameMarkedAmbiguous(t *testing.T) {
+	a := &Adapter{}
+	raw := []byte(`{
+		"url":"https://example.test/status",
+		"observedAt":"2026-01-01T00:00:00Z",
+		"snapshot":{"role":"region","children":[
+			{"role":"button","name":"Save"},
+			{"role":"button","name":"Save"}
+		]}
+	}`)
+	records, err := a.Import(raw, adapter.Options{
+		Origin:          "https://example.test",
+		RedactionStatus: evidence.RedactionNotRequired,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records[0].CandidateLocators) != 2 {
+		t.Fatalf("expected 2 locators, got %+v", records[0].CandidateLocators)
+	}
+	for _, loc := range records[0].CandidateLocators {
+		if !strings.Contains(loc.AmbiguityNote, "share role") {
+			t.Fatalf("expected ambiguity note, got %+v", records[0].CandidateLocators)
+		}
 	}
 }

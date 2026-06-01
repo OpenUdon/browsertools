@@ -8,7 +8,13 @@
 // on-disk fixture data.
 package adapter
 
-import "github.com/OpenUdon/browsertools/evidence"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+
+	"github.com/OpenUdon/browsertools/evidence"
+)
 
 // Adapter is implemented by each tool-specific evidence importer.
 type Adapter interface {
@@ -36,4 +42,27 @@ type Options struct {
 	// RedactedFields lists any fields replaced by "[REDACTED]" markers.
 	// Required when RedactionStatus is evidence.RedactionCompleted.
 	RedactedFields []string
+}
+
+// ValidateFixtureOrigin verifies that a saved adapter fixture declares a URL
+// whose canonical origin exactly matches the caller-provided allowlist origin.
+func ValidateFixtureOrigin(adapterName, fixtureURL, expectedOrigin string) error {
+	if fixtureURL == "" {
+		return fmt.Errorf("%s: fixture url is required", adapterName)
+	}
+	u, err := url.Parse(fixtureURL)
+	if err != nil {
+		return fmt.Errorf("%s: fixture url %q is malformed: %w", adapterName, fixtureURL, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("%s: fixture url %q has unsupported scheme %q; expected http or https", adapterName, fixtureURL, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s: fixture url %q is malformed: missing host", adapterName, fixtureURL)
+	}
+	origin := strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+	if origin != expectedOrigin {
+		return fmt.Errorf("%s: fixture origin %q from url %q does not match opts.Origin %q", adapterName, origin, fixtureURL, expectedOrigin)
+	}
+	return nil
 }

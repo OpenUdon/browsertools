@@ -37,11 +37,11 @@ import (
 
 // Fixture is the expected shape of a saved llm-scraper result file.
 type Fixture struct {
-	URL        string                 `json:"url"`
-	ObservedAt string                 `json:"observedAt,omitempty"`
-	ActionHint string                 `json:"actionHint,omitempty"`
-	Schema     map[string]any         `json:"schema,omitempty"`
-	Extracted  map[string]any         `json:"extracted,omitempty"`
+	URL        string         `json:"url"`
+	ObservedAt string         `json:"observedAt,omitempty"`
+	ActionHint string         `json:"actionHint,omitempty"`
+	Schema     map[string]any `json:"schema,omitempty"`
+	Extracted  map[string]any `json:"extracted,omitempty"`
 }
 
 // Adapter imports llm-scraper extraction output as candidate evidence.
@@ -66,10 +66,13 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	if err := json.Unmarshal(raw, &fix); err != nil {
 		return nil, fmt.Errorf("llm-scraper: parse fixture: %w", err)
 	}
+	if err := adapter.ValidateFixtureOrigin("llm-scraper", fix.URL, opts.Origin); err != nil {
+		return nil, err
+	}
 
 	observedAt := fix.ObservedAt
 	if observedAt == "" {
-		observedAt = time.Now().UTC().Format(time.RFC3339)
+		return nil, fmt.Errorf("llm-scraper: observedAt is required")
 	} else {
 		t, err := time.Parse(time.RFC3339, observedAt)
 		if err != nil {

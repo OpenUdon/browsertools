@@ -22,6 +22,7 @@ import (
 
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/internal/duration"
+	"github.com/OpenUdon/browsertools/internal/profilechecks"
 	"github.com/OpenUdon/browsertools/profile"
 )
 
@@ -252,8 +253,14 @@ func buildConfidenceRationale(draft map[string]any, records []evidence.Record) s
 	recordCount := len(records)
 	hasAmbiguity := false
 	for _, rec := range records {
-		if len(rec.CandidateLocators) > 1 {
-			hasAmbiguity = true
+		for _, loc := range rec.CandidateLocators {
+			if loc.AmbiguityNote != "" {
+				hasAmbiguity = true
+				break
+			}
+		}
+		if hasAmbiguity {
+			break
 		}
 	}
 	parts := []string{fmt.Sprintf("confidence=%s", conf), fmt.Sprintf("evidence_records=%d", recordCount)}
@@ -281,94 +288,62 @@ func collectGaps(draft map[string]any, records []evidence.Record) []Gap {
 	expiresAfter, _ := draft["expiresAfter"].(string)
 	if verif != nil && expiresAfter != "" {
 		if lastVerified, _ := verif["lastVerifiedAt"].(string); lastVerified != "" {
-			if t, err := time.Parse(time.RFC3339, lastVerified); err == nil {
-				dur, parseErr := duration.Parse(expiresAfter)
-				if parseErr == nil && time.Now().UTC().After(t.Add(dur)) {
-					gaps = append(gaps, Gap{
-						Kind:    GapExpiredEvidence,
-						Field:   "verification.lastVerifiedAt",
-						Message: fmt.Sprintf("profile last verified at %s; expiresAfter=%s has elapsed — revalidate before promoting", lastVerified, expiresAfter),
-					})
-				}
+			t, err := time.Parse(time.RFC3339, lastVerified)
+			if err != nil {
+				gaps = append(gaps, Gap{
+					Kind:    GapExpiredEvidence,
+					Field:   "verification.lastVerifiedAt",
+					Message: fmt.Sprintf("malformed lastVerifiedAt %q: %v", lastVerified, err),
+				})
+			} else if dur, parseErr := duration.Parse(expiresAfter); parseErr != nil {
+				gaps = append(gaps, Gap{
+					Kind:    GapExpiredEvidence,
+					Field:   "expiresAfter",
+					Message: fmt.Sprintf("malformed expiresAfter %q: %v", expiresAfter, parseErr),
+				})
+			} else if time.Now().UTC().After(t.Add(dur)) {
+				gaps = append(gaps, Gap{
+					Kind:    GapExpiredEvidence,
+					Field:   "verification.lastVerifiedAt",
+					Message: fmt.Sprintf("profile last verified at %s; expiresAfter=%s has elapsed — revalidate before promoting", lastVerified, expiresAfter),
+				})
 			}
 		}
 	}
 
-	// Check actions.
-	actions, _ := draft["actions"].(map[string]any)
-	for _, name := range sortedStringSet(mapKeys(actions)) {
-		raw := actions[name]
-		action, _ := raw.(map[string]any)
-		if action == nil {
+	allowedOrigins := map[string]bool{}
+	for _, origin := range buildOriginSummary(draft).Origins {
+		allowedOrigins[origin] = true
+	}
+	seenOrigins := map[string]bool{}
+	for _, rec := range records {
+		if rec.Origin == "" || seenOrigins[rec.Origin] {
 			continue
 		}
-
-		// Non-read_only without confirmation.required=true.
-		var effects []string
-		switch v := action["sideEffects"].(type) {
-		case []any:
-			for _, e := range v {
-				if s, ok := e.(string); ok {
-					effects = append(effects, s)
-				}
-			}
-		case []string:
-			effects = v
-		}
-		hasWrite := false
-		for _, e := range effects {
-			if e != "read_only" {
-				hasWrite = true
-			}
-		}
-		if hasWrite {
-			policy, _ := action["confirmationPolicy"].(map[string]any)
-			if policy == nil {
-				gaps = append(gaps, Gap{
-					Kind:    GapMissingConfirmation,
-					Field:   fmt.Sprintf("actions.%s.confirmationPolicy", name),
-					Message: fmt.Sprintf("action %q has write side effects but no confirmationPolicy", name),
-				})
-			} else if req, _ := policy["required"].(bool); !req {
-				gaps = append(gaps, Gap{
-					Kind:    GapMissingConfirmation,
-					Field:   fmt.Sprintf("actions.%s.confirmationPolicy.required", name),
-					Message: fmt.Sprintf("action %q has write side effects but confirmationPolicy.required=false", name),
-				})
-			}
-		}
-
-		// CSS outputs missing fallbackReason.
-		outputs, _ := action["outputs"].(map[string]any)
-		for outName, rawOut := range outputs {
-			out, _ := rawOut.(map[string]any)
-			if out == nil {
-				continue
-			}
-			if src, _ := out["source"].(string); src == "css" {
-				if reason, _ := out["fallbackReason"].(string); reason == "" {
-					gaps = append(gaps, Gap{
-						Kind:    GapCSSFallbackReason,
-						Field:   fmt.Sprintf("actions.%s.outputs.%s.fallbackReason", name, outName),
-						Message: fmt.Sprintf("output %q uses css source but has no fallbackReason", outName),
-					})
-				}
-			}
+		seenOrigins[rec.Origin] = true
+		if !allowedOrigins[rec.Origin] {
+			gaps = append(gaps, Gap{
+				Kind:    GapMissingOriginCoverage,
+				Field:   "info.origin",
+				Message: fmt.Sprintf("evidence origin %q is not covered by the profile origin allowlist", rec.Origin),
+			})
 		}
 	}
+
+	gaps = append(gaps, semanticGaps(profilechecks.CheckSideEffectConfirmation(draft))...)
+	gaps = append(gaps, semanticGaps(profilechecks.CheckOutputs(draft))...)
+	gaps = append(gaps, semanticGaps(profilechecks.CheckCSSFallbacks(draft))...)
 
 	// Check for ambiguous locators in evidence.
 	for _, rec := range records {
-		if len(rec.CandidateLocators) > 1 {
-			for _, loc := range rec.CandidateLocators {
-				if loc.AmbiguityNote != "" {
-					gaps = append(gaps, Gap{
-						Kind:    GapAmbiguousLocator,
-						Field:   fmt.Sprintf("evidence[%s].candidateLocators", rec.ActionHint),
-						Message: loc.AmbiguityNote,
-					})
-					break
-				}
+		for _, loc := range rec.CandidateLocators {
+			if loc.AmbiguityNote != "" {
+				gaps = append(gaps, Gap{
+					Kind:    GapAmbiguousLocator,
+					Field:   fmt.Sprintf("evidence[%s].candidateLocators", rec.ActionHint),
+					Message: loc.AmbiguityNote,
+				})
+				break
 			}
 		}
 	}
@@ -392,10 +367,27 @@ func sortedStringSet(m map[string]bool) []string {
 	return out
 }
 
-func mapKeys(m map[string]any) map[string]bool {
-	out := make(map[string]bool, len(m))
-	for k := range m {
-		out[k] = true
+func semanticGaps(issues []profilechecks.Issue) []Gap {
+	gaps := make([]Gap, 0, len(issues))
+	for _, issue := range issues {
+		gaps = append(gaps, Gap{
+			Kind:    gapKind(issue.Rule),
+			Field:   issue.Field,
+			Message: issue.Message,
+		})
 	}
-	return out
+	return gaps
+}
+
+func gapKind(rule profilechecks.Rule) GapKind {
+	switch rule {
+	case profilechecks.RuleInvalidOutputShape:
+		return GapUnresolvedOutput
+	case profilechecks.RuleCSSMissingFallback:
+		return GapCSSFallbackReason
+	case profilechecks.RuleSideEffectNoConfirm:
+		return GapMissingConfirmation
+	default:
+		return GapKind(rule)
+	}
 }

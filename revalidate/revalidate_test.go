@@ -62,13 +62,7 @@ func TestCheckOriginMismatch(t *testing.T) {
 	if r.OK {
 		t.Error("expected OK=false for origin mismatch")
 	}
-	found := false
-	for _, f := range r.Failures {
-		if f.Kind == CheckOriginMismatch {
-			found = true
-		}
-	}
-	if !found {
+	if !hasFailure(r, CheckOriginMismatch) {
 		t.Errorf("expected CheckOriginMismatch failure, got: %+v", r.Failures)
 	}
 }
@@ -81,14 +75,22 @@ func TestCheckMissingLocator(t *testing.T) {
 	if r.OK {
 		t.Error("expected OK=false for missing locator")
 	}
-	found := false
-	for _, f := range r.Failures {
-		if f.Kind == CheckMissingLocator {
-			found = true
-		}
-	}
-	if !found {
+	if !hasFailure(r, CheckMissingLocator) {
 		t.Errorf("expected CheckMissingLocator failure, got: %+v", r.Failures)
+	}
+}
+
+func TestCheckAmbiguousLocator(t *testing.T) {
+	rec := baseRecord()
+	rec.CandidateLocators = []evidence.CandidateLocator{
+		{Role: "button", Name: "Save", AmbiguityNote: "two buttons match"},
+	}
+	r := Check(baseProfile(), []evidence.Record{rec})
+	if r.OK {
+		t.Error("expected OK=false for ambiguous locator evidence")
+	}
+	if !hasFailure(r, CheckAmbiguousLocator) {
+		t.Errorf("expected CheckAmbiguousLocator failure, got: %+v", r.Failures)
 	}
 }
 
@@ -100,13 +102,7 @@ func TestCheckExpired(t *testing.T) {
 	if r.OK {
 		t.Error("expected OK=false for expired profile")
 	}
-	found := false
-	for _, f := range r.Failures {
-		if f.Kind == CheckExpired {
-			found = true
-		}
-	}
-	if !found {
+	if !hasFailure(r, CheckExpired) {
 		t.Errorf("expected CheckExpired failure, got: %+v", r.Failures)
 	}
 }
@@ -126,14 +122,37 @@ func TestCheckCSSMissingFallback(t *testing.T) {
 	if r.OK {
 		t.Error("expected OK=false for CSS missing fallback")
 	}
-	found := false
-	for _, f := range r.Failures {
-		if f.Kind == CheckCSSMissingFallback {
-			found = true
-		}
-	}
-	if !found {
+	if !hasFailure(r, CheckCSSMissingFallback) {
 		t.Errorf("expected CheckCSSMissingFallback failure, got: %+v", r.Failures)
+	}
+}
+
+func TestCheckInvalidOutputShapes(t *testing.T) {
+	prof := baseProfile()
+	prof["actions"].(map[string]any)["read_status"].(map[string]any)["outputs"] = map[string]any{
+		"missing_type": map[string]any{
+			"source": "a11y",
+			"locator": map[string]any{
+				"role": "status",
+			},
+		},
+		"missing_locator": map[string]any{
+			"type":   "string",
+			"source": "a11y",
+		},
+		"missing_css_validation": map[string]any{
+			"type":           "array",
+			"source":         "css",
+			"selector":       ".items li",
+			"fallbackReason": "no_structured_data",
+		},
+	}
+	r := Check(prof, nil)
+	if r.OK {
+		t.Error("expected OK=false for invalid output shapes")
+	}
+	if !hasFailure(r, CheckInvalidOutputShape) {
+		t.Errorf("expected CheckInvalidOutputShape failure, got: %+v", r.Failures)
 	}
 }
 
@@ -146,14 +165,39 @@ func TestCheckSideEffectNoConfirmation(t *testing.T) {
 	if r.OK {
 		t.Error("expected OK=false for side effect without confirmation")
 	}
-	found := false
-	for _, f := range r.Failures {
-		if f.Kind == CheckSideEffectNoConfirm {
-			found = true
-		}
-	}
-	if !found {
+	if !hasFailure(r, CheckSideEffectNoConfirm) {
 		t.Errorf("expected CheckSideEffectNoConfirm failure, got: %+v", r.Failures)
+	}
+}
+
+func TestCheckSideEffectRequiresSafeWait(t *testing.T) {
+	prof := baseProfile()
+	action := prof["actions"].(map[string]any)["read_status"].(map[string]any)
+	action["sideEffects"] = []any{"updates_record"}
+	action["confirmationPolicy"] = map[string]any{"required": true}
+	r := Check(prof, nil)
+	if r.OK {
+		t.Error("expected OK=false for write action without wait")
+	}
+	if !hasFailure(r, CheckSideEffectNoSafeWait) {
+		t.Errorf("expected CheckSideEffectNoSafeWait failure, got: %+v", r.Failures)
+	}
+}
+
+func TestCheckSideEffectAllowsClickWait(t *testing.T) {
+	prof := baseProfile()
+	action := prof["actions"].(map[string]any)["read_status"].(map[string]any)
+	action["sideEffects"] = []any{"updates_record"}
+	action["confirmationPolicy"] = map[string]any{"required": true}
+	action["sequence"] = []any{
+		map[string]any{"click": map[string]any{
+			"locator":  map[string]any{"role": "button", "name": "Save"},
+			"wait_for": map[string]any{"navigation": "network_idle"},
+		}},
+	}
+	r := Check(prof, nil)
+	if hasFailure(r, CheckSideEffectNoSafeWait) {
+		t.Errorf("did not expect CheckSideEffectNoSafeWait failure, got: %+v", r.Failures)
 	}
 }
 
@@ -195,4 +239,13 @@ func TestFixtureRevalidatorInterface(t *testing.T) {
 	if !result.OK {
 		t.Errorf("expected OK, got failures: %+v", result.Failures)
 	}
+}
+
+func hasFailure(r Result, kind CheckKind) bool {
+	for _, f := range r.Failures {
+		if f.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
