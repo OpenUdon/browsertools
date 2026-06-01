@@ -1,0 +1,58 @@
+{
+  "profile": {
+    "profile": "uws.browser.1.5",
+    "info": {
+      "title": "Wikipedia",
+      "origin": "https://en.wikipedia.org",
+      "loginStateRequired": false
+    },
+    "observationKind": "accessibility_snapshot",
+    "evidence": { "learnedAt": "2026-05-31T00:00:00Z", "source": "reviewed_browser_session" },
+    "confidence": "high",
+    "expiresAfter": "P90D",
+    "verification": { "lastVerifiedAt": "2026-05-31T00:00:00Z", "successfulRuns": 5 },
+    "actions": {
+      "navigate_to_article": {
+        "sequence": [{ "navigate": "/wiki/{{title}}" }],
+        "sideEffects": ["read_only"],
+        "confirmationPolicy": { "required": false }
+      },
+      "extract_article": {
+        "sequence": [{ "wait_for": { "role": "heading" } }],
+        "outputs": {
+          "name":        { "type": "string", "source": "microdata", "property": "name" },
+          "description": { "type": "string", "source": "microdata", "property": "description" },
+          "categories":  {
+            "type": "array", "source": "css",
+            "selector": "#mw-normal-catlinks ul li a",
+            "fallbackReason": "no_a11y_region",
+            "validation": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "sideEffects": ["read_only"],
+        "confirmationPolicy": { "required": false }
+      }
+    }
+  },
+  "validation": { "valid": true },
+  "evidence": {
+    "origins": ["https://en.wikipedia.org"],
+    "observationKind": "accessibility_snapshot",
+    "tools": ["playwright"],
+    "recordCount": 2,
+    "earliestAt": "2026-05-30T00:00:00Z",
+    "latestAt": "2026-05-31T00:00:00Z"
+  },
+  "gaps": [],
+  "confidenceRationale": "confidence=high; evidence_records=2",
+  "expiryNote": "profile expires after P90D from last verification; revalidate before use in production",
+  "origins": { "origins": ["https://en.wikipedia.org"] },
+  "sideEffects": {
+    "hasWriteActions": false,
+    "actionsRequiringConfirmation": [],
+    "actionsWithSideEffects": {
+      "extract_article":       ["read_only"],
+      "navigate_to_article":   ["read_only"]
+    }
+  }
+}

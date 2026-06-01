@@ -130,8 +130,12 @@ func Build(draft map[string]any, records []evidence.Record) *Bundle {
 	// Expiry note.
 	b.ExpiryNote = buildExpiryNote(draft)
 
-	// Gaps.
-	b.Gaps = collectGaps(draft, records)
+	// Gaps — always a non-nil slice so JSON serializes as [] not null.
+	gaps := collectGaps(draft, records)
+	if gaps == nil {
+		gaps = []Gap{}
+	}
+	b.Gaps = gaps
 
 	return b
 }
@@ -234,6 +238,9 @@ func buildSideEffectSummary(draft map[string]any) SideEffectSummary {
 		}
 	}
 	sort.Strings(s.ActionsRequiringConfirmation)
+	if s.ActionsRequiringConfirmation == nil {
+		s.ActionsRequiringConfirmation = []string{}
+	}
 	return s
 }
 
