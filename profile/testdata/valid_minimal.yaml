@@ -1,0 +1,39 @@
+profile: uws.browser.1.5
+info:
+  title: Example Service
+  origin: https://example.test
+  loginStateRequired: false
+
+observationKind: accessibility_snapshot
+
+evidence:
+  learnedAt: "2026-01-01T00:00:00Z"
+  source: synthetic_fixture
+
+confidence: medium
+expiresAfter: P30D
+
+verification:
+  lastVerifiedAt: "2026-01-01T00:00:00Z"
+  successfulRuns: 1
+  uiStabilityScore: 0.95
+
+actions:
+  read_status:
+    description: Read the service status banner.
+    sequence:
+      - navigate: "/status"
+      - wait_for: { navigation: load }
+    outputs:
+      is_ok:
+        type: boolean
+        source: a11y
+        presence: true
+        locator: { role: status, name: "OK" }
+      headline:
+        type: string
+        source: microdata
+        property: name
+    sideEffects: [read_only]
+    confirmationPolicy:
+      required: false

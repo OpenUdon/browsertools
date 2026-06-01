@@ -1,0 +1,27 @@
+# Invalid: an a11y output with presence:true must declare type:boolean.
+# Here type is "string", which the schema's conditional rejects.
+profile: uws.browser.1.5
+info:
+  title: Example Service
+  origin: https://example.test
+observationKind: accessibility_snapshot
+evidence:
+  learnedAt: "2026-01-01T00:00:00Z"
+confidence: medium
+expiresAfter: P30D
+verification:
+  lastVerifiedAt: "2026-01-01T00:00:00Z"
+  successfulRuns: 1
+actions:
+  read_status:
+    sequence:
+      - navigate: "/status"
+    outputs:
+      is_ok:
+        type: string
+        source: a11y
+        presence: true
+        locator: { role: status, name: "OK" }
+    sideEffects: [read_only]
+    confirmationPolicy:
+      required: false

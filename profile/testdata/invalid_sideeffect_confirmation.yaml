@@ -1,0 +1,22 @@
+# Invalid: an action with a non-read_only side effect (state_change) must set
+# confirmationPolicy.required to true. Here it is false.
+profile: uws.browser.1.5
+info:
+  title: Example Service
+  origin: https://example.test
+observationKind: accessibility_snapshot
+evidence:
+  learnedAt: "2026-01-01T00:00:00Z"
+confidence: medium
+expiresAfter: P30D
+verification:
+  lastVerifiedAt: "2026-01-01T00:00:00Z"
+  successfulRuns: 1
+actions:
+  submit_form:
+    sequence:
+      - click:
+          locator: { role: button, name: "Submit" }
+    sideEffects: [state_change]
+    confirmationPolicy:
+      required: false

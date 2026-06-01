@@ -1,0 +1,13 @@
+AGENTS.md
+memory-bank
+memory-bank/
+evolution
+evolution/
+
+raw-evidence/
+captures/
+artifacts/
+review/
+profiles/local/
+*.har
+*.trace.zip
