@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/internal/duration"
 	"github.com/OpenUdon/browsertools/profile"
 )
 
@@ -271,7 +272,7 @@ func collectGaps(draft map[string]any, records []evidence.Record) []Gap {
 	if verif != nil && expiresAfter != "" {
 		if lastVerified, _ := verif["lastVerifiedAt"].(string); lastVerified != "" {
 			if t, err := time.Parse(time.RFC3339, lastVerified); err == nil {
-				dur, parseErr := parseISO8601Duration(expiresAfter)
+				dur, parseErr := duration.Parse(expiresAfter)
 				if parseErr == nil && time.Now().UTC().After(t.Add(dur)) {
 					gaps = append(gaps, Gap{
 						Kind:    GapExpiredEvidence,
@@ -387,61 +388,4 @@ func mapKeys(m map[string]any) map[string]bool {
 		out[k] = true
 	}
 	return out
-}
-
-// parseISO8601Duration parses a subset of ISO-8601 durations into a time.Duration.
-// Supports P(n)Y, P(n)M, P(n)W, P(n)D and PT(n)H, PT(n)M, PT(n)S forms.
-// Uses approximate values: 1Y=365d, 1M=30d.
-func parseISO8601Duration(s string) (time.Duration, error) {
-	if len(s) == 0 || s[0] != 'P' {
-		return 0, fmt.Errorf("invalid ISO-8601 duration %q", s)
-	}
-	var total time.Duration
-	rest := s[1:]
-	inTime := false
-	if len(rest) > 0 && rest[0] == 'T' {
-		inTime = true
-		rest = rest[1:]
-	}
-	for len(rest) > 0 {
-		if rest[0] == 'T' {
-			inTime = true
-			rest = rest[1:]
-			continue
-		}
-		// Read digits
-		n := 0
-		i := 0
-		for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
-			n = n*10 + int(rest[i]-'0')
-			i++
-		}
-		if i == 0 {
-			return 0, fmt.Errorf("invalid ISO-8601 duration: expected digit before unit in %q", s)
-		}
-		if i >= len(rest) {
-			break
-		}
-		unit := rest[i]
-		rest = rest[i+1:]
-		switch {
-		case !inTime && unit == 'Y':
-			total += time.Duration(n) * 365 * 24 * time.Hour
-		case !inTime && unit == 'M':
-			total += time.Duration(n) * 30 * 24 * time.Hour
-		case !inTime && unit == 'W':
-			total += time.Duration(n) * 7 * 24 * time.Hour
-		case !inTime && unit == 'D':
-			total += time.Duration(n) * 24 * time.Hour
-		case inTime && unit == 'H':
-			total += time.Duration(n) * time.Hour
-		case inTime && unit == 'M':
-			total += time.Duration(n) * time.Minute
-		case inTime && unit == 'S':
-			total += time.Duration(n) * time.Second
-		default:
-			return 0, fmt.Errorf("unknown ISO-8601 duration unit %q in %q", unit, s)
-		}
-	}
-	return total, nil
 }
