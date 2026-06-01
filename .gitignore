@@ -7,7 +7,6 @@ evolution/
 raw-evidence/
 captures/
 artifacts/
-review/
 profiles/local/
 *.har
 *.trace.zip
