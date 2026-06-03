@@ -80,6 +80,16 @@ func TestCheckMissingLocator(t *testing.T) {
 	}
 }
 
+func TestCheckMissingActionEvidence(t *testing.T) {
+	r := Check(baseProfile(), nil)
+	if r.OK {
+		t.Error("expected OK=false for missing action evidence")
+	}
+	if !hasFailure(r, CheckMissingEvidence) {
+		t.Errorf("expected CheckMissingEvidence failure, got: %+v", r.Failures)
+	}
+}
+
 func TestCheckAmbiguousLocator(t *testing.T) {
 	rec := baseRecord()
 	rec.CandidateLocators = []evidence.CandidateLocator{

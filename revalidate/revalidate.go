@@ -10,6 +10,8 @@
 // Checks performed:
 //   - Origin: every evidence record's origin must be covered by the profile's
 //     info.origin allowlist.
+//   - Evidence coverage: every profile action must have at least one matching
+//     evidence record by ActionHint.
 //   - Locators: each action that has CandidateLocators in the evidence must
 //     have at least one locator present (non-empty Role).
 //   - Ambiguity: locator evidence carrying AmbiguityNote must be resolved
@@ -41,6 +43,7 @@ type CheckKind string
 
 const (
 	CheckOriginMismatch       CheckKind = "origin_mismatch"
+	CheckMissingEvidence      CheckKind = "missing_evidence"
 	CheckMissingLocator       CheckKind = "missing_locator"
 	CheckAmbiguousLocator     CheckKind = "ambiguous_locator"
 	CheckExpired              CheckKind = "expired"
@@ -96,6 +99,7 @@ func Check(prof map[string]any, records []evidence.Record) Result {
 	var failures []Failure
 
 	failures = append(failures, checkOrigins(prof, records)...)
+	failures = append(failures, checkActionEvidence(prof, records)...)
 	failures = append(failures, checkLocators(prof, records)...)
 	failures = append(failures, checkExpiry(prof)...)
 	failures = append(failures, semanticFailures(profilechecks.CheckOutputs(prof))...)
@@ -128,6 +132,30 @@ func checkOrigins(prof map[string]any, records []evidence.Record) []Failure {
 				Kind:    CheckOriginMismatch,
 				Field:   "info.origin",
 				Message: fmt.Sprintf("evidence origin %q is not in the profile origin allowlist %v", rec.Origin, sortedMapKeys(allowed)),
+			})
+		}
+	}
+	return failures
+}
+
+func checkActionEvidence(prof map[string]any, records []evidence.Record) []Failure {
+	actions, _ := prof["actions"].(map[string]any)
+	if len(actions) == 0 {
+		return nil
+	}
+	covered := map[string]bool{}
+	for _, rec := range records {
+		if rec.ActionHint != "" {
+			covered[rec.ActionHint] = true
+		}
+	}
+	var failures []Failure
+	for action := range actions {
+		if !covered[action] {
+			failures = append(failures, Failure{
+				Kind:    CheckMissingEvidence,
+				Field:   fmt.Sprintf("actions.%s", action),
+				Message: fmt.Sprintf("action %q has no matching evidence record; revalidate with saved fixture evidence before promoting", action),
 			})
 		}
 	}
