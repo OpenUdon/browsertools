@@ -20,6 +20,9 @@ import (
 	"github.com/OpenUdon/browsertools/adapter/firecrawl"
 	"github.com/OpenUdon/browsertools/adapter/llmscraper"
 	playwrightadapter "github.com/OpenUdon/browsertools/adapter/playwright"
+	"github.com/OpenUdon/browsertools/authdraft"
+	"github.com/OpenUdon/browsertools/authprofile"
+	"github.com/OpenUdon/browsertools/authreview"
 	capabilitybundle "github.com/OpenUdon/browsertools/bundle"
 	"github.com/OpenUdon/browsertools/cache"
 	"github.com/OpenUdon/browsertools/draft"
@@ -47,6 +50,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch args[0] + " " + args[1] {
 	case "profile validate":
 		return runProfileValidate(args[2:], stdin, stdout, stderr)
+	case "auth-profile validate":
+		return runAuthProfileValidate(args[2:], stdin, stdout, stderr)
+	case "auth-draft build":
+		return runAuthDraftBuild(args[2:], stdin, stdout, stderr)
+	case "auth-review bundle":
+		return runAuthReviewBundle(args[2:], stdin, stdout, stderr)
 	case "evidence import":
 		return runEvidenceImport(args[2:], stdin, stdout, stderr)
 	case "draft build":
@@ -82,7 +91,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: browsertools <profile validate|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune> [flags]")
+	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune> [flags]")
 }
 
 func runRegistryPublish(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -658,6 +667,146 @@ func runProfileValidate(args []string, stdin io.Reader, stdout, stderr io.Writer
 	return exitUsageOrIO
 }
 
+func runAuthProfileValidate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("auth-profile validate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	input := fs.String("input", "", "authentication profile JSON/YAML path or -")
+	at := fs.String("at", "", "optional RFC3339 freshness assessment time")
+	format := fs.String("format", "text", "text or json")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if *input == "" {
+		fmt.Fprintln(stderr, "auth-profile validate: --input is required")
+		return exitUsageOrIO
+	}
+	value, err := loadAuthProfileInput(*input, stdin)
+	if err == nil && *at != "" {
+		when, parseErr := time.Parse(time.RFC3339, *at)
+		if parseErr != nil {
+			fmt.Fprintln(stderr, "auth-profile validate: invalid --at:", parseErr)
+			return exitUsageOrIO
+		}
+		err = authprofile.ValidateAt(value, when)
+	}
+	if err != nil {
+		if *format == "json" {
+			_ = json.NewEncoder(stdout).Encode(map[string]any{"valid": false, "errors": []string{err.Error()}})
+		} else if *format == "text" {
+			fmt.Fprintln(stderr, err)
+		} else {
+			fmt.Fprintln(stderr, "auth-profile validate: --format must be text or json")
+			return exitUsageOrIO
+		}
+		return exitRejected
+	}
+	if *format == "json" {
+		fmt.Fprintln(stdout, `{"valid":true,"errors":[]}`)
+	} else if *format == "text" {
+		fmt.Fprintln(stdout, "valid")
+	} else {
+		fmt.Fprintln(stderr, "auth-profile validate: --format must be text or json")
+		return exitUsageOrIO
+	}
+	return exitOK
+}
+
+func runAuthDraftBuild(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("auth-draft build", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	specPath := fs.String("spec", "", "explicit authentication draft spec JSON/YAML path or -")
+	out := fs.String("out", "-", "authentication profile output path or -")
+	format := fs.String("format", "yaml", "yaml or json")
+	force := fs.Bool("force", false, "overwrite an existing output")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if *specPath == "" {
+		fmt.Fprintln(stderr, "auth-draft build: --spec is required")
+		return exitUsageOrIO
+	}
+	data, err := readInput(*specPath, stdin)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	var spec authdraft.Spec
+	if err := decodeJSONOrYAML(data, filepath.Ext(*specPath), &spec); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	value, err := authdraft.Build(spec)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	var encoded []byte
+	switch *format {
+	case "yaml":
+		encoded, err = authprofile.MarshalYAML(value)
+	case "json":
+		encoded, err = json.MarshalIndent(value, "", "  ")
+	default:
+		fmt.Fprintln(stderr, "auth-draft build: --format must be yaml or json")
+		return exitUsageOrIO
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	encoded = append(encoded, '\n')
+	if err := writeOutput(*out, encoded, *force, stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	return exitOK
+}
+
+func runAuthReviewBundle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("auth-review bundle", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	profilePath := fs.String("profile", "", "authentication profile JSON/YAML path or -")
+	at := fs.String("at", "", "RFC3339 assessment time")
+	out := fs.String("out", "-", "review bundle JSON path or -")
+	force := fs.Bool("force", false, "overwrite an existing output")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if *profilePath == "" || *at == "" {
+		fmt.Fprintln(stderr, "auth-review bundle: --profile and --at are required")
+		return exitUsageOrIO
+	}
+	when, err := time.Parse(time.RFC3339, *at)
+	if err != nil {
+		fmt.Fprintln(stderr, "auth-review bundle: invalid --at:", err)
+		return exitUsageOrIO
+	}
+	value, err := loadAuthProfileInput(*profilePath, stdin)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	bundle, err := authreview.Build(value, when)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	encoded, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	encoded = append(encoded, '\n')
+	if err := writeOutput(*out, encoded, *force, stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	if !bundle.Promotable {
+		return exitRejected
+	}
+	return exitOK
+}
+
 func runEvidenceImport(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("evidence import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -989,6 +1138,17 @@ func loadProfileInput(path string, stdin io.Reader) (*profile.Profile, error) {
 	return profile.ParseYAML(data)
 }
 
+func loadAuthProfileInput(path string, stdin io.Reader) (*authprofile.Profile, error) {
+	if path != "-" {
+		return authprofile.LoadFile(path)
+	}
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		return nil, err
+	}
+	return authprofile.Parse(data)
+}
+
 func stdinCount(paths ...string) int {
 	count := 0
 	for _, path := range paths {
@@ -1004,12 +1164,32 @@ func decodeJSONOrYAML(data []byte, extension string, target any) error {
 	if extension == ".json" || (extension == "" && bytes.HasPrefix(bytes.TrimSpace(data), []byte("{"))) || (extension == "" && bytes.HasPrefix(bytes.TrimSpace(data), []byte("["))) {
 		decoder := json.NewDecoder(bytes.NewReader(data))
 		decoder.DisallowUnknownFields()
-		return decoder.Decode(target)
+		if err := decoder.Decode(target); err != nil {
+			return err
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				return fmt.Errorf("multiple JSON values are not supported")
+			}
+			return err
+		}
+		return nil
 	}
 	if extension == ".yaml" || extension == ".yml" || extension == "" {
 		decoder := yaml.NewDecoder(bytes.NewReader(data))
 		decoder.KnownFields(true)
-		return decoder.Decode(target)
+		if err := decoder.Decode(target); err != nil {
+			return err
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			if err == nil {
+				return fmt.Errorf("multiple YAML documents are not supported")
+			}
+			return err
+		}
+		return nil
 	}
 	return fmt.Errorf("unsupported JSON/YAML extension %q", extension)
 }

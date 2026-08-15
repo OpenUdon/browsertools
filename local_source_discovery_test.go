@@ -74,6 +74,27 @@ func TestDiscoverExplicitAmbiguityAndStaleProfile(t *testing.T) {
 	}
 }
 
+func TestDiscoverAuthenticationProfileWithoutRegistryPromotion(t *testing.T) {
+	root := t.TempDir()
+	data := mustReadDiscoveryFixture(t, filepath.Join("authprofile", "testdata", "valid-push.yaml"))
+	path := filepath.Join(root, "browser-authentication", "member.yaml")
+	writeDiscoveryFile(t, path, data)
+	report, err := DiscoverLocalSources(context.Background(), LocalSourceDiscoveryOptions{Roots: []string{root}, At: discoveryTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Candidates) != 1 || report.Candidates[0].Kind != LocalSourceAuthenticationProfile {
+		t.Fatalf("candidates = %#v", report.Candidates)
+	}
+	candidate := report.Candidates[0]
+	if candidate.Title != "Example member login" || candidate.FlowCount != 1 || len(candidate.Flows) != 1 || candidate.Flows[0] != "member_login_push" {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+	if len(report.Ambiguous) != 0 || len(report.Truncated) != 0 {
+		t.Fatalf("blockers = %#v %#v", report.Ambiguous, report.Truncated)
+	}
+}
+
 func TestDiscoverBoundsAreVisibleAndDuplicatesDoNotConsumeCandidateBound(t *testing.T) {
 	profileData := mustReadDiscoveryFixture(t, filepath.Join("..", "uws", "testdata", "browser-profile", "read-only.yaml"))
 	t.Run("visited", func(t *testing.T) {

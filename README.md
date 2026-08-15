@@ -112,6 +112,27 @@ go run ./cmd/browsertools registry search \
   --at 2026-08-14T00:00:00Z
 ```
 
+Portable sign-in recipes use a separate additive contract and remain local to
+the workflow package:
+
+```bash
+go run ./cmd/browsertools auth-draft build \
+  --spec ./authentication-spec.yaml \
+  --out ./browser-authentication/member.yaml
+go run ./cmd/browsertools auth-profile validate \
+  --input ./browser-authentication/member.yaml \
+  --at 2026-08-16T00:00:00Z
+go run ./cmd/browsertools auth-review bundle \
+  --profile ./browser-authentication/member.yaml \
+  --at 2026-08-16T00:00:00Z \
+  --out ./browser-authentication/member.review.json
+```
+
+Authentication recipes are intentionally excluded from static registry
+publication in this release. They contain only symbolic credential bindings;
+actual credentials, MFA responses, cookies, and sessions stay in the private
+runtime.
+
 Caller-supplied raw captures and derived artifacts can be kept in an explicit
 private local cache. Raw entries can never be publication eligible:
 
@@ -130,6 +151,9 @@ go run ./cmd/browsertools cache prune \
 
 - A complete typed model and validation helpers for UWS `browser-profile`
   documents.
+- Typed validation, deterministic drafting, digest-bound review, freshness,
+  and local discovery for package-local `uws.browser-authentication.1.0`
+  recipes.
 - Secret-free evidence records from browser and scraper tooling.
 - Draft profile generation from reviewed evidence.
 - Review bundles with validation, confidence, expiry, side-effect, and
@@ -159,6 +183,8 @@ go run ./cmd/browsertools cache prune \
 - Accounts, membership, a registry database, remote writes, or deployment
   credentials. Static catalogs are reviewed and deployed by existing
   repository/hosting workflows.
+- Publication of authentication recipes through the static browser capability
+  registry.
 
 ## Why Not Just OpenAPI?
 
@@ -193,6 +219,7 @@ website UI
 - [Typed-profile migration](docs/migration-typed-profile.md)
 - [Publishable capability bundles](docs/capability-bundles.md)
 - [Static registry and contribution workflow](docs/static-registry.md)
+- [Browser authentication profiles](docs/browser-authentication.md)
 - [Examples](examples/README.md)
 
 ## Development

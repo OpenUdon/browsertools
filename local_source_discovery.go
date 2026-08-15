@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/OpenUdon/browsertools/authprofile"
 	"github.com/OpenUdon/browsertools/bundle"
 	"github.com/OpenUdon/browsertools/profile"
 	eartifact "github.com/OpenUdon/evidence/artifact"
@@ -33,8 +34,9 @@ const (
 type LocalSourceKind string
 
 const (
-	LocalSourceProfile LocalSourceKind = "browser_profile"
-	LocalSourceBundle  LocalSourceKind = "capability_bundle"
+	LocalSourceProfile               LocalSourceKind = "browser_profile"
+	LocalSourceAuthenticationProfile LocalSourceKind = "browser_authentication_profile"
+	LocalSourceBundle                LocalSourceKind = "capability_bundle"
 )
 
 // LocalSourceDiscoveryOptions requires caller-selected roots and an explicit
@@ -57,6 +59,8 @@ type LocalSourceCandidate struct {
 	Origins     []string                  `json:"origins"`
 	Actions     []string                  `json:"actions"`
 	ActionCount int                       `json:"action_count"`
+	Flows       []string                  `json:"flows,omitempty"`
+	FlowCount   int                       `json:"flow_count,omitempty"`
 	Score       int                       `json:"score"`
 	Path        string                    `json:"path"`
 	SizeBytes   int64                     `json:"size_bytes"`
@@ -283,6 +287,30 @@ func classifyBrowserSource(path string, data []byte, at time.Time) (LocalSourceC
 			Status: eartifact.EffectiveStatus(value.Assessment, at), Provenance: value.Payload.Provenance.Source,
 		}, "bundle", nil
 	}
+	if profileDiscriminator == "uws.browser-authentication.1.0" {
+		value, err := authprofile.Parse(data)
+		if err != nil {
+			return LocalSourceCandidate{}, "authentication_profile", err
+		}
+		flows := authprofile.SortedFlowNames(value)
+		status := eartifact.LifecycleActive
+		expires, expiryErr := authprofile.ExpiresAt(value)
+		if expiryErr != nil {
+			return LocalSourceCandidate{}, "authentication_profile", expiryErr
+		}
+		if !at.Before(expires) {
+			status = eartifact.LifecycleStale
+		}
+		return LocalSourceCandidate{
+			Kind: LocalSourceAuthenticationProfile, Title: value.Info.Title,
+			Origins: authprofile.Origins(value), Actions: []string{}, Flows: flows, FlowCount: len(flows),
+			Score: discoveryScore(LocalSourceAuthenticationProfile, path, profile.Confidence(value.Confidence), len(flows)),
+			Path:  path, SizeBytes: int64(len(data)), Digest: digest.SHA256String(data), Status: status, Provenance: value.Evidence.Source,
+		}, "authentication_profile", nil
+	}
+	if strings.HasPrefix(profileDiscriminator, "uws.browser-authentication.") {
+		return LocalSourceCandidate{}, "authentication_profile", fmt.Errorf("unsupported browser authentication profile version %q", profileDiscriminator)
+	}
 	if strings.HasPrefix(profileDiscriminator, "uws.browser.") {
 		var value *profile.Profile
 		if strings.ToLower(filepath.Ext(path)) == ".json" {
@@ -441,6 +469,8 @@ func discoveryScore(kind LocalSourceKind, path string, confidence profile.Confid
 	score := 60
 	if kind == LocalSourceBundle {
 		score = 100
+	} else if kind == LocalSourceAuthenticationProfile {
+		score = 70
 	}
 	switch confidence {
 	case profile.ConfidenceHigh:
@@ -453,7 +483,7 @@ func discoveryScore(kind LocalSourceKind, path string, confidence profile.Confid
 	}
 	score += actions
 	lower := strings.ToLower(filepath.ToSlash(path))
-	for _, hint := range []string{"/browser-profiles/", "/capability-bundles/", "/browsertools/"} {
+	for _, hint := range []string{"/browser-profiles/", "/browser-authentication/", "/capability-bundles/", "/browsertools/"} {
 		if strings.Contains(lower, hint) {
 			score += 5
 			break

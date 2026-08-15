@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/OpenUdon/browsertools/authprofile"
+	"github.com/OpenUdon/browsertools/authreview"
 	capabilitybundle "github.com/OpenUdon/browsertools/bundle"
 	"github.com/OpenUdon/browsertools/cache"
 	"github.com/OpenUdon/browsertools/evidence"
@@ -40,6 +43,86 @@ func TestProfileValidateFromStdin(t *testing.T) {
 	if code != exitOK {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
+}
+
+func TestAuthenticationProfileDraftReviewCLI(t *testing.T) {
+	fixture, err := os.ReadFile("../../authprofile/testdata/valid-push.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"auth-profile", "validate", "--input", "-", "--at", "2026-08-16T00:00:00Z"}, bytes.NewReader(fixture), &stdout, &stderr)
+	if code != exitOK || strings.TrimSpace(stdout.String()) != "valid" {
+		t.Fatalf("validate code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+
+	tmp := t.TempDir()
+	specPath := filepath.Join(tmp, "spec.yaml")
+	profilePath := filepath.Join(tmp, "member.yaml")
+	reviewPath := filepath.Join(tmp, "review.json")
+	spec := strings.Replace(string(fixture), "profile: uws.browser-authentication.1.0\n", "", 1)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"auth-draft", "build", "--spec", specPath, "--out", profilePath}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("draft code=%d stderr=%q", code, stderr.String())
+	}
+	value, err := authprofile.LoadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Profile != "uws.browser-authentication.1.0" {
+		t.Fatalf("profile = %q", value.Profile)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"auth-review", "bundle", "--profile", profilePath, "--at", "2026-08-16T00:00:00Z", "--out", reviewPath}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("review code=%d stderr=%q", code, stderr.String())
+	}
+	data, err := os.ReadFile(reviewPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewed authreview.Bundle
+	if err := json.Unmarshal(data, &reviewed); err != nil {
+		t.Fatal(err)
+	}
+	if err := authreview.Verify(&reviewed, mustTime(t, "2026-08-16T00:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"auth-profile", "validate", "--input", profilePath, "--at", "2026-09-14T00:00:00Z", "--format", "json"}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitRejected || !strings.Contains(stdout.String(), `"valid":false`) {
+		t.Fatalf("stale code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestAuthenticationProfileCannotBePublishedAsCapabilityBundle(t *testing.T) {
+	fixture := "../../authprofile/testdata/valid-push.yaml"
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"registry", "publish", "--root", t.TempDir(), "--bundle", fixture,
+		"--at", "2026-08-16T00:00:00Z",
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitRejected {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func mustTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
 }
 
 func TestEvidenceImportFromStdin(t *testing.T) {

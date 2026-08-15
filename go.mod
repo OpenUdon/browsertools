@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/OpenUdon/evidence v0.0.0-20260815084845-0c17258b9736
-	github.com/OpenUdon/uws v0.0.0-20260815085002-8192f06ffb2f
+	github.com/OpenUdon/uws v0.0.0-20260815104216-bcd650c2694f
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
 	gopkg.in/yaml.v3 v3.0.1
 )
