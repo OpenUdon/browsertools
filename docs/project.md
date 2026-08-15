@@ -227,13 +227,14 @@ The expected artifact flow is:
 2. **Normalized evidence**: secret-free records with origin, observation kind,
    candidate locators, candidate outputs, diagnostics, provenance, and
    redaction state.
-3. **Draft profile**: a candidate browser-profile document generated from
-   normalized evidence and review input.
+3. **Draft profile**: a typed candidate generated from normalized evidence and
+   an explicit `draft.Spec`. Evidence may propose locators and outputs, but it
+   never invents macros or assumes that an action is read-only.
 4. **Validation report**: schema validation plus browsertools semantic review
    checks.
-5. **Review bundle**: profile, validation report, evidence summary, unresolved
-   gaps, confidence rationale, expiry, side-effect assessment, and
-   revalidation plan.
+5. **Review bundle**: typed profile, profile/evidence digests, assessment time,
+   validation and fixture-revalidation results, explicit locator decisions,
+   unresolved gaps, confidence, expiry, origins, and side-effect assessment.
 6. **Reviewed profile**: the artifact consumed by UWS/OpenUdon/browser
    runtimes.
 
@@ -248,10 +249,14 @@ wrapper sidecars belong here.
 Browsertools should fail closed when:
 
 - a locator is ambiguous
+- an action or declared locator lacks matching saved evidence
 - a target origin is outside the allowlist
 - required side-effect metadata is missing
 - confirmation policy is missing or inconsistent
 - evidence is expired
+- a side-effectful action has no completion wait after its final actionable
+  macro
+- a bundle digest no longer matches its profile or evidence
 - CSS fallback output lacks a fallback reason or validation schema
 - generated output fails the UWS browser-profile schema
 
@@ -282,7 +287,7 @@ They should remain reviewed profile features, not Playwright command traces,
 arbitrary JavaScript, raw coordinate automation, MFA/login scripting,
 credential/session storage, or runtime retry/session policy.
 
-## Planned Milestones
+## Implemented Milestones
 
 1. Harness and boundary setup.
 2. Go module scaffold and browser-profile validation.
@@ -298,21 +303,32 @@ credential/session storage, or runtime retry/session policy.
 12. Migrate Browsertools-owned examples from UWS.
 13. Wrapper-service/OpenAPI guidance and examples.
 14. Public API stabilization and documentation.
+15. Revalidation evidence coverage hardening.
+16. Parallel-lane harness migration.
+17. Complete typed profile model and canonical safety primitives.
+18. Deterministic evidence matching and revalidation (`E01`).
+19. Strict drafting and unified promotion (`P01`).
+20. Offline file-first CLI and digest-bound handoff (`M18`).
 
-## Example Future CLI Shape
+## CLI
 
-Browsertools is scaffolded as a Go module. These commands remain planned CLI
-entry points; current verification uses `go test ./...`, `go vet ./...`, and
-`git diff --check`.
+The CLI is offline and file-first. It accepts `-` for one input or for output,
+requires explicit redaction state during adapter import, and never launches a
+browser.
 
 ```bash
-browsertools validate-profile ./profiles/example.yaml
-browsertools draft from-playwright --evidence ./evidence/a11y.json --out ./profiles/example.yaml
-browsertools draft from-llm-scraper --input ./evidence/extract.json --out ./profiles/example.yaml
-browsertools draft from-crawl4ai --input ./evidence/crawl.json --out ./profiles/example.yaml
-browsertools draft from-firecrawl --input ./evidence/firecrawl.json --out ./profiles/example.yaml
-browsertools review bundle --profile ./profiles/example.yaml --evidence ./evidence --out ./review
-browsertools revalidate --profile ./profiles/example.yaml --dry-run
+browsertools profile validate --input ./profiles/example.yaml
+browsertools evidence import --adapter playwright --input ./capture.json \
+  --origin https://example.test --redaction-status not_required \
+  --out ./evidence.json
+browsertools draft build --evidence ./evidence.json --spec ./draft-spec.yaml \
+  --out ./profiles/example.yaml
+browsertools review bundle --profile ./profiles/example.yaml \
+  --evidence ./evidence.json --at 2026-08-14T00:00:00Z \
+  --out ./review-bundle.json
+browsertools revalidate check --profile ./profiles/example.yaml \
+  --evidence ./evidence.json --at 2026-08-14T00:00:00Z \
+  --out ./revalidation.json
 ```
 
 ## Fixture Policy

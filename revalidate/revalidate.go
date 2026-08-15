@@ -1,125 +1,104 @@
-// Package revalidate defines dry-run revalidation contracts for reviewed
-// browser-profile documents.
-//
-// Revalidation checks a profile's consistency against a set of normalized
-// evidence records without performing any browser interaction or side effects.
-// The default implementation (Check) operates entirely on in-memory data;
-// live browser revalidation is represented by the LiveRevalidator stub which
-// always returns ErrLiveNotSupported.
-//
-// Checks performed:
-//   - Origin: every evidence record's origin must be covered by the profile's
-//     info.origin allowlist.
-//   - Evidence coverage: every profile action must have at least one matching
-//     evidence record by ActionHint.
-//   - Locators: each action that has CandidateLocators in the evidence must
-//     have at least one locator present (non-empty Role).
-//   - Ambiguity: locator evidence carrying AmbiguityNote must be resolved
-//     before promotion.
-//   - Outputs: each action output must have a valid source-specific shape.
-//   - Expiry: verification.lastVerifiedAt + expiresAfter must not have elapsed.
-//   - CSS fallback: outputs with source=css must carry a fallbackReason.
-//   - Side-effect confirmation: actions with non-read_only sideEffects must
-//     have confirmationPolicy.required=true and a post-action wait.
+// Package revalidate performs deterministic, fixture-only health checks for
+// reviewed browser profiles. It never launches a browser, contacts a network,
+// binds a session, or executes an action.
 package revalidate
 
 import (
-	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"time"
 
 	"github.com/OpenUdon/browsertools/evidence"
-	"github.com/OpenUdon/browsertools/internal/duration"
-	"github.com/OpenUdon/browsertools/internal/profilechecks"
+	"github.com/OpenUdon/browsertools/profile"
 )
 
-// ErrLiveNotSupported is returned by LiveRevalidator. Live browser revalidation
-// is never performed in default tests.
-var ErrLiveNotSupported = errors.New("live browser revalidation is not supported in this build; use a LiveRevalidator implementation that wires a real browser session")
-
-// CheckKind classifies a revalidation check failure.
+// CheckKind classifies a revalidation failure.
 type CheckKind string
 
 const (
+	CheckInvalidProfile       CheckKind = "invalid_profile"
+	CheckInvalidEvidence      CheckKind = "invalid_evidence"
 	CheckOriginMismatch       CheckKind = "origin_mismatch"
 	CheckMissingEvidence      CheckKind = "missing_evidence"
 	CheckMissingLocator       CheckKind = "missing_locator"
 	CheckAmbiguousLocator     CheckKind = "ambiguous_locator"
 	CheckExpired              CheckKind = "expired"
-	CheckInvalidOutputShape   CheckKind = "invalid_output_shape"
-	CheckCSSMissingFallback   CheckKind = "css_missing_fallback_reason"
-	CheckSideEffectNoConfirm  CheckKind = "side_effect_no_confirmation"
 	CheckSideEffectNoSafeWait CheckKind = "side_effect_no_safe_wait"
 )
 
-// Failure is a single revalidation check failure.
+// Failure is one deterministic, path-tagged failed check.
 type Failure struct {
 	Kind    CheckKind `json:"kind"`
 	Field   string    `json:"field"`
 	Message string    `json:"message"`
 }
 
-// Result is the outcome of a revalidation run.
+// Result is the outcome of a fixture revalidation pass.
 type Result struct {
-	// OK is true when all checks pass.
-	OK bool `json:"ok"`
-	// Failures lists every check that did not pass, sorted by (Kind, Field).
-	Failures []Failure `json:"failures,omitempty"`
+	OK       bool      `json:"ok"`
+	Failures []Failure `json:"failures"`
 }
 
-// Revalidator is implemented by both the fixture-based Check function (wrapped
-// as a value type) and the LiveRevalidator stub.
-type Revalidator interface {
-	Revalidate(profile map[string]any, records []evidence.Record) (Result, error)
-}
-
-// FixtureRevalidator wraps Check as a Revalidator.
-type FixtureRevalidator struct{}
-
-// Revalidate implements Revalidator using the pure fixture-based Check function.
-func (FixtureRevalidator) Revalidate(profile map[string]any, records []evidence.Record) (Result, error) {
-	return Check(profile, records), nil
-}
-
-// LiveRevalidator is a stub that satisfies Revalidator but always returns
-// ErrLiveNotSupported. A real implementation would wire a browser session.
-type LiveRevalidator struct{}
-
-// Revalidate implements Revalidator and always returns ErrLiveNotSupported.
-func (LiveRevalidator) Revalidate(_ map[string]any, _ []evidence.Record) (Result, error) {
-	return Result{}, ErrLiveNotSupported
-}
-
-// Check runs all dry-run revalidation checks against the given profile map and
-// evidence records. It never contacts a browser or network service.
-// The profile map is the same raw map[string]any shape produced by draft.Build
-// or loaded from a YAML/JSON file.
-func Check(prof map[string]any, records []evidence.Record) Result {
+// CheckAt checks profile against normalized evidence and explicit ambiguity
+// decisions at now. A zero now is rejected so expiry results are reproducible.
+func CheckAt(prof *profile.Profile, records []evidence.Record, decisions []evidence.LocatorDecision, now time.Time) (Result, error) {
+	if prof == nil {
+		return Result{}, fmt.Errorf("revalidate: profile is required")
+	}
+	if now.IsZero() {
+		return Result{}, fmt.Errorf("revalidate: assessment time is required")
+	}
 	var failures []Failure
 
-	failures = append(failures, checkOrigins(prof, records)...)
-	failures = append(failures, checkActionEvidence(prof, records)...)
-	failures = append(failures, checkLocators(prof, records)...)
-	failures = append(failures, checkExpiry(prof)...)
-	failures = append(failures, semanticFailures(profilechecks.CheckOutputs(prof))...)
-	failures = append(failures, semanticFailures(profilechecks.CheckCSSFallbacks(prof))...)
-	failures = append(failures, semanticFailures(profilechecks.CheckSideEffectConfirmation(prof))...)
-	failures = append(failures, semanticFailures(profilechecks.CheckSideEffectSafeWait(prof))...)
+	value, err := prof.Value()
+	if err != nil {
+		failures = append(failures, Failure{Kind: CheckInvalidProfile, Field: "$", Message: err.Error()})
+	} else if err := profile.Validate(value); err != nil {
+		failures = append(failures, Failure{Kind: CheckInvalidProfile, Field: "$", Message: err.Error()})
+	}
 
-	sort.SliceStable(failures, func(i, j int) bool {
+	failures = append(failures, checkOrigins(prof, records)...)
+	failures = append(failures, checkRecordValidity(records)...)
+	failures = append(failures, checkEvidence(prof, records, decisions)...)
+	failures = append(failures, checkExpiry(prof, now)...)
+	failures = append(failures, checkSafeWaits(prof)...)
+
+	sort.Slice(failures, func(i, j int) bool {
 		if failures[i].Kind != failures[j].Kind {
 			return failures[i].Kind < failures[j].Kind
 		}
-		return failures[i].Field < failures[j].Field
+		if failures[i].Field != failures[j].Field {
+			return failures[i].Field < failures[j].Field
+		}
+		return failures[i].Message < failures[j].Message
 	})
-
-	return Result{OK: len(failures) == 0, Failures: failures}
+	if failures == nil {
+		failures = []Failure{}
+	}
+	return Result{OK: len(failures) == 0, Failures: failures}, nil
 }
 
-// checkOrigins verifies every evidence record origin is in the profile allowlist.
-func checkOrigins(prof map[string]any, records []evidence.Record) []Failure {
-	allowed := originSet(prof)
+func checkRecordValidity(records []evidence.Record) []Failure {
+	var failures []Failure
+	for i, record := range records {
+		raw := evidence.RawRecord{Record: record}
+		normalized, err := raw.Normalize()
+		if err != nil {
+			failures = append(failures, Failure{
+				Kind: CheckInvalidEvidence, Field: fmt.Sprintf("evidence[%d]", i), Message: err.Error(),
+			})
+		} else if !reflect.DeepEqual(record, normalized) {
+			failures = append(failures, Failure{
+				Kind: CheckInvalidEvidence, Field: fmt.Sprintf("evidence[%d]", i),
+				Message: "record is not in canonical normalized form; retain the value returned by RawRecord.Normalize",
+			})
+		}
+	}
+	return failures
+}
+
+func checkOrigins(prof *profile.Profile, records []evidence.Record) []Failure {
 	var failures []Failure
 	seen := map[string]bool{}
 	for _, rec := range records {
@@ -127,179 +106,187 @@ func checkOrigins(prof map[string]any, records []evidence.Record) []Failure {
 			continue
 		}
 		seen[rec.Origin] = true
-		if !allowed[rec.Origin] {
+		canonical, err := profile.ParseOrigin(rec.Origin)
+		if err != nil {
 			failures = append(failures, Failure{
-				Kind:    CheckOriginMismatch,
-				Field:   "info.origin",
-				Message: fmt.Sprintf("evidence origin %q is not in the profile origin allowlist %v", rec.Origin, sortedMapKeys(allowed)),
+				Kind: CheckOriginMismatch, Field: "info.origin",
+				Message: fmt.Sprintf("evidence origin %q is invalid: %v", rec.Origin, err),
 			})
-		}
-	}
-	return failures
-}
-
-func checkActionEvidence(prof map[string]any, records []evidence.Record) []Failure {
-	actions, _ := prof["actions"].(map[string]any)
-	if len(actions) == 0 {
-		return nil
-	}
-	covered := map[string]bool{}
-	for _, rec := range records {
-		if rec.ActionHint != "" {
-			covered[rec.ActionHint] = true
-		}
-	}
-	var failures []Failure
-	for action := range actions {
-		if !covered[action] {
-			failures = append(failures, Failure{
-				Kind:    CheckMissingEvidence,
-				Field:   fmt.Sprintf("actions.%s", action),
-				Message: fmt.Sprintf("action %q has no matching evidence record; revalidate with saved fixture evidence before promoting", action),
-			})
-		}
-	}
-	return failures
-}
-
-// checkLocators verifies each evidence action group has at least one locator.
-func checkLocators(prof map[string]any, records []evidence.Record) []Failure {
-	actions, _ := prof["actions"].(map[string]any)
-	byHint := map[string][]evidence.Record{}
-	for _, rec := range records {
-		if rec.ActionHint == "" {
-			continue // no action hint — cannot match to a profile action
-		}
-		byHint[rec.ActionHint] = append(byHint[rec.ActionHint], rec)
-	}
-	var failures []Failure
-	for hint, recs := range byHint {
-		if _, hasAction := actions[hint]; !hasAction {
 			continue
 		}
-		hasLocator := false
-		var ambiguityNote string
-		for _, rec := range recs {
-			for _, loc := range rec.CandidateLocators {
-				if loc.Role != "" {
-					hasLocator = true
-				}
-				if loc.AmbiguityNote != "" && ambiguityNote == "" {
-					ambiguityNote = loc.AmbiguityNote
-				}
+		allowed := false
+		for _, candidate := range prof.Info.Origin {
+			if candidate == canonical {
+				allowed = true
+				break
 			}
 		}
-		if !hasLocator {
+		if !allowed {
 			failures = append(failures, Failure{
-				Kind:    CheckMissingLocator,
-				Field:   fmt.Sprintf("actions.%s", hint),
-				Message: fmt.Sprintf("action %q has no candidate locators in evidence; add accessibility snapshot evidence before promoting", hint),
-			})
-		}
-		if ambiguityNote != "" {
-			failures = append(failures, Failure{
-				Kind:    CheckAmbiguousLocator,
-				Field:   fmt.Sprintf("actions.%s", hint),
-				Message: fmt.Sprintf("action %q has unresolved ambiguous locator evidence: %s", hint, ambiguityNote),
+				Kind: CheckOriginMismatch, Field: "info.origin",
+				Message: fmt.Sprintf("evidence origin %q is not in the profile origin allowlist", canonical),
 			})
 		}
 	}
 	return failures
 }
 
-// checkExpiry verifies lastVerifiedAt + expiresAfter has not elapsed.
-// Malformed timestamps or durations produce a CheckExpired failure rather than
-// being silently skipped, so broken metadata cannot mask an expired profile.
-func checkExpiry(prof map[string]any) []Failure {
-	verif, _ := prof["verification"].(map[string]any)
-	expiresAfter, _ := prof["expiresAfter"].(string)
-	if verif == nil || expiresAfter == "" {
-		return nil
-	}
-	lastVerified, _ := verif["lastVerifiedAt"].(string)
-	if lastVerified == "" {
-		return nil
-	}
-	t, err := time.Parse(time.RFC3339, lastVerified)
-	if err != nil {
-		return []Failure{{
-			Kind:    CheckExpired,
-			Field:   "verification.lastVerifiedAt",
-			Message: fmt.Sprintf("malformed lastVerifiedAt %q: %v", lastVerified, err),
-		}}
-	}
-	dur, err := duration.Parse(expiresAfter)
-	if err != nil {
-		return []Failure{{
-			Kind:    CheckExpired,
-			Field:   "expiresAfter",
-			Message: fmt.Sprintf("malformed expiresAfter %q: %v", expiresAfter, err),
-		}}
-	}
-	if time.Now().UTC().After(t.Add(dur)) {
-		return []Failure{{
-			Kind:    CheckExpired,
-			Field:   "verification.lastVerifiedAt",
-			Message: fmt.Sprintf("profile last verified at %s; expiresAfter=%s has elapsed — revalidate with a live browser before using in production", lastVerified, expiresAfter),
-		}}
-	}
-	return nil
+type declaredLocator struct {
+	path string
+	loc  profile.Locator
 }
 
-func semanticFailures(issues []profilechecks.Issue) []Failure {
-	failures := make([]Failure, 0, len(issues))
-	for _, issue := range issues {
-		failures = append(failures, Failure{
-			Kind:    checkKind(issue.Rule),
-			Field:   issue.Field,
-			Message: issue.Message,
-		})
+func checkEvidence(prof *profile.Profile, records []evidence.Record, decisions []evidence.LocatorDecision) []Failure {
+	byAction := map[string][]evidence.Record{}
+	for _, rec := range records {
+		if rec.ActionHint != "" {
+			byAction[rec.ActionHint] = append(byAction[rec.ActionHint], rec)
+		}
+	}
+	var failures []Failure
+	for _, actionName := range prof.SortedActionNames() {
+		actionRecords := byAction[actionName]
+		if len(actionRecords) == 0 {
+			failures = append(failures, Failure{
+				Kind: CheckMissingEvidence, Field: "actions." + actionName,
+				Message: fmt.Sprintf("action %q has no matching evidence record", actionName),
+			})
+			continue
+		}
+		for _, declared := range actionLocators(actionName, prof.Actions[actionName]) {
+			matches := matchingCandidates(declared.loc, actionRecords)
+			if len(matches) == 0 {
+				failures = append(failures, Failure{
+					Kind: CheckMissingLocator, Field: declared.path,
+					Message: fmt.Sprintf("declared locator role=%q name=%q has no matching saved evidence", declared.loc.Role, declared.loc.Name),
+				})
+				continue
+			}
+			ambiguous := false
+			for _, match := range matches {
+				if match.AmbiguityNote != "" {
+					ambiguous = true
+					break
+				}
+			}
+			if ambiguous && !hasDecision(actionName, declared.loc, decisions) {
+				failures = append(failures, Failure{
+					Kind: CheckAmbiguousLocator, Field: declared.path,
+					Message: fmt.Sprintf("declared locator role=%q name=%q has ambiguous evidence without a reviewed rationale", declared.loc.Role, declared.loc.Name),
+				})
+			}
+		}
 	}
 	return failures
 }
 
-func checkKind(rule profilechecks.Rule) CheckKind {
-	switch rule {
-	case profilechecks.RuleInvalidOutputShape:
-		return CheckInvalidOutputShape
-	case profilechecks.RuleCSSMissingFallback:
-		return CheckCSSMissingFallback
-	case profilechecks.RuleSideEffectNoConfirm:
-		return CheckSideEffectNoConfirm
-	case profilechecks.RuleSideEffectNoSafeWait:
-		return CheckSideEffectNoSafeWait
-	default:
-		return CheckKind(rule)
+func actionLocators(actionName string, action profile.Action) []declaredLocator {
+	var out []declaredLocator
+	for i, step := range action.Sequence {
+		base := fmt.Sprintf("actions.%s.sequence[%d]", actionName, i)
+		if loc := step.Locator(); loc != nil {
+			out = append(out, declaredLocator{path: base + ".locator", loc: *loc})
+		}
+		if wait := step.PostWait(); wait != nil && wait.Locator != nil {
+			out = append(out, declaredLocator{path: base + ".wait_for", loc: *wait.Locator})
+		}
 	}
-}
-
-// --- helpers ---
-
-func originSet(prof map[string]any) map[string]bool {
-	info, _ := prof["info"].(map[string]any)
-	if info == nil {
-		return map[string]bool{}
+	outputNames := make([]string, 0, len(action.Outputs))
+	for name := range action.Outputs {
+		outputNames = append(outputNames, name)
 	}
-	out := map[string]bool{}
-	switch v := info["origin"].(type) {
-	case string:
-		out[v] = true
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out[s] = true
-			}
+	sort.Strings(outputNames)
+	for _, name := range outputNames {
+		outSpec := action.Outputs[name]
+		if outSpec.Source == profile.OutputA11y && outSpec.Locator != nil {
+			out = append(out, declaredLocator{path: fmt.Sprintf("actions.%s.outputs.%s.locator", actionName, name), loc: *outSpec.Locator})
 		}
 	}
 	return out
 }
 
-// sortedMapKeys returns the keys of any map[string]V in sorted order.
-func sortedMapKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+func matchingCandidates(loc profile.Locator, records []evidence.Record) []evidence.CandidateLocator {
+	var matches []evidence.CandidateLocator
+	for _, rec := range records {
+		for _, candidate := range rec.CandidateLocators {
+			if candidate.Role == string(loc.Role) && candidate.Name == loc.Name && candidate.Text == loc.Text && candidate.Value == loc.Value {
+				matches = append(matches, candidate)
+			}
+		}
+		for _, output := range rec.CandidateOutputs {
+			candidate := output.Locator
+			if candidate != nil && candidate.Role == string(loc.Role) && candidate.Name == loc.Name && candidate.Text == loc.Text && candidate.Value == loc.Value {
+				matches = append(matches, *candidate)
+			}
+		}
 	}
-	sort.Strings(keys)
-	return keys
+	return matches
+}
+
+func hasDecision(actionName string, loc profile.Locator, decisions []evidence.LocatorDecision) bool {
+	candidate := evidence.CandidateLocator{Role: string(loc.Role), Name: loc.Name, Text: loc.Text, Value: loc.Value}
+	for _, decision := range decisions {
+		if decision.Rationale != "" && decision.Matches(actionName, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func checkExpiry(prof *profile.Profile, now time.Time) []Failure {
+	verifiedAt, err := time.Parse(time.RFC3339, prof.Verification.LastVerifiedAt)
+	if err != nil {
+		return []Failure{{Kind: CheckExpired, Field: "verification.lastVerifiedAt", Message: err.Error()}}
+	}
+	expiresAt, err := prof.ExpiresAfter.AddTo(verifiedAt)
+	if err != nil {
+		return []Failure{{Kind: CheckExpired, Field: "expiresAfter", Message: err.Error()}}
+	}
+	if !now.Before(expiresAt) {
+		return []Failure{{
+			Kind: CheckExpired, Field: "verification.lastVerifiedAt",
+			Message: fmt.Sprintf("profile expired at %s", expiresAt.UTC().Format(time.RFC3339)),
+		}}
+	}
+	return nil
+}
+
+func checkSafeWaits(prof *profile.Profile) []Failure {
+	var failures []Failure
+	for _, actionName := range prof.SortedActionNames() {
+		action := prof.Actions[actionName]
+		if !hasWriteSideEffect(action) {
+			continue
+		}
+		last := -1
+		for i, step := range action.Sequence {
+			switch step.Kind {
+			case profile.StepClick, profile.StepTypeText, profile.StepCheckRadio, profile.StepUncheck, profile.StepSelectOption:
+				last = i
+			}
+		}
+		safe := false
+		if last >= 0 {
+			safe = action.Sequence[last].PostWait() != nil
+			if !safe && last+1 < len(action.Sequence) {
+				safe = action.Sequence[last+1].Kind == profile.StepWaitFor
+			}
+		}
+		if !safe {
+			failures = append(failures, Failure{
+				Kind: CheckSideEffectNoSafeWait, Field: "actions." + actionName + ".sequence",
+				Message: fmt.Sprintf("side-effectful action %q has no completion wait after its final actionable macro", actionName),
+			})
+		}
+	}
+	return failures
+}
+
+func hasWriteSideEffect(action profile.Action) bool {
+	for _, effect := range action.SideEffects {
+		if effect != profile.SideEffectReadOnly {
+			return true
+		}
+	}
+	return false
 }

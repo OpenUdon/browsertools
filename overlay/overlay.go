@@ -17,7 +17,14 @@
 //   - The wrapper service's OpenAPI description belongs with the service.
 package overlay
 
-import "github.com/OpenUdon/browsertools/review"
+import (
+	"fmt"
+	"time"
+
+	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/review"
+)
 
 // New returns an initialized Sidecar with empty (non-nil) OperationMappings so
 // JSON serializes as {} not null.
@@ -56,8 +63,8 @@ type OperationMapping struct {
 // service's OpenAPI contract to its underlying browser-profile review bundle.
 //
 // All fields with json tags are stable for serialization. The ReviewBundle
-// field embeds the full review.Bundle so consumers can check the promotion
-// gate (Validation.Valid && len(Gaps)==0) without loading a separate file.
+// field embeds the full review.Bundle so consumers can verify its digests and
+// current promotion gate without loading a separate bundle file.
 type Sidecar struct {
 	// OverlayVersion is the sidecar format version. Currently "1".
 	OverlayVersion string `json:"overlayVersion"`
@@ -72,8 +79,7 @@ type Sidecar struct {
 	// YAML file that backs the wrapper service's UI operations.
 	BrowserProfile string `json:"browserProfile"`
 	// ReviewBundle is the embedded review.Bundle for the browser-profile. Callers
-	// MUST check ReviewBundle.Validation.Valid and len(ReviewBundle.Gaps) == 0
-	// before treating the sidecar as reviewed.
+	// must use Sidecar.Verify before treating it as reviewed.
 	ReviewBundle review.Bundle `json:"reviewBundle"`
 	// OperationMappings maps each wrapper OpenAPI operationId to the corresponding
 	// browser-profile action. Keyed by OpenAPI operationId for fast lookup.
@@ -81,4 +87,24 @@ type Sidecar struct {
 	OperationMappings map[string]OperationMapping `json:"operationMappings"`
 	// Lifecycle records the current review state of this sidecar.
 	Lifecycle Lifecycle `json:"lifecycle"`
+}
+
+// Verify checks lifecycle, operation mappings, bundle digests, evidence, and
+// current revalidation state before a sidecar is used for handoff.
+func (s Sidecar) Verify(prof *profile.Profile, records []evidence.Record, now time.Time) error {
+	if s.Lifecycle != LifecycleReviewed && s.Lifecycle != LifecycleExported {
+		return fmt.Errorf("overlay: lifecycle %q is not promotable", s.Lifecycle)
+	}
+	if prof == nil {
+		return fmt.Errorf("overlay: profile is required")
+	}
+	for operationID, mapping := range s.OperationMappings {
+		if mapping.OpenAPIOperationID != operationID {
+			return fmt.Errorf("overlay: mapping key %q does not match openapiOperationId %q", operationID, mapping.OpenAPIOperationID)
+		}
+		if _, ok := prof.Actions[mapping.ProfileActionName]; !ok {
+			return fmt.Errorf("overlay: mapping %q references unknown profile action %q", operationID, mapping.ProfileActionName)
+		}
+	}
+	return review.Verify(&s.ReviewBundle, prof, records, now)
 }

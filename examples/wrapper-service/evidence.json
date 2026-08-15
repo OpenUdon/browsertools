@@ -1,0 +1,13 @@
+[
+  {
+    "origin": "https://status.example.test",
+    "observationKind": "accessibility_snapshot",
+    "observedAt": "2026-06-01T00:00:00Z",
+    "actionHint": "get_status",
+    "candidateLocators": [
+      {"role": "status", "name": "Overall"}
+    ],
+    "redactionStatus": "not_required",
+    "provenance": {"tool": "synthetic"}
+  }
+]

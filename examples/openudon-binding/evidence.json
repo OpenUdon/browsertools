@@ -1,0 +1,24 @@
+[
+  {
+    "origin": "https://en.wikipedia.org",
+    "observationKind": "accessibility_snapshot",
+    "observedAt": "2026-05-30T00:00:00Z",
+    "actionHint": "navigate_to_article",
+    "candidateLocators": [
+      {"role": "link", "name": "Disambiguation"}
+    ],
+    "redactionStatus": "not_required",
+    "provenance": {"tool": "playwright"}
+  },
+  {
+    "origin": "https://en.wikipedia.org",
+    "observationKind": "accessibility_snapshot",
+    "observedAt": "2026-05-31T00:00:00Z",
+    "actionHint": "extract_article",
+    "candidateLocators": [
+      {"role": "heading"}
+    ],
+    "redactionStatus": "not_required",
+    "provenance": {"tool": "playwright"}
+  }
+]

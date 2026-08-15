@@ -25,49 +25,122 @@ The full pipeline from evidence to a reviewable bundle:
 
 ```go
 import (
-    "github.com/OpenUdon/browsertools/adapter"
-    "github.com/OpenUdon/browsertools/adapter/playwright"
-    "github.com/OpenUdon/browsertools/draft"
-    "github.com/OpenUdon/browsertools/evidence"
-    "github.com/OpenUdon/browsertools/review"
+	"time"
+
+	"github.com/OpenUdon/browsertools/adapter"
+	"github.com/OpenUdon/browsertools/adapter/playwright"
+	"github.com/OpenUdon/browsertools/bundle"
+	"github.com/OpenUdon/browsertools/draft"
+	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/review"
 )
 
 // 1. Import saved Playwright snapshot as normalized evidence.
 a := &playwright.Adapter{}
 records, err := a.Import(snapshotJSON, adapter.Options{
-    Origin:          "https://example.test",
-    ActionHint:      "read_status",
-    RedactionStatus: evidence.RedactionNotRequired,
+	Origin:          "https://example.test",
+	ActionHint:      "read_status",
+	RedactionStatus: evidence.RedactionNotRequired,
 })
 
-// 2. Build a deterministic draft profile from the evidence.
-result, err := draft.Build(records, draft.Options{
-    Info:         draft.ProfileInfo{Title: "Example", Origin: "https://example.test"},
-    Confidence:   "medium",
-    ExpiresAfter: "P30D",
+// 2. Add explicit action intent. Evidence never invents a click or assumes
+// that an action is read-only.
+result, err := draft.Build(records, draft.Spec{
+	Info:            profile.Info{Title: "Example", Origin: profile.Origins{"https://example.test"}},
+	ObservationKind: profile.ObservationAccessibilitySnapshot,
+	Confidence:      profile.ConfidenceMedium,
+	ExpiresAfter:    "P30D",
+	Actions: map[string]draft.ActionSpec{
+		"read_status": {
+			Sequence: []profile.Step{
+				{Kind: profile.StepNavigate, Navigate: "/status"},
+				{Kind: profile.StepWaitFor, WaitFor: &profile.WaitForCondition{
+					Locator: &profile.Locator{Role: profile.RoleStatus, Name: "OK"},
+				}},
+			},
+			SideEffects:        []profile.SideEffect{profile.SideEffectReadOnly},
+			ConfirmationPolicy: profile.ConfirmationPolicy{Required: false},
+		},
+	},
 })
 
-// 3. Build a review bundle — check Bundle.Gaps before promoting.
-bundle := review.Build(result.Draft, records)
-if !bundle.Validation.Valid || len(bundle.Gaps) > 0 {
-    // fix gaps before promoting
+// 3. Build a digest-bound bundle at an explicit assessment time.
+assessedAt := time.Now().UTC()
+reviewed, err := review.Build(result.Profile, records, result.Decisions, assessedAt)
+if err != nil || !reviewed.Promotable() {
+	// fix gaps before promoting
 }
+
+// 4. Wrap the exact reviewed inputs in an inert publication bundle.
+published, err := bundle.Build(bundle.BuildOptions{
+	ID: "example/status", Release: "1.0.0", Source: "reviewed_fixture",
+	License: "CC0-1.0", Profile: result.Profile, Review: reviewed,
+	Evidence: records, PublishedAt: assessedAt,
+})
 ```
 
-Validate an existing profile file:
+The CLI exposes the same offline pipeline:
 
 ```bash
-go test ./profile/ -run TestValidateExampleProfiles
+go run ./cmd/browsertools profile validate --input ./profiles/example.yaml
+go run ./cmd/browsertools evidence import \
+  --adapter playwright --input ./capture.json \
+  --origin https://example.test --redaction-status not_required \
+  --out ./evidence.json
+go run ./cmd/browsertools draft build \
+  --evidence ./evidence.json --spec ./draft-spec.yaml \
+  --out ./profile.yaml
+go run ./cmd/browsertools review bundle \
+  --profile ./profile.yaml --evidence ./evidence.json \
+  --at 2026-08-14T00:00:00Z --out ./review-bundle.json
+go run ./cmd/browsertools revalidate check \
+  --profile ./profile.yaml --evidence ./evidence.json \
+  --at 2026-08-14T00:00:00Z --out ./revalidation.json
+go run ./cmd/browsertools bundle build \
+  --id example/status --release 1.0.0 \
+  --profile ./profile.yaml --review ./review-bundle.json \
+  --evidence ./evidence.json --source reviewed_fixture --license CC0-1.0 \
+  --published-at 2026-08-14T00:00:00Z --out ./capability-bundle.json
+go run ./cmd/browsertools bundle verify \
+  --input ./capability-bundle.json --at 2026-08-14T00:00:00Z
+go run ./cmd/browsertools registry publish \
+  --root ./public-registry --bundle ./capability-bundle.json \
+  --at 2026-08-14T00:00:00Z
+go run ./cmd/browsertools registry search \
+  --location ./public-registry --query status \
+  --at 2026-08-14T00:00:00Z
+```
+
+Caller-supplied raw captures and derived artifacts can be kept in an explicit
+private local cache. Raw entries can never be publication eligible:
+
+```bash
+go run ./cmd/browsertools cache put \
+  --root ./.browsertools-cache --input ./capture.json \
+  --kind private_raw --media-type application/json \
+  --created-at 2026-08-14T00:00:00Z
+go run ./cmd/browsertools cache list \
+  --root ./.browsertools-cache --at 2026-08-14T12:00:00Z
+go run ./cmd/browsertools cache prune \
+  --root ./.browsertools-cache --at 2026-09-14T00:00:00Z
 ```
 
 ## What It Owns
 
-- Browser-profile validation helpers for UWS `browser-profile` documents.
+- A complete typed model and validation helpers for UWS `browser-profile`
+  documents.
 - Secret-free evidence records from browser and scraper tooling.
 - Draft profile generation from reviewed evidence.
 - Review bundles with validation, confidence, expiry, side-effect, and
   revalidation notes.
-- Revalidation contracts for dry-run profile health checks.
+- Deterministic fixture-only revalidation and digest-bound promotion gates.
+- A bounded, content-addressed private cache for caller-supplied experiences,
+  normalized evidence, profiles, and review bundles.
+- Canonical, digest-bound, lifecycle-assessed publication bundles for reviewed
+  profiles, safe evidence, and optional inert UWS companions.
+- A service-free static registry layout, atomic local publisher, bounded
+  local/HTTPS reader, and local browser-source discovery report.
 - Browser-profile, scraper/crawler, and browser-backed wrapper examples.
 - Optional adapters for Playwright, llm-scraper, Crawl4AI, and Firecrawl
   outputs.
@@ -81,6 +154,11 @@ go test ./profile/ -run TestValidateExampleProfiles
 - Live browser execution, credentials, cookies, sessions, retries, account
   selection, or production side effects.
 - A general Playwright, WebDriver, Puppeteer, or scraping DSL.
+- Launching a browser or uploading cached content. Cache commands are local and
+  offline; publication has a separate verification boundary.
+- Accounts, membership, a registry database, remote writes, or deployment
+  credentials. Static catalogs are reviewed and deployed by existing
+  repository/hosting workflows.
 
 ## Why Not Just OpenAPI?
 
@@ -112,6 +190,9 @@ website UI
 - [Project description](docs/project.md)
 - [OpenUdon integration](docs/openudon-integration.md)
 - [Wrapper-service guidance](docs/wrapper-service.md)
+- [Typed-profile migration](docs/migration-typed-profile.md)
+- [Publishable capability bundles](docs/capability-bundles.md)
+- [Static registry and contribution workflow](docs/static-registry.md)
 - [Examples](examples/README.md)
 
 ## Development
@@ -120,5 +201,5 @@ website UI
 go test ./...
 go vet ./...
 git diff --check
-(cd ../uws && go test ./versions)
+(cd ../uws && go test ./versions ./uws1)
 ```

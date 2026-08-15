@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/browsertools/review"
 )
@@ -18,6 +20,7 @@ func TestSidecarJSONRoundTrip(t *testing.T) {
 		WrapperOpenAPI: "./wrapper.openapi.yaml",
 		BrowserProfile: "./browser-profile.yaml",
 		ReviewBundle: review.Bundle{
+			Profile:    profile.Profile{Info: profile.Info{Origin: profile.Origins{"https://example.test"}}},
 			Validation: review.ValidationReport{Valid: true},
 		},
 		OperationMappings: map[string]OperationMapping{
@@ -78,6 +81,21 @@ func TestOverlayJSONExampleRoundTrip(t *testing.T) {
 	if len(s.OperationMappings) == 0 {
 		t.Error("expected non-empty operationMappings")
 	}
+	prof, err := profile.LoadFile("../examples/wrapper-service/browser-profile.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceData, err := os.ReadFile("../examples/wrapper-service/evidence.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []evidence.Record
+	if err := json.Unmarshal(evidenceData, &records); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Verify(prof, records, time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("verify example overlay: %v", err)
+	}
 }
 
 // TestNewInitializesOperationMappings verifies New() produces a non-nil map.
@@ -108,7 +126,7 @@ func TestNewInitializesOperationMappings(t *testing.T) {
 // browser-profile against the embedded uws.browser.1.5 schema.
 func TestWrapperServiceExampleProfileValid(t *testing.T) {
 	path := "../examples/wrapper-service/browser-profile.yaml"
-	if err := profile.ValidateFile(path); err != nil {
+	if _, err := profile.LoadFile(path); err != nil {
 		t.Errorf("wrapper-service example profile failed validation: %v", err)
 	}
 }

@@ -77,13 +77,33 @@ type CandidateLocator struct {
 	AmbiguityNote string `json:"ambiguityNote,omitempty"`
 }
 
+// LocatorDecision records a reviewer's explicit resolution of ambiguous
+// locator evidence. The selected locator is identified by its portable
+// role/name/text/value fields; AmbiguityNote is evidence and is ignored when
+// matching the decision. Rationale is required for a decision to resolve a
+// promotion-blocking ambiguity.
+type LocatorDecision struct {
+	ActionHint string           `json:"actionHint" yaml:"actionHint"`
+	Locator    CandidateLocator `json:"locator" yaml:"locator"`
+	Rationale  string           `json:"rationale" yaml:"rationale"`
+}
+
+// Matches reports whether the decision resolves loc for actionHint.
+func (d LocatorDecision) Matches(actionHint string, loc CandidateLocator) bool {
+	return d.ActionHint == actionHint &&
+		d.Locator.Role == loc.Role &&
+		d.Locator.Name == loc.Name &&
+		d.Locator.Text == loc.Text &&
+		d.Locator.Value == loc.Value
+}
+
 // CandidateOutput is a candidate output extraction observed or inferred during
 // evidence collection. Source must be one of: a11y, jsonld, microdata, css.
 // When Source is "css", Selector and FallbackReason are required.
 type CandidateOutput struct {
 	Key            string            `json:"key"`
-	Type           string            `json:"type"`             // JSON type: string, integer, number, boolean, array, object, null
-	Source         string            `json:"source"`           // a11y, jsonld, microdata, css
+	Type           string            `json:"type"`   // JSON type: string, integer, number, boolean, array, object, null
+	Source         string            `json:"source"` // a11y, jsonld, microdata, css
 	Locator        *CandidateLocator `json:"locator,omitempty"`
 	Selector       string            `json:"selector,omitempty"`       // CSS selector; only when source=css
 	FallbackReason string            `json:"fallbackReason,omitempty"` // required when source=css
@@ -101,7 +121,7 @@ type Provenance struct {
 
 // Diagnostic is an observation note, warning, or error attached to a Record.
 type Diagnostic struct {
-	Level   string `json:"level"`           // "info", "warn", "error"
+	Level   string `json:"level"` // "info", "warn", "error"
 	Message string `json:"message"`
 	Field   string `json:"field,omitempty"` // dot-path to the affected field
 }

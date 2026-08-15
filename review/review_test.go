@@ -2,212 +2,146 @@ package review
 
 import (
 	"testing"
+	"time"
 
-	"github.com/OpenUdon/browsertools/draft"
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/profile"
 )
 
-func baseDraft(t *testing.T) map[string]any {
-	t.Helper()
-	records := []evidence.Record{{
-		Origin:          "https://example.test",
-		ObservationKind: evidence.ObservationA11ySnapshot,
-		ObservedAt:      "2026-01-01T00:00:00Z",
-		ActionHint:      "read_status",
+var reviewedAt = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+
+func baseProfile() *profile.Profile {
+	return &profile.Profile{
+		Schema:          "uws.browser.1.5",
+		Info:            profile.Info{Title: "Test", Origin: profile.Origins{"https://example.test"}},
+		ObservationKind: profile.ObservationAccessibilitySnapshot,
+		Evidence:        profile.Evidence{LearnedAt: "2026-01-01T00:00:00Z", Source: "synthetic"},
+		Confidence:      profile.ConfidenceMedium, ExpiresAfter: "P30D",
+		Verification: profile.Verification{LastVerifiedAt: "2026-01-01T00:00:00Z", SuccessfulRuns: 1},
+		Actions: map[string]profile.Action{"read_status": {
+			Sequence:           []profile.Step{{Kind: profile.StepNavigate, Navigate: "/status"}},
+			SideEffects:        []profile.SideEffect{profile.SideEffectReadOnly},
+			ConfirmationPolicy: profile.ConfirmationPolicy{Required: false},
+		}},
+	}
+}
+
+func baseRecord() evidence.Record {
+	return evidence.Record{
+		Origin: "https://example.test", ObservationKind: evidence.ObservationA11ySnapshot,
+		ObservedAt: "2026-01-01T00:00:00Z", ActionHint: "read_status",
 		RedactionStatus: evidence.RedactionNotRequired,
 		Provenance:      evidence.Provenance{Tool: "synthetic"},
-	}}
-	result, err := draft.Build(records, draft.Options{
-		Info:            draft.ProfileInfo{Title: "Test", Origin: "https://example.test"},
-		ObservationKind: "accessibility_snapshot",
-		Confidence:      "medium",
-		ExpiresAfter:    "P30D",
-	})
+	}
+}
+
+func TestBuildPromotableAndVerify(t *testing.T) {
+	prof, records := baseProfile(), []evidence.Record{baseRecord()}
+	bundle, err := Build(prof, records, nil, reviewedAt)
 	if err != nil {
-		t.Fatalf("draft.Build: %v", err)
+		t.Fatal(err)
 	}
-	// Override verification dates to a recent timestamp so expiry checks pass.
-	d := result.Draft
-	d["evidence"].(map[string]any)["learnedAt"] = "2099-01-01T00:00:00Z"
-	d["verification"].(map[string]any)["lastVerifiedAt"] = "2099-01-01T00:00:00Z"
-	return d
-}
-
-// TestBuildValid confirms a clean draft produces a valid bundle with no gaps.
-func TestBuildValid(t *testing.T) {
-	records := []evidence.Record{{
-		Origin:          "https://example.test",
-		ObservationKind: evidence.ObservationA11ySnapshot,
-		ObservedAt:      "2026-01-01T00:00:00Z",
-		ActionHint:      "read_status",
-		RedactionStatus: evidence.RedactionNotRequired,
-		Provenance:      evidence.Provenance{Tool: "synthetic"},
-	}}
-	d := baseDraft(t)
-	b := Build(d, records)
-	if !b.Validation.Valid {
-		t.Errorf("expected valid, got errors: %v", b.Validation.Errors)
+	if !bundle.Promotable() {
+		t.Fatalf("expected promotable bundle: %+v", bundle.Gaps)
 	}
-	if len(b.Gaps) > 0 {
-		t.Errorf("expected no gaps, got: %+v", b.Gaps)
+	if bundle.ProfileDigest == "" || bundle.EvidenceDigest == "" {
+		t.Fatal("missing digests")
 	}
-	if b.Evidence.RecordCount != 1 {
-		t.Errorf("expected 1 record in evidence summary, got %d", b.Evidence.RecordCount)
+	if err := Verify(bundle, prof, records, reviewedAt); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// TestBuildMissingConfirmationGap detects a write action without required confirmation.
-func TestBuildMissingConfirmationGap(t *testing.T) {
-	d := baseDraft(t)
-	// Inject a write side effect with required=false
-	actions := d["actions"].(map[string]any)
-	actions["read_status"].(map[string]any)["sideEffects"] = []any{"state_change"}
-	actions["read_status"].(map[string]any)["confirmationPolicy"] = map[string]any{"required": false}
-
-	b := Build(d, nil)
-	if !hasGap(b, GapMissingConfirmation) {
-		t.Error("expected GapMissingConfirmation gap, got none")
+func TestBuildAndRevalidationCannotDisagree(t *testing.T) {
+	bundle, err := Build(baseProfile(), nil, nil, reviewedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Promotable() || bundle.Revalidation.OK {
+		t.Fatal("missing evidence should block both gates")
+	}
+	if len(bundle.Gaps) == 0 || bundle.Gaps[0].Kind != "missing_evidence" {
+		t.Fatalf("unexpected gaps: %+v", bundle.Gaps)
 	}
 }
 
-// TestBuildExpiredEvidenceGap detects a profile whose lastVerifiedAt + expiresAfter is in the past.
-func TestBuildExpiredEvidenceGap(t *testing.T) {
-	d := baseDraft(t)
-	// Set lastVerifiedAt well in the past so P30D has definitely elapsed.
-	d["verification"].(map[string]any)["lastVerifiedAt"] = "2020-01-01T00:00:00Z"
-	b := Build(d, nil)
-	if !hasGap(b, GapExpiredEvidence) {
-		t.Error("expected GapExpiredEvidence gap, got none")
+func TestVerifyRejectsDigestChanges(t *testing.T) {
+	prof, records := baseProfile(), []evidence.Record{baseRecord()}
+	bundle, err := Build(prof, records, nil, reviewedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := *prof
+	changed.Info.Title = "Changed"
+	if err := Verify(bundle, &changed, records, reviewedAt); err == nil {
+		t.Fatal("expected profile digest mismatch")
+	}
+	records[0].Provenance.Tool = "changed"
+	if err := Verify(bundle, prof, records, reviewedAt); err == nil {
+		t.Fatal("expected evidence digest mismatch")
 	}
 }
 
-func TestBuildMalformedExpiryGap(t *testing.T) {
-	d := baseDraft(t)
-	d["verification"].(map[string]any)["lastVerifiedAt"] = "not-a-time"
-	b := Build(d, nil)
-	if !hasGap(b, GapExpiredEvidence) {
-		t.Error("expected GapExpiredEvidence gap for malformed lastVerifiedAt, got none")
+func TestVerifyRechecksFreshness(t *testing.T) {
+	prof, records := baseProfile(), []evidence.Record{baseRecord()}
+	bundle, err := Build(prof, records, nil, reviewedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(bundle, prof, records, time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("expected stale bundle rejection")
 	}
 }
 
-// TestBuildCSSFallbackGap detects a CSS output missing fallbackReason.
-func TestBuildCSSFallbackGap(t *testing.T) {
-	d := baseDraft(t)
-	actions := d["actions"].(map[string]any)
-	action := actions["read_status"].(map[string]any)
-	action["outputs"] = map[string]any{
-		"items": map[string]any{
-			"type":   "array",
-			"source": "css",
-			// selector present, fallbackReason absent — should trigger gap
-			"selector":   ".item-list li",
-			"validation": map[string]any{"type": "array"},
-		},
+func TestDecisionPersistedAndUsed(t *testing.T) {
+	prof := baseProfile()
+	action := prof.Actions["read_status"]
+	action.Sequence = []profile.Step{{Kind: profile.StepClick, Click: &profile.LocatorStep{Locator: profile.Locator{Role: "button", Name: "Refresh"}}}}
+	prof.Actions["read_status"] = action
+	rec := baseRecord()
+	rec.CandidateLocators = []evidence.CandidateLocator{{Role: "button", Name: "Refresh", AmbiguityNote: "two matches"}}
+	decision := evidence.LocatorDecision{
+		ActionHint: "read_status", Locator: evidence.CandidateLocator{Role: "button", Name: "Refresh"}, Rationale: "reviewed target",
 	}
-	b := Build(d, nil)
-	if !hasGap(b, GapCSSFallbackReason) {
-		t.Error("expected GapCSSFallbackReason gap, got none")
+	bundle, err := Build(prof, []evidence.Record{rec}, []evidence.LocatorDecision{decision}, reviewedAt)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestBuildUnresolvedOutputValidationGap(t *testing.T) {
-	d := baseDraft(t)
-	actions := d["actions"].(map[string]any)
-	action := actions["read_status"].(map[string]any)
-	action["outputs"] = map[string]any{
-		"items": map[string]any{
-			"type":           "array",
-			"source":         "css",
-			"selector":       ".item-list li",
-			"fallbackReason": "no_structured_data",
-			// validation absent
-		},
+	if !bundle.Promotable() {
+		t.Fatalf("decision should resolve ambiguity: %+v", bundle.Gaps)
 	}
-	b := Build(d, nil)
-	if !hasGap(b, GapUnresolvedOutput) {
-		t.Error("expected GapUnresolvedOutput gap, got none")
+	if len(bundle.Decisions) != 1 || bundle.Decisions[0].Rationale == "" {
+		t.Fatalf("decision missing: %+v", bundle.Decisions)
 	}
 }
 
-func TestBuildMissingOriginCoverageGap(t *testing.T) {
-	d := baseDraft(t)
-	records := []evidence.Record{{
-		Origin:          "https://other.test",
-		ObservationKind: evidence.ObservationA11ySnapshot,
-		ObservedAt:      "2026-01-01T00:00:00Z",
-		ActionHint:      "read_status",
-		RedactionStatus: evidence.RedactionNotRequired,
-		Provenance:      evidence.Provenance{Tool: "synthetic"},
-	}}
-	b := Build(d, records)
-	if !hasGap(b, GapMissingOriginCoverage) {
-		t.Error("expected GapMissingOriginCoverage gap, got none")
+func TestBuildDeterministicForSameAssessment(t *testing.T) {
+	prof := baseProfile()
+	records := []evidence.Record{baseRecord()}
+	a, err := Build(prof, records, nil, reviewedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Build(prof, records, nil, reviewedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.ProfileDigest != b.ProfileDigest || a.EvidenceDigest != b.EvidenceDigest || a.AssessedAt != b.AssessedAt {
+		t.Fatalf("bundle identity is not deterministic: %+v %+v", a, b)
 	}
 }
 
-// TestBuildAmbiguousLocatorGap detects ambiguous locators in evidence.
-func TestBuildAmbiguousLocatorGap(t *testing.T) {
-	d := baseDraft(t)
-	records := []evidence.Record{{
-		Origin:          "https://example.test",
-		ObservationKind: evidence.ObservationA11ySnapshot,
-		ObservedAt:      "2026-01-01T00:00:00Z",
-		ActionHint:      "read_status",
-		RedactionStatus: evidence.RedactionNotRequired,
-		Provenance:      evidence.Provenance{Tool: "synthetic"},
-		CandidateLocators: []evidence.CandidateLocator{
-			{Role: "button", Name: "OK", AmbiguityNote: "two buttons match"},
-			{Role: "button", Name: "OK"},
-		},
-	}}
-	b := Build(d, records)
-	if !hasGap(b, GapAmbiguousLocator) {
-		t.Error("expected GapAmbiguousLocator gap, got none")
+func TestBuildSnapshotsProfile(t *testing.T) {
+	prof := baseProfile()
+	bundle, err := Build(prof, []evidence.Record{baseRecord()}, nil, reviewedAt)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// TestBuildDeterministic confirms identical inputs produce identical bundles.
-func TestBuildDeterministic(t *testing.T) {
-	records := []evidence.Record{{
-		Origin:          "https://example.test",
-		ObservationKind: evidence.ObservationA11ySnapshot,
-		ObservedAt:      "2026-01-01T00:00:00Z",
-		ActionHint:      "read_status",
-		RedactionStatus: evidence.RedactionNotRequired,
-		Provenance:      evidence.Provenance{Tool: "synthetic"},
-	}}
-	d := baseDraft(t)
-	b1 := Build(d, records)
-	b2 := Build(d, records)
-	if b1.ConfidenceRationale != b2.ConfidenceRationale {
-		t.Error("non-deterministic confidence rationale")
+	prof.Info.Title = "mutated"
+	action := prof.Actions["read_status"]
+	action.Sequence[0].Navigate = "/mutated"
+	prof.Actions["read_status"] = action
+	if bundle.Profile.Info.Title == "mutated" || bundle.Profile.Actions["read_status"].Sequence[0].Navigate == "/mutated" {
+		t.Fatal("bundle profile shares mutable state with caller")
 	}
-	if len(b1.Gaps) != len(b2.Gaps) {
-		t.Errorf("non-deterministic gap count: %d vs %d", len(b1.Gaps), len(b2.Gaps))
-	}
-}
-
-// TestBuildSideEffectSummary checks that write actions are detected.
-func TestBuildSideEffectSummary(t *testing.T) {
-	d := baseDraft(t)
-	// Make the action a write action with required=true
-	actions := d["actions"].(map[string]any)
-	actions["read_status"].(map[string]any)["sideEffects"] = []any{"creates_record"}
-	actions["read_status"].(map[string]any)["confirmationPolicy"] = map[string]any{"required": true}
-	b := Build(d, nil)
-	if !b.SideEffects.HasWriteActions {
-		t.Error("expected HasWriteActions=true")
-	}
-	if len(b.SideEffects.ActionsRequiringConfirmation) == 0 {
-		t.Error("expected ActionsRequiringConfirmation to be non-empty")
-	}
-}
-
-func hasGap(b *Bundle, kind GapKind) bool {
-	for _, g := range b.Gaps {
-		if g.Kind == kind {
-			return true
-		}
-	}
-	return false
 }

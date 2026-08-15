@@ -37,7 +37,7 @@ type Options struct {
 	// RedactionStatus must be set by the caller to indicate whether sensitive
 	// fields have been reviewed (evidence.RedactionNotRequired or
 	// evidence.RedactionCompleted).
-	// Defaults to evidence.RedactionNotRequired for synthetic fixtures.
+	// It has no implicit default, including for synthetic fixtures.
 	RedactionStatus evidence.RedactionStatus
 	// RedactedFields lists any fields replaced by "[REDACTED]" markers.
 	// Required when RedactionStatus is evidence.RedactionCompleted.

@@ -1,0 +1,23 @@
+info:
+  title: Example Status Service
+  origin: https://status.example.test
+observationKind: accessibility_snapshot
+confidence: medium
+expiresAfter: P30D
+actions:
+  get_status:
+    description: Reads the current service status and incident list.
+    sequence:
+      - navigate: /status
+      - wait_for: {navigation: load}
+    outputs:
+      overall_status:
+        type: string
+        source: a11y
+        locator: {role: status, name: Overall}
+      incident_count:
+        type: integer
+        source: microdata
+        property: activeIncidents
+    sideEffects: [read_only]
+    confirmationPolicy: {required: false}

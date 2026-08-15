@@ -51,12 +51,13 @@ mappings need reverification.
 
 ### Promotion gate
 
-Before using a sidecar in production, verify:
+Before handing off a sidecar, verify its lifecycle, mappings, digests, evidence,
+and current freshness in one call:
 
-```
-sidecar.ReviewBundle.Validation.Valid == true
-len(sidecar.ReviewBundle.Gaps) == 0
-sidecar.Lifecycle == "reviewed" || sidecar.Lifecycle == "exported"
+```go
+if err := sidecar.Verify(profile, records, time.Now().UTC()); err != nil {
+    // do not promote or export
+}
 ```
 
 ## Boundary with apitools

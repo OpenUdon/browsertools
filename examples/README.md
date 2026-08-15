@@ -16,6 +16,12 @@ Keep examples here when they demonstrate:
 - Playwright, llm-scraper, Crawl4AI, or Firecrawl adapter fixtures
 - reviewed UI capability profiles
 - browser-backed wrapper OpenAPI sidecars
+- normalized evidence and digest-bound review bundles that can be verified
+  without contacting the original site
 
 UWS should keep only minimal schema/spec fixtures needed to validate the wire
 contract.
+
+`wrapper-service/` also demonstrates the full offline CLI inputs: normalized
+`evidence.json`, explicit `draft-spec.yaml`, the resulting profile, and a
+digest-bound overlay/review bundle.

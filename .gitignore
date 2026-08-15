@@ -8,5 +8,6 @@ raw-evidence/
 captures/
 artifacts/
 profiles/local/
+.browsertools-cache/
 *.har
 *.trace.zip

@@ -12,9 +12,14 @@ to use. JSON field names are listed below; Go struct field names are PascalCase
 
 | JSON field | Go type | Purpose |
 |---|---|---|
-| `profile` | `map[string]any` | The raw reviewed profile document |
+| `profile` | `profile.Profile` | The complete typed reviewed profile document |
+| `profileDigest` | `string` | Canonical SHA-256 binding to the exact profile |
+| `evidenceDigest` | `string` | Canonical SHA-256 binding to normalized evidence |
+| `assessedAt` | `string` | RFC-3339 time used for deterministic expiry checks |
 | `validation` | `ValidationReport` | Schema check result — **must be `valid: true` to promote** |
+| `revalidation` | `revalidate.Result` | Evidence, locator, origin, expiry, and safe-wait gate |
 | `evidence` | `EvidenceSummary` | Secret-free summary of how the profile was learned |
+| `decisions` | `[]evidence.LocatorDecision` | Reviewed ambiguity resolutions and rationale |
 | `gaps` | `[]Gap` | Issues blocking promotion — **must be empty (`[]`) to promote** |
 | `confidenceRationale` | `string` | Human-readable explanation of the confidence value |
 | `expiryNote` | `string` | Revalidation schedule note |
@@ -23,14 +28,22 @@ to use. JSON field names are listed below; Go struct field names are PascalCase
 
 ### Promotion gate
 
-A bundle is promotable when both conditions hold:
+A bundle is promotable at its assessment time when:
 
-```
-bundle.Validation.Valid == true
-len(bundle.Gaps) == 0
+```go
+bundle.Promotable()
 ```
 
-Fail either check → the profile must not be used in production.
+Before registration or handoff, recalculate the digests and freshness gate:
+
+```go
+if err := review.Verify(bundle, profile, records, time.Now().UTC()); err != nil {
+    // profile must not be registered or executed
+}
+```
+
+This detects profile/evidence changes and profiles that became stale after the
+original bundle was produced.
 
 ## UWS workflow binding
 
@@ -64,8 +77,8 @@ workflows:
           title: "$inputs.title"
 ```
 
-See `examples/openudon-binding/binding.uws.yaml` for a full worked example and
-`examples/openudon-binding/review-bundle.json` for the corresponding bundle shape.
+See `examples/openudon-binding/binding.uws.yaml`, `evidence.json`, and
+`review-bundle.json` for a digest-verified worked handoff.
 
 ## Cross-repo verification gate
 

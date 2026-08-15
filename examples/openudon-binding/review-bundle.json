@@ -1,58 +1,86 @@
 {
   "profile": {
     "profile": "uws.browser.1.5",
-    "info": {
-      "title": "Wikipedia",
-      "origin": "https://en.wikipedia.org",
-      "loginStateRequired": false
-    },
+    "info": {"title": "Wikipedia", "origin": "https://en.wikipedia.org"},
     "observationKind": "accessibility_snapshot",
-    "evidence": { "learnedAt": "2026-05-31T00:00:00Z", "source": "reviewed_browser_session" },
+    "evidence": {"learnedAt": "2026-05-31T00:00:00Z", "source": "reviewed_browser_session"},
     "confidence": "high",
     "expiresAfter": "P90D",
-    "verification": { "lastVerifiedAt": "2026-05-31T00:00:00Z", "successfulRuns": 5 },
+    "verification": {"lastVerifiedAt": "2026-05-31T00:00:00Z", "successfulRuns": 5, "uiStabilityScore": 0.98},
     "actions": {
-      "navigate_to_article": {
-        "sequence": [{ "navigate": "/wiki/{{title}}" }],
-        "sideEffects": ["read_only"],
-        "confirmationPolicy": { "required": false }
-      },
       "extract_article": {
-        "sequence": [{ "wait_for": { "role": "heading" } }],
+        "description": "Extracts the canonical name, short description, and first-level categories of the currently loaded Wikipedia article. Uses schema.org microdata embedded in the page head for name and description; extracts categories via CSS because they are not exposed as microdata.\n",
+        "parameters": {"properties": {}, "type": "object"},
+        "sequence": [{"wait_for": {"role": "heading"}}],
         "outputs": {
-          "name":        { "type": "string", "source": "microdata", "property": "name" },
-          "description": { "type": "string", "source": "microdata", "property": "description" },
-          "categories":  {
-            "type": "array", "source": "css",
+          "article_url": {"type": "string", "source": "microdata", "property": "url"},
+          "categories": {
+            "type": "array",
+            "source": "css",
             "selector": "#mw-normal-catlinks ul li a",
             "fallbackReason": "no_a11y_region",
-            "validation": { "type": "array", "items": { "type": "string" } }
-          }
+            "validation": {"items": {"type": "string"}, "type": "array"}
+          },
+          "description": {"type": "string", "source": "microdata", "property": "description"},
+          "name": {"type": "string", "source": "microdata", "property": "name"}
         },
         "sideEffects": ["read_only"],
-        "confirmationPolicy": { "required": false }
+        "confirmationPolicy": {"required": false}
+      },
+      "navigate_to_article": {
+        "description": "Navigates to a Wikipedia article by its page title. The title is used directly in the URL path. After navigation the action inspects whether the landed page is a disambiguation page by checking for the presence of the disambiguation footer link in the accessibility tree.\n",
+        "parameters": {
+          "properties": {
+            "title": {
+              "description": "Wikipedia page title, URL-encoded if necessary. Use the unqualified title for the first attempt (e.g. \"Python\") and the qualified title with parenthetical disambiguator on retry (e.g. \"Python_(programming_language)\").\n",
+              "type": "string"
+            }
+          },
+          "required": ["title"],
+          "type": "object"
+        },
+        "sequence": [
+          {"navigate": "/wiki/{{title}}"},
+          {"wait_for": {"navigation": "domcontentloaded"}}
+        ],
+        "outputs": {
+          "is_disambiguation": {
+            "type": "boolean",
+            "source": "a11y",
+            "locator": {"role": "link", "name": "Disambiguation"},
+            "presence": true
+          },
+          "page_title": {"type": "string", "source": "microdata", "property": "name"}
+        },
+        "sideEffects": ["read_only"],
+        "confirmationPolicy": {"required": false}
       }
     }
   },
-  "validation": { "valid": true },
+  "profileDigest": "sha256:d8fd904f14338f8c671e22b71895a725bf8e1a219a7a58324d4bc2efa05627b9",
+  "evidenceDigest": "sha256:ed349d44250d62b973ff2f079f1cf1f92fd2fccbd5a390dacb1e5188afe217bb",
+  "assessedAt": "2026-06-01T00:00:00Z",
+  "validation": {"valid": true, "errors": []},
+  "revalidation": {"ok": true, "failures": []},
   "evidence": {
     "origins": ["https://en.wikipedia.org"],
-    "observationKind": "accessibility_snapshot",
+    "observationKinds": ["accessibility_snapshot"],
     "tools": ["playwright"],
     "recordCount": 2,
     "earliestAt": "2026-05-30T00:00:00Z",
     "latestAt": "2026-05-31T00:00:00Z"
   },
+  "decisions": [],
   "gaps": [],
   "confidenceRationale": "confidence=high; evidence_records=2",
-  "expiryNote": "profile expires after P90D from last verification; revalidate before use in production",
-  "origins": { "origins": ["https://en.wikipedia.org"] },
+  "expiryNote": "profile expires P90D after verification.lastVerifiedAt",
+  "origins": {"origins": ["https://en.wikipedia.org"]},
   "sideEffects": {
     "hasWriteActions": false,
     "actionsRequiringConfirmation": [],
     "actionsWithSideEffects": {
-      "extract_article":       ["read_only"],
-      "navigate_to_article":   ["read_only"]
+      "extract_article": ["read_only"],
+      "navigate_to_article": ["read_only"]
     }
   }
 }

@@ -1,393 +1,303 @@
-// Package review produces review bundles for browser-profile draft candidates.
-//
-// A review bundle is a deterministic, secret-free artifact that combines:
-//   - The candidate profile (as a raw map)
-//   - A validation report (pass/fail + error details)
-//   - An evidence summary (origin, observation kind, tool provenance)
-//   - Unresolved gaps (ambiguous locators, missing CSS fallback reasons, etc.)
-//   - Confidence rationale
-//   - Expiry/revalidation notes
-//   - Origin allowlist summary
-//   - Side-effect and confirmation policy summary
-//
-// Bundles are intended to be stored alongside the profile and read by a human
-// reviewer before the profile is promoted to "reviewed" status.
+// Package review builds deterministic promotion bundles that bind a typed
+// browser profile to its normalized evidence and explicit review decisions.
 package review
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/OpenUdon/browsertools/evidence"
-	"github.com/OpenUdon/browsertools/internal/duration"
-	"github.com/OpenUdon/browsertools/internal/profilechecks"
 	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/revalidate"
 )
 
-// GapKind classifies a gap found during review.
-type GapKind string
-
-const (
-	GapAmbiguousLocator      GapKind = "ambiguous_locator"
-	GapMissingConfirmation   GapKind = "missing_confirmation"
-	GapExpiredEvidence       GapKind = "expired_evidence"
-	GapCSSFallbackReason     GapKind = "css_fallback_reason_missing"
-	GapUnresolvedOutput      GapKind = "unresolved_output_validation"
-	GapMissingOriginCoverage GapKind = "missing_origin_coverage"
-)
-
-// Gap is an unresolved issue that must be addressed before the profile can be
-// promoted to reviewed status.
+// Gap is a promotion-blocking issue.
 type Gap struct {
-	Kind    GapKind `json:"kind"`
-	Field   string  `json:"field"`
-	Message string  `json:"message"`
+	Kind    string `json:"kind"`
+	Field   string `json:"field"`
+	Message string `json:"message"`
 }
 
-// EvidenceSummary is a condensed, secret-free view of the evidence used to
-// generate the profile.
+// EvidenceSummary is a secret-free summary of the supporting observations.
 type EvidenceSummary struct {
-	Origins         []string `json:"origins"`
-	ObservationKind string   `json:"observationKind"`
-	Tools           []string `json:"tools"`
-	RecordCount     int      `json:"recordCount"`
-	EarliestAt      string   `json:"earliestAt,omitempty"`
-	LatestAt        string   `json:"latestAt,omitempty"`
+	Origins          []string `json:"origins"`
+	ObservationKinds []string `json:"observationKinds"`
+	Tools            []string `json:"tools"`
+	RecordCount      int      `json:"recordCount"`
+	EarliestAt       string   `json:"earliestAt,omitempty"`
+	LatestAt         string   `json:"latestAt,omitempty"`
 }
 
-// OriginSummary describes the profile's browser origin allowlist.
+// OriginSummary describes the normalized profile origin allowlist.
 type OriginSummary struct {
 	Origins []string `json:"origins"`
 }
 
-// SideEffectSummary lists all side effects and confirmation requirements found
-// in the profile's actions.
+// SideEffectSummary describes write actions and confirmation requirements.
 type SideEffectSummary struct {
-	// HasWriteActions is true if any action has a non-read_only side effect.
-	HasWriteActions bool `json:"hasWriteActions"`
-	// ActionsRequiringConfirmation lists action names where confirmationPolicy.required=true.
-	ActionsRequiringConfirmation []string `json:"actionsRequiringConfirmation"`
-	// ActionsWithSideEffects maps action name → side effects.
-	ActionsWithSideEffects map[string][]string `json:"actionsWithSideEffects"`
+	HasWriteActions              bool                `json:"hasWriteActions"`
+	ActionsRequiringConfirmation []string            `json:"actionsRequiringConfirmation"`
+	ActionsWithSideEffects       map[string][]string `json:"actionsWithSideEffects"`
 }
 
-// ValidationReport records the result of running profile.Validate on the draft.
+// ValidationReport records typed profile validation.
 type ValidationReport struct {
 	Valid  bool     `json:"valid"`
-	Errors []string `json:"errors,omitempty"`
+	Errors []string `json:"errors"`
 }
 
-// Bundle is the complete review artifact for a profile candidate.
+// Bundle is the complete, digest-bound review artifact.
 type Bundle struct {
-	// Profile is the raw profile map as produced by the draft builder.
-	Profile map[string]any `json:"profile"`
-	// Validation is the schema validation result.
-	Validation ValidationReport `json:"validation"`
-	// Evidence summarizes the records used to generate the profile.
-	Evidence EvidenceSummary `json:"evidence"`
-	// Gaps are issues that block promotion to reviewed status.
-	Gaps []Gap `json:"gaps"`
-	// ConfidenceRationale explains the confidence value.
-	ConfidenceRationale string `json:"confidenceRationale"`
-	// ExpiryNote states the expiry duration and revalidation expectation.
-	ExpiryNote string `json:"expiryNote"`
-	// Origins describes the allowlisted origins.
-	Origins OriginSummary `json:"origins"`
-	// SideEffects summarizes write actions and confirmation requirements.
-	SideEffects SideEffectSummary `json:"sideEffects"`
+	Profile             profile.Profile            `json:"profile"`
+	ProfileDigest       string                     `json:"profileDigest"`
+	EvidenceDigest      string                     `json:"evidenceDigest"`
+	AssessedAt          string                     `json:"assessedAt"`
+	Validation          ValidationReport           `json:"validation"`
+	Revalidation        revalidate.Result          `json:"revalidation"`
+	Evidence            EvidenceSummary            `json:"evidence"`
+	Decisions           []evidence.LocatorDecision `json:"decisions"`
+	Gaps                []Gap                      `json:"gaps"`
+	ConfidenceRationale string                     `json:"confidenceRationale"`
+	ExpiryNote          string                     `json:"expiryNote"`
+	Origins             OriginSummary              `json:"origins"`
+	SideEffects         SideEffectSummary          `json:"sideEffects"`
 }
 
-// Build produces a review bundle for the given draft profile and supporting
-// evidence records. The profile map is expected to come from draft.Build.
-//
-// Build never returns an error; all issues are recorded as Gaps in the bundle
-// so the caller can inspect the full picture.
-func Build(draft map[string]any, records []evidence.Record) *Bundle {
-	b := &Bundle{
-		Profile: draft,
+// Build assesses prof at now and binds the resulting bundle to the exact
+// profile and evidence bytes through canonical SHA-256 digests.
+func Build(prof *profile.Profile, records []evidence.Record, decisions []evidence.LocatorDecision, now time.Time) (*Bundle, error) {
+	if prof == nil {
+		return nil, fmt.Errorf("review: profile is required")
+	}
+	if now.IsZero() {
+		return nil, fmt.Errorf("review: assessment time is required")
+	}
+	profileDigest, err := digestProfile(prof)
+	if err != nil {
+		return nil, fmt.Errorf("review: profile digest: %w", err)
+	}
+	evidenceDigest, err := digestEvidence(records)
+	if err != nil {
+		return nil, fmt.Errorf("review: evidence digest: %w", err)
 	}
 
-	// Validation report.
-	if err := profile.Validate(draft); err != nil {
-		b.Validation = ValidationReport{Valid: false, Errors: []string{err.Error()}}
+	snapshot, err := cloneProfile(prof)
+	if err != nil {
+		return nil, fmt.Errorf("review: profile snapshot: %w", err)
+	}
+	bundle := &Bundle{
+		Profile: *snapshot, ProfileDigest: profileDigest, EvidenceDigest: evidenceDigest,
+		AssessedAt:          now.UTC().Format(time.RFC3339),
+		Evidence:            summarizeEvidence(records),
+		Decisions:           append([]evidence.LocatorDecision(nil), decisions...),
+		Origins:             OriginSummary{Origins: append([]string(nil), prof.Info.Origin...)},
+		SideEffects:         summarizeSideEffects(prof),
+		ConfidenceRationale: fmt.Sprintf("confidence=%s; evidence_records=%d", prof.Confidence, len(records)),
+		ExpiryNote:          fmt.Sprintf("profile expires %s after verification.lastVerifiedAt", prof.ExpiresAfter),
+	}
+	sort.Slice(bundle.Decisions, func(i, j int) bool {
+		if bundle.Decisions[i].ActionHint != bundle.Decisions[j].ActionHint {
+			return bundle.Decisions[i].ActionHint < bundle.Decisions[j].ActionHint
+		}
+		if bundle.Decisions[i].Locator.Role != bundle.Decisions[j].Locator.Role {
+			return bundle.Decisions[i].Locator.Role < bundle.Decisions[j].Locator.Role
+		}
+		return bundle.Decisions[i].Locator.Name < bundle.Decisions[j].Locator.Name
+	})
+	if bundle.Decisions == nil {
+		bundle.Decisions = []evidence.LocatorDecision{}
+	}
+
+	value, valueErr := prof.Value()
+	if valueErr != nil {
+		bundle.Validation = ValidationReport{Valid: false, Errors: []string{valueErr.Error()}}
+	} else if validationErr := profile.Validate(value); validationErr != nil {
+		bundle.Validation = ValidationReport{Valid: false, Errors: []string{validationErr.Error()}}
 	} else {
-		b.Validation = ValidationReport{Valid: true}
+		bundle.Validation = ValidationReport{Valid: true, Errors: []string{}}
 	}
 
-	// Evidence summary.
-	b.Evidence = buildEvidenceSummary(records)
-
-	// Origin allowlist.
-	b.Origins = buildOriginSummary(draft)
-
-	// Side-effect summary.
-	b.SideEffects = buildSideEffectSummary(draft)
-
-	// Confidence rationale.
-	b.ConfidenceRationale = buildConfidenceRationale(draft, records)
-
-	// Expiry note.
-	b.ExpiryNote = buildExpiryNote(draft)
-
-	// Gaps — always a non-nil slice so JSON serializes as [] not null.
-	gaps := collectGaps(draft, records)
-	if gaps == nil {
-		gaps = []Gap{}
+	bundle.Revalidation, err = revalidate.CheckAt(prof, records, decisions, now)
+	if err != nil {
+		return nil, err
 	}
-	b.Gaps = gaps
-
-	return b
+	for _, failure := range bundle.Revalidation.Failures {
+		bundle.Gaps = append(bundle.Gaps, Gap{Kind: string(failure.Kind), Field: failure.Field, Message: failure.Message})
+	}
+	if !bundle.Validation.Valid && !hasGap(bundle.Gaps, string(revalidate.CheckInvalidProfile), "$", bundle.Validation.Errors[0]) {
+		bundle.Gaps = append(bundle.Gaps, Gap{Kind: string(revalidate.CheckInvalidProfile), Field: "$", Message: bundle.Validation.Errors[0]})
+	}
+	sort.Slice(bundle.Gaps, func(i, j int) bool {
+		if bundle.Gaps[i].Kind != bundle.Gaps[j].Kind {
+			return bundle.Gaps[i].Kind < bundle.Gaps[j].Kind
+		}
+		if bundle.Gaps[i].Field != bundle.Gaps[j].Field {
+			return bundle.Gaps[i].Field < bundle.Gaps[j].Field
+		}
+		return bundle.Gaps[i].Message < bundle.Gaps[j].Message
+	})
+	if bundle.Gaps == nil {
+		bundle.Gaps = []Gap{}
+	}
+	return bundle, nil
 }
 
-func buildEvidenceSummary(records []evidence.Record) EvidenceSummary {
-	originsSet := map[string]bool{}
-	toolsSet := map[string]bool{}
-	var earliest, latest string
-	kinds := map[string]bool{}
-	for _, rec := range records {
-		originsSet[rec.Origin] = true
-		if rec.Provenance.Tool != "" {
-			toolsSet[rec.Provenance.Tool] = true
-		}
-		if rec.ObservationKind != "" {
-			kinds[string(rec.ObservationKind)] = true
-		}
-		if rec.ObservedAt != "" {
-			if earliest == "" || rec.ObservedAt < earliest {
-				earliest = rec.ObservedAt
-			}
-			if latest == "" || rec.ObservedAt > latest {
-				latest = rec.ObservedAt
-			}
-		}
+func cloneProfile(prof *profile.Profile) (*profile.Profile, error) {
+	data, err := json.Marshal(prof)
+	if err != nil {
+		return nil, err
 	}
-	obs := "unknown"
-	kindList := sortedStringSet(kinds)
-	if len(kindList) > 0 {
-		obs = kindList[0]
+	var result profile.Profile
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Promotable reports whether the bundle passed every gate at AssessedAt.
+func (b Bundle) Promotable() bool {
+	return b.Validation.Valid && b.Revalidation.OK && len(b.Gaps) == 0 && b.ProfileDigest != "" && b.EvidenceDigest != ""
+}
+
+// Verify proves that bundle still matches prof and records and that the same
+// fixture safety checks pass at now.
+func Verify(bundle *Bundle, prof *profile.Profile, records []evidence.Record, now time.Time) error {
+	if bundle == nil || prof == nil {
+		return fmt.Errorf("review: bundle and profile are required")
+	}
+	if now.IsZero() {
+		return fmt.Errorf("review: verification time is required")
+	}
+	profileDigest, err := digestProfile(prof)
+	if err != nil {
+		return err
+	}
+	if profileDigest != bundle.ProfileDigest {
+		return fmt.Errorf("review: profile digest mismatch")
+	}
+	embeddedDigest, err := digestProfile(&bundle.Profile)
+	if err != nil {
+		return err
+	}
+	if embeddedDigest != bundle.ProfileDigest {
+		return fmt.Errorf("review: embedded bundle profile digest mismatch")
+	}
+	evidenceDigest, err := digestEvidence(records)
+	if err != nil {
+		return err
+	}
+	if evidenceDigest != bundle.EvidenceDigest {
+		return fmt.Errorf("review: evidence digest mismatch")
+	}
+	result, err := revalidate.CheckAt(prof, records, bundle.Decisions, now)
+	if err != nil {
+		return err
+	}
+	if !result.OK {
+		return fmt.Errorf("review: bundle is no longer promotable: %s at %s", result.Failures[0].Kind, result.Failures[0].Field)
+	}
+	if !bundle.Promotable() {
+		return fmt.Errorf("review: bundle did not pass its original promotion gate")
+	}
+	return nil
+}
+
+func digestProfile(prof *profile.Profile) (string, error) {
+	data, err := json.Marshal(prof)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func digestEvidence(records []evidence.Record) (string, error) {
+	encoded := make([][]byte, 0, len(records))
+	for _, record := range records {
+		data, err := evidence.MarshalDeterministic(record)
+		if err != nil {
+			return "", err
+		}
+		encoded = append(encoded, data)
+	}
+	sort.Slice(encoded, func(i, j int) bool { return bytes.Compare(encoded[i], encoded[j]) < 0 })
+	h := sha256.New()
+	h.Write([]byte("["))
+	for i, data := range encoded {
+		if i > 0 {
+			h.Write([]byte(","))
+		}
+		h.Write(data)
+	}
+	h.Write([]byte("]"))
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func summarizeEvidence(records []evidence.Record) EvidenceSummary {
+	origins, kinds, tools := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	var earliest, latest string
+	for _, record := range records {
+		origins[record.Origin] = true
+		if record.ObservationKind != "" {
+			kinds[string(record.ObservationKind)] = true
+		}
+		if record.Provenance.Tool != "" {
+			tools[record.Provenance.Tool] = true
+		}
+		if earliest == "" || record.ObservedAt < earliest {
+			earliest = record.ObservedAt
+		}
+		if latest == "" || record.ObservedAt > latest {
+			latest = record.ObservedAt
+		}
 	}
 	return EvidenceSummary{
-		Origins:         sortedStringSet(originsSet),
-		ObservationKind: obs,
-		Tools:           sortedStringSet(toolsSet),
-		RecordCount:     len(records),
-		EarliestAt:      earliest,
-		LatestAt:        latest,
+		Origins: sortedSet(origins), ObservationKinds: sortedSet(kinds), Tools: sortedSet(tools),
+		RecordCount: len(records), EarliestAt: earliest, LatestAt: latest,
 	}
 }
 
-func buildOriginSummary(draft map[string]any) OriginSummary {
-	info, _ := draft["info"].(map[string]any)
-	if info == nil {
-		return OriginSummary{}
-	}
-	var origins []string
-	switch v := info["origin"].(type) {
-	case string:
-		origins = []string{v}
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				origins = append(origins, s)
+func summarizeSideEffects(prof *profile.Profile) SideEffectSummary {
+	result := SideEffectSummary{ActionsWithSideEffects: map[string][]string{}}
+	for _, name := range prof.SortedActionNames() {
+		action := prof.Actions[name]
+		for _, effect := range action.SideEffects {
+			result.ActionsWithSideEffects[name] = append(result.ActionsWithSideEffects[name], string(effect))
+			if effect != profile.SideEffectReadOnly {
+				result.HasWriteActions = true
 			}
 		}
+		sort.Strings(result.ActionsWithSideEffects[name])
+		if action.ConfirmationPolicy.Required {
+			result.ActionsRequiringConfirmation = append(result.ActionsRequiringConfirmation, name)
+		}
 	}
-	sort.Strings(origins)
-	if origins == nil {
-		origins = []string{}
+	if result.ActionsRequiringConfirmation == nil {
+		result.ActionsRequiringConfirmation = []string{}
 	}
-	return OriginSummary{Origins: origins}
+	return result
 }
 
-func buildSideEffectSummary(draft map[string]any) SideEffectSummary {
-	actions, _ := draft["actions"].(map[string]any)
-	s := SideEffectSummary{
-		ActionsWithSideEffects: map[string][]string{},
+func sortedSet(values map[string]bool) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
 	}
-	for name, raw := range actions {
-		action, _ := raw.(map[string]any)
-		if action == nil {
-			continue
-		}
-		var effects []string
-		switch v := action["sideEffects"].(type) {
-		case []any:
-			for _, e := range v {
-				if se, ok := e.(string); ok {
-					effects = append(effects, se)
-					if se != "read_only" {
-						s.HasWriteActions = true
-					}
-				}
-			}
-		case []string:
-			for _, se := range v {
-				effects = append(effects, se)
-				if se != "read_only" {
-					s.HasWriteActions = true
-				}
-			}
-		}
-		if len(effects) > 0 {
-			sort.Strings(effects)
-			s.ActionsWithSideEffects[name] = effects
-		}
-		policy, _ := action["confirmationPolicy"].(map[string]any)
-		if policy != nil {
-			if req, _ := policy["required"].(bool); req {
-				s.ActionsRequiringConfirmation = append(s.ActionsRequiringConfirmation, name)
-			}
-		}
-	}
-	sort.Strings(s.ActionsRequiringConfirmation)
-	if s.ActionsRequiringConfirmation == nil {
-		s.ActionsRequiringConfirmation = []string{}
-	}
-	return s
+	sort.Strings(result)
+	return result
 }
 
-func buildConfidenceRationale(draft map[string]any, records []evidence.Record) string {
-	conf, _ := draft["confidence"].(string)
-	recordCount := len(records)
-	hasAmbiguity := false
-	for _, rec := range records {
-		for _, loc := range rec.CandidateLocators {
-			if loc.AmbiguityNote != "" {
-				hasAmbiguity = true
-				break
-			}
-		}
-		if hasAmbiguity {
-			break
+func hasGap(gaps []Gap, kind, field, message string) bool {
+	for _, gap := range gaps {
+		if gap.Kind == kind && gap.Field == field && strings.TrimSpace(gap.Message) == strings.TrimSpace(message) {
+			return true
 		}
 	}
-	parts := []string{fmt.Sprintf("confidence=%s", conf), fmt.Sprintf("evidence_records=%d", recordCount)}
-	if hasAmbiguity {
-		parts = append(parts, "has_ambiguous_locators=true")
-	}
-	return strings.Join(parts, "; ")
-}
-
-func buildExpiryNote(draft map[string]any) string {
-	exp, _ := draft["expiresAfter"].(string)
-	if exp == "" {
-		return "no expiry set — revalidation schedule unknown"
-	}
-	return fmt.Sprintf("profile expires after %s from last verification; revalidate before use in production", exp)
-}
-
-func collectGaps(draft map[string]any, records []evidence.Record) []Gap {
-	var gaps []Gap
-
-	// Check for expired evidence: compare now against lastVerifiedAt + expiresAfter.
-	// learnedAt is when evidence was captured; lastVerifiedAt is when the profile was
-	// last confirmed working — that is the relevant clock for expiry.
-	verif, _ := draft["verification"].(map[string]any)
-	expiresAfter, _ := draft["expiresAfter"].(string)
-	if verif != nil && expiresAfter != "" {
-		if lastVerified, _ := verif["lastVerifiedAt"].(string); lastVerified != "" {
-			t, err := time.Parse(time.RFC3339, lastVerified)
-			if err != nil {
-				gaps = append(gaps, Gap{
-					Kind:    GapExpiredEvidence,
-					Field:   "verification.lastVerifiedAt",
-					Message: fmt.Sprintf("malformed lastVerifiedAt %q: %v", lastVerified, err),
-				})
-			} else if dur, parseErr := duration.Parse(expiresAfter); parseErr != nil {
-				gaps = append(gaps, Gap{
-					Kind:    GapExpiredEvidence,
-					Field:   "expiresAfter",
-					Message: fmt.Sprintf("malformed expiresAfter %q: %v", expiresAfter, parseErr),
-				})
-			} else if time.Now().UTC().After(t.Add(dur)) {
-				gaps = append(gaps, Gap{
-					Kind:    GapExpiredEvidence,
-					Field:   "verification.lastVerifiedAt",
-					Message: fmt.Sprintf("profile last verified at %s; expiresAfter=%s has elapsed — revalidate before promoting", lastVerified, expiresAfter),
-				})
-			}
-		}
-	}
-
-	allowedOrigins := map[string]bool{}
-	for _, origin := range buildOriginSummary(draft).Origins {
-		allowedOrigins[origin] = true
-	}
-	seenOrigins := map[string]bool{}
-	for _, rec := range records {
-		if rec.Origin == "" || seenOrigins[rec.Origin] {
-			continue
-		}
-		seenOrigins[rec.Origin] = true
-		if !allowedOrigins[rec.Origin] {
-			gaps = append(gaps, Gap{
-				Kind:    GapMissingOriginCoverage,
-				Field:   "info.origin",
-				Message: fmt.Sprintf("evidence origin %q is not covered by the profile origin allowlist", rec.Origin),
-			})
-		}
-	}
-
-	gaps = append(gaps, semanticGaps(profilechecks.CheckSideEffectConfirmation(draft))...)
-	gaps = append(gaps, semanticGaps(profilechecks.CheckOutputs(draft))...)
-	gaps = append(gaps, semanticGaps(profilechecks.CheckCSSFallbacks(draft))...)
-
-	// Check for ambiguous locators in evidence.
-	for _, rec := range records {
-		for _, loc := range rec.CandidateLocators {
-			if loc.AmbiguityNote != "" {
-				gaps = append(gaps, Gap{
-					Kind:    GapAmbiguousLocator,
-					Field:   fmt.Sprintf("evidence[%s].candidateLocators", rec.ActionHint),
-					Message: loc.AmbiguityNote,
-				})
-				break
-			}
-		}
-	}
-
-	// Sort gaps for determinism.
-	sort.SliceStable(gaps, func(i, j int) bool {
-		if gaps[i].Kind != gaps[j].Kind {
-			return gaps[i].Kind < gaps[j].Kind
-		}
-		return gaps[i].Field < gaps[j].Field
-	})
-	return gaps
-}
-
-func sortedStringSet(m map[string]bool) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func semanticGaps(issues []profilechecks.Issue) []Gap {
-	gaps := make([]Gap, 0, len(issues))
-	for _, issue := range issues {
-		gaps = append(gaps, Gap{
-			Kind:    gapKind(issue.Rule),
-			Field:   issue.Field,
-			Message: issue.Message,
-		})
-	}
-	return gaps
-}
-
-func gapKind(rule profilechecks.Rule) GapKind {
-	switch rule {
-	case profilechecks.RuleInvalidOutputShape:
-		return GapUnresolvedOutput
-	case profilechecks.RuleCSSMissingFallback:
-		return GapCSSFallbackReason
-	case profilechecks.RuleSideEffectNoConfirm:
-		return GapMissingConfirmation
-	default:
-		return GapKind(rule)
-	}
+	return false
 }

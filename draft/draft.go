@@ -1,334 +1,250 @@
-// Package draft builds deterministic UWS browser-profile draft documents from
-// normalized evidence records.
-//
-// The builder is designed for use after evidence collection and before the
-// review bundle stage. It transforms evidence.Record values into a candidate
-// browser-profile that can be validated, reviewed, and promoted to a reviewed
-// profile.
-//
-// Key constraints:
-//   - Output is deterministic: same input evidence always produces the same
-//     profile structure. No clocks, random, or process-level state.
-//   - Ambiguous locators (multiple candidates with the same role/name) are
-//     refused unless the caller supplies an explicit ReviewDecision.
-//   - Generated profiles are run through profile.Validate before returning;
-//     if validation fails, path-tagged diagnostics are returned alongside the
-//     draft so the caller can inspect what needs human review.
+// Package draft builds strict, deterministic browser-profile candidates from
+// normalized evidence plus explicit reviewed action intent.
 package draft
 
 import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/revalidate"
 )
 
-// ReviewDecision is the caller's explicit resolution for an otherwise-refused
-// ambiguous locator or gap. Supply one per ambiguous action.
-type ReviewDecision struct {
-	// ActionHint is the evidence.Record.ActionHint this decision applies to.
-	ActionHint string
-	// ChosenLocatorIndex is the index into the CandidateLocators slice to use.
-	ChosenLocatorIndex int
-	// Note is a human note explaining the choice, stored in profile diagnostics.
-	Note string
+// Spec is Browsertools-only authoring input. It is not part of the portable
+// browser.1.5 profile. Every action must explicitly describe its sequence and
+// safety policy; evidence alone never invents those semantics.
+type Spec struct {
+	Info            profile.Info               `json:"info" yaml:"info"`
+	ObservationKind profile.ObservationKind    `json:"observationKind" yaml:"observationKind"`
+	Confidence      profile.Confidence         `json:"confidence" yaml:"confidence"`
+	ExpiresAfter    profile.Duration           `json:"expiresAfter" yaml:"expiresAfter"`
+	Actions         map[string]ActionSpec      `json:"actions" yaml:"actions"`
+	Decisions       []evidence.LocatorDecision `json:"decisions,omitempty" yaml:"decisions,omitempty"`
 }
 
-// Options controls draft generation behaviour.
-type Options struct {
-	// Info is the required profile-info block for the generated profile.
-	Info ProfileInfo
-	// ObservationKind is the kind to set on the generated profile.
-	ObservationKind string
-	// Confidence is one of "low", "medium", "high".
-	Confidence string
-	// ExpiresAfter is an ISO-8601 duration (e.g. "P30D").
-	ExpiresAfter string
-	// ReviewDecisions resolves ambiguous locators; keyed by ActionHint.
-	ReviewDecisions map[string]ReviewDecision
+// ActionSpec is the explicit reviewed intent for one profile action. When
+// Outputs is empty, deterministic candidate outputs may be imported from the
+// matching evidence records; sequences and safety fields are never inferred.
+type ActionSpec struct {
+	Description        string                     `json:"description,omitempty" yaml:"description,omitempty"`
+	Parameters         profile.JSONSchema         `json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	Sequence           []profile.Step             `json:"sequence" yaml:"sequence"`
+	Outputs            map[string]profile.Output  `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	SideEffects        []profile.SideEffect       `json:"sideEffects" yaml:"sideEffects"`
+	ConfirmationPolicy profile.ConfirmationPolicy `json:"confirmationPolicy" yaml:"confirmationPolicy"`
 }
 
-// ProfileInfo maps to the profile.Info type for the generated document.
-type ProfileInfo struct {
-	Title              string
-	Provider           string
-	Origin             any // string or []string
-	LoginStateRequired bool
-}
-
-// Result holds the generated draft and any diagnostics from validation.
+// Result contains the typed draft, decisions carried into review, and any
+// blocking diagnostics. Build may return a non-nil Result with an error so a
+// caller can render all failures at once.
 type Result struct {
-	// Draft is the generated profile as a raw JSON-compatible map. It can be
-	// marshaled directly or passed to profile.Validate.
-	Draft map[string]any
-	// ValidationErrors contains schema validation errors if the draft did not
-	// pass validation. A non-nil Draft with non-empty ValidationErrors means the
-	// draft is a best-effort candidate that needs human repair.
-	ValidationErrors []string
+	Profile     *profile.Profile           `json:"profile"`
+	Decisions   []evidence.LocatorDecision `json:"decisions"`
+	Diagnostics []profile.Issue            `json:"diagnostics"`
 }
 
-// Build constructs a browser-profile draft from a slice of normalized evidence
-// records. Records are grouped by ActionHint; each distinct hint becomes one
-// action in the profile.
-//
-// Returns an error if:
-//   - opts.Info.Origin or opts.Info.Title are empty.
-//   - Any evidence group has ambiguous locators and no ReviewDecision was supplied.
-//
-// Validation errors (schema non-compliance) are returned in Result.ValidationErrors,
-// not as a Go error, so callers can inspect the draft alongside the issues.
-func Build(records []evidence.Record, opts Options) (*Result, error) {
-	if opts.Info.Title == "" {
-		return nil, fmt.Errorf("build: opts.Info.Title is required")
+// ReadyForReview reports whether the result has a valid profile and no
+// blocking diagnostics.
+func (r *Result) ReadyForReview() bool {
+	return r != nil && r.Profile != nil && len(r.Diagnostics) == 0
+}
+
+// Build constructs a candidate profile from evidence and explicit action
+// intent. It never inserts placeholder navigation, guesses a click, or assumes
+// an action is read-only.
+func Build(records []evidence.Record, spec Spec) (*Result, error) {
+	if len(records) == 0 {
+		return nil, fmt.Errorf("draft: at least one normalized evidence record is required")
 	}
-	if opts.Info.Origin == nil {
-		return nil, fmt.Errorf("build: opts.Info.Origin is required")
+	if spec.Info.Title == "" || len(spec.Info.Origin) == 0 {
+		return nil, fmt.Errorf("draft: info.title and info.origin are required")
 	}
-	if opts.Confidence == "" {
-		opts.Confidence = "low"
+	if spec.ObservationKind == "" || spec.Confidence == "" || spec.ExpiresAfter == "" {
+		return nil, fmt.Errorf("draft: observationKind, confidence, and expiresAfter are required")
 	}
-	if opts.ExpiresAfter == "" {
-		opts.ExpiresAfter = "P30D"
-	}
-	if opts.ObservationKind == "" {
-		opts.ObservationKind = "accessibility_snapshot"
+	if len(spec.Actions) == 0 {
+		return nil, fmt.Errorf("draft: at least one explicit action specification is required")
 	}
 
-	// Group records by ActionHint, stable-sorted within each group.
-	groups := groupByAction(records)
-
-	// Use the earliest ObservedAt across all records for the profile-level
-	// evidence block, and the latest for the verification block.
-	earliest, latest := timeRange(records)
-	if earliest == "" {
-		earliest = "2006-01-02T15:04:05Z" // sentinel; replaced by real evidence
-	}
-	if latest == "" {
-		latest = earliest
-	}
-
-	actions := make(map[string]any, len(groups))
-	for _, hint := range sortedKeys(groups) {
-		group := groups[hint]
-		action, err := buildAction(hint, group, opts)
+	canonicalOrigins := make(profile.Origins, len(spec.Info.Origin))
+	for i, raw := range spec.Info.Origin {
+		canonical, err := profile.ParseOrigin(raw)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("draft: info.origin[%d]: %w", i, err)
 		}
-		actions[hint] = action
+		canonicalOrigins[i] = canonical
 	}
+	spec.Info.Origin = canonicalOrigins
 
-	draft := map[string]any{
-		"profile": "uws.browser.1.5",
-		"info": map[string]any{
-			"title":              opts.Info.Title,
-			"origin":             opts.Info.Origin,
-			"loginStateRequired": opts.Info.LoginStateRequired,
-		},
-		"observationKind": opts.ObservationKind,
-		"evidence": map[string]any{
-			"learnedAt": earliest,
-			"source":    "browsertools_draft",
-		},
-		"confidence":   opts.Confidence,
-		"expiresAfter": opts.ExpiresAfter,
-		"verification": map[string]any{
-			"lastVerifiedAt": latest,
-			"successfulRuns": 0,
-		},
-		"actions": actions,
-	}
-
-	// Remove provider from info if empty.
-	if opts.Info.Provider != "" {
-		draft["info"].(map[string]any)["provider"] = opts.Info.Provider
-	}
-
-	// Validate and collect any schema errors, but still return the draft.
-	var valErrs []string
-	if err := profile.Validate(draft); err != nil {
-		valErrs = append(valErrs, err.Error())
-	}
-
-	return &Result{Draft: draft, ValidationErrors: valErrs}, nil
-}
-
-// buildAction converts one group of evidence records into a profile action map.
-func buildAction(hint string, records []evidence.Record, opts Options) (map[string]any, error) {
-	// Pick the best locator for sequence steps.
-	loc, err := resolveLocator(hint, records, opts.ReviewDecisions)
+	earliest, latest, err := timeRange(records)
 	if err != nil {
 		return nil, err
 	}
-
-	// Build a minimal sequence: navigate if any record has a URL-like origin,
-	// then click the resolved locator (if found).
-	sequence := buildSequence(loc, records)
-
-	// Collect candidate outputs across all records in this group.
-	outputs := buildOutputs(records)
-
-	// Default to read_only; the reviewer updates this after inspecting the action.
-	sideEffects := []any{"read_only"}
-	confirmationPolicy := map[string]any{"required": false}
-
-	action := map[string]any{
-		"description":        fmt.Sprintf("Draft action generated from evidence for %q.", hint),
-		"parameters":         map[string]any{"type": "object", "properties": map[string]any{}},
-		"sequence":           sequence,
-		"sideEffects":        sideEffects,
-		"confirmationPolicy": confirmationPolicy,
-	}
-	if len(outputs) > 0 {
-		action["outputs"] = outputs
-	}
-	return action, nil
-}
-
-// resolveLocator picks a single CandidateLocator from the records in a group.
-// Returns nil if there are no locators (the action will rely on navigate only).
-// Returns an error if there are multiple ambiguous locators and no ReviewDecision.
-func resolveLocator(hint string, records []evidence.Record, decisions map[string]ReviewDecision) (*evidence.CandidateLocator, error) {
-	// Collect all locators across the group. Duplicate role/name candidates are
-	// kept because adapter ambiguity notes are evidence that still requires an
-	// explicit reviewer decision.
-	var candidates []evidence.CandidateLocator
-	seen := map[string]bool{}
-	hasAmbiguityNote := false
-	for _, rec := range records {
-		for _, loc := range rec.CandidateLocators {
-			key := loc.Role + "|" + loc.Name
-			seen[key] = true
-			if loc.AmbiguityNote != "" {
-				hasAmbiguityNote = true
-			}
-			candidates = append(candidates, loc)
+	actions := make(map[string]profile.Action, len(spec.Actions))
+	for _, actionName := range sortedKeys(spec.Actions) {
+		actionSpec := spec.Actions[actionName]
+		if len(actionSpec.Sequence) == 0 {
+			return nil, fmt.Errorf("draft: action %q must declare a non-empty sequence", actionName)
 		}
-	}
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-	if len(seen) == 1 && !hasAmbiguityNote {
-		loc := candidates[0]
-		return &loc, nil
-	}
-
-	// Multiple distinct locators, or one logical locator with explicit adapter
-	// ambiguity evidence, require a reviewer decision.
-	dec, ok := decisions[hint]
-	if !ok {
-		if hasAmbiguityNote {
-			return nil, fmt.Errorf("build: action %q has ambiguous locator evidence; supply a ReviewDecision to resolve", hint)
+		if len(actionSpec.SideEffects) == 0 {
+			return nil, fmt.Errorf("draft: action %q must explicitly declare sideEffects", actionName)
 		}
-		return nil, fmt.Errorf("build: action %q has %d ambiguous locators with different role/name; supply a ReviewDecision to resolve", hint, len(seen))
-	}
-	if dec.ChosenLocatorIndex < 0 || dec.ChosenLocatorIndex >= len(candidates) {
-		return nil, fmt.Errorf("build: ReviewDecision for %q has out-of-range index %d (have %d locators)", hint, dec.ChosenLocatorIndex, len(candidates))
-	}
-	loc := candidates[dec.ChosenLocatorIndex]
-	return &loc, nil
-}
-
-// buildSequence constructs the minimal sequence for an action given the
-// resolved locator and the evidence records.
-func buildSequence(loc *evidence.CandidateLocator, records []evidence.Record) []any {
-	var seq []any
-
-	// If any record has a non-empty ActionHint that looks like a path, add navigate.
-	// For now we emit a navigate placeholder that the reviewer will fill in.
-	// The locator click follows if we have a locator.
-	seq = append(seq, map[string]any{"navigate": "/"})
-
-	if loc != nil {
-		clickLoc := map[string]any{"role": loc.Role}
-		if loc.Name != "" {
-			clickLoc["name"] = loc.Name
+		outputs := cloneOutputs(actionSpec.Outputs)
+		if len(outputs) == 0 {
+			outputs = candidateOutputs(actionName, records)
 		}
-		seq = append(seq, map[string]any{
-			"click": map[string]any{"locator": clickLoc},
+		action := profile.Action{
+			Description:        actionSpec.Description,
+			Parameters:         cloneSchema(actionSpec.Parameters),
+			Sequence:           actionSpec.Sequence,
+			Outputs:            outputs,
+			SideEffects:        actionSpec.SideEffects,
+			ConfirmationPolicy: actionSpec.ConfirmationPolicy,
+		}
+		cloned, err := cloneAction(action)
+		if err != nil {
+			return nil, fmt.Errorf("draft: clone action %q: %w", actionName, err)
+		}
+		actions[actionName] = cloned
+	}
+
+	prof := &profile.Profile{
+		Schema:          "uws.browser.1.5",
+		Info:            spec.Info,
+		ObservationKind: spec.ObservationKind,
+		Evidence:        profile.Evidence{LearnedAt: earliest, Source: "browsertools_draft"},
+		Confidence:      spec.Confidence,
+		ExpiresAfter:    spec.ExpiresAfter,
+		Verification:    profile.Verification{LastVerifiedAt: latest, SuccessfulRuns: 0},
+		Actions:         actions,
+	}
+	result := &Result{
+		Profile:   prof,
+		Decisions: append([]evidence.LocatorDecision(nil), spec.Decisions...),
+	}
+
+	checkedAt, _ := time.Parse(time.RFC3339, latest)
+	revalidation, checkErr := revalidate.CheckAt(prof, records, result.Decisions, checkedAt)
+	if checkErr != nil {
+		return result, checkErr
+	}
+	for _, failure := range revalidation.Failures {
+		result.Diagnostics = append(result.Diagnostics, profile.Issue{
+			Code: string(failure.Kind), Path: failure.Field, Message: failure.Message,
 		})
 	}
-	return seq
+	if result.Diagnostics == nil {
+		result.Diagnostics = []profile.Issue{}
+	}
+	if len(result.Diagnostics) > 0 {
+		return result, fmt.Errorf("draft: %d blocking diagnostic(s); first: %s: %s", len(result.Diagnostics), result.Diagnostics[0].Path, result.Diagnostics[0].Message)
+	}
+	return result, nil
 }
 
-// buildOutputs converts CandidateOutputs from all records in a group into the
-// profile outputs map shape, deduplicating by key.
-func buildOutputs(records []evidence.Record) map[string]any {
-	seen := map[string]bool{}
-	outputs := map[string]any{}
+// MarshalProfile serializes a typed draft as deterministic indented JSON.
+func MarshalProfile(prof *profile.Profile) ([]byte, error) {
+	if prof == nil {
+		return nil, fmt.Errorf("draft: profile is required")
+	}
+	return json.MarshalIndent(prof, "", "  ")
+}
+
+func candidateOutputs(actionName string, records []evidence.Record) map[string]profile.Output {
+	outputs := map[string]profile.Output{}
 	for _, rec := range records {
-		for _, out := range rec.CandidateOutputs {
-			if seen[out.Key] {
+		if rec.ActionHint != actionName {
+			continue
+		}
+		for _, candidate := range rec.CandidateOutputs {
+			if candidate.Key == "" {
 				continue
 			}
-			seen[out.Key] = true
-			entry := map[string]any{
-				"type":   out.Type,
-				"source": out.Source,
+			if _, exists := outputs[candidate.Key]; exists {
+				continue
 			}
-			if out.Locator != nil {
-				entry["locator"] = map[string]any{"role": out.Locator.Role, "name": out.Locator.Name}
+			out := profile.Output{
+				Type: profile.OutputType(candidate.Type), Source: profile.OutputSource(candidate.Source),
+				Selector: candidate.Selector, FallbackReason: profile.FallbackReason(candidate.FallbackReason),
+				Property: candidate.Property,
 			}
-			if out.Source == "css" {
-				if out.Selector != "" {
-					entry["selector"] = out.Selector
+			if candidate.Locator != nil {
+				out.Locator = &profile.Locator{
+					Role: profile.Role(candidate.Locator.Role), Name: candidate.Locator.Name,
+					Text: candidate.Locator.Text, Value: candidate.Locator.Value,
 				}
-				if out.FallbackReason != "" {
-					entry["fallbackReason"] = out.FallbackReason
-				}
-				entry["validation"] = map[string]any{"type": out.Type}
 			}
-			if out.Property != "" {
-				entry["property"] = out.Property
+			if out.Source == profile.OutputCSS {
+				out.Validation = profile.JSONSchema{"type": candidate.Type}
 			}
-			outputs[out.Key] = entry
+			outputs[candidate.Key] = out
 		}
+	}
+	if len(outputs) == 0 {
+		return nil
 	}
 	return outputs
 }
 
-// groupByAction groups evidence records by ActionHint. Records with an empty
-// ActionHint are grouped under "_default".
-func groupByAction(records []evidence.Record) map[string][]evidence.Record {
-	groups := map[string][]evidence.Record{}
-	for _, rec := range records {
-		key := rec.ActionHint
-		if key == "" {
-			key = "_default"
+func timeRange(records []evidence.Record) (string, string, error) {
+	var earliest, latest time.Time
+	for i, rec := range records {
+		observed, err := time.Parse(time.RFC3339, rec.ObservedAt)
+		if err != nil {
+			return "", "", fmt.Errorf("draft: evidence[%d].observedAt: %w", i, err)
 		}
-		groups[key] = append(groups[key], rec)
+		observed = observed.UTC()
+		if earliest.IsZero() || observed.Before(earliest) {
+			earliest = observed
+		}
+		if latest.IsZero() || observed.After(latest) {
+			latest = observed
+		}
 	}
-	return groups
+	return earliest.Format(time.RFC3339), latest.Format(time.RFC3339), nil
 }
 
-// sortedKeys returns the keys of a map in alphabetical order.
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+func sortedKeys[V any](values map[string]V) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	return keys
 }
 
-// timeRange returns the earliest and latest ObservedAt from a record slice.
-func timeRange(records []evidence.Record) (earliest, latest string) {
-	for _, rec := range records {
-		if rec.ObservedAt == "" {
-			continue
-		}
-		if earliest == "" || rec.ObservedAt < earliest {
-			earliest = rec.ObservedAt
-		}
-		if latest == "" || rec.ObservedAt > latest {
-			latest = rec.ObservedAt
-		}
+func cloneSchema(schema profile.JSONSchema) profile.JSONSchema {
+	if schema == nil {
+		return nil
 	}
-	return earliest, latest
+	data, _ := json.Marshal(schema)
+	var result profile.JSONSchema
+	_ = json.Unmarshal(data, &result)
+	return result
 }
 
-// MarshalDraft serializes a Result.Draft map to JSON.
-func MarshalDraft(draft map[string]any) ([]byte, error) {
-	return json.MarshalIndent(draft, "", "  ")
+func cloneOutputs(outputs map[string]profile.Output) map[string]profile.Output {
+	if outputs == nil {
+		return nil
+	}
+	result := make(map[string]profile.Output, len(outputs))
+	for key, value := range outputs {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneAction(action profile.Action) (profile.Action, error) {
+	data, err := json.Marshal(action)
+	if err != nil {
+		return profile.Action{}, err
+	}
+	var result profile.Action
+	if err := json.Unmarshal(data, &result); err != nil {
+		return profile.Action{}, err
+	}
+	return result, nil
 }

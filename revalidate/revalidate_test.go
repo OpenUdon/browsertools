@@ -2,31 +2,28 @@ package revalidate
 
 import (
 	"testing"
+	"time"
 
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/profile"
 )
 
-// baseProfile returns a minimal valid profile map with one read-only action.
-func baseProfile() map[string]any {
-	return map[string]any{
-		"profile": "uws.browser.1.5",
-		"info": map[string]any{
-			"title":  "Test",
-			"origin": "https://example.test",
-		},
-		"observationKind": "accessibility_snapshot",
-		"evidence":        map[string]any{"learnedAt": "2099-01-01T00:00:00Z"},
-		"confidence":      "medium",
-		"expiresAfter":    "P30D",
-		"verification": map[string]any{
-			"lastVerifiedAt": "2099-01-01T00:00:00Z",
-			"successfulRuns": 1,
-		},
-		"actions": map[string]any{
-			"read_status": map[string]any{
-				"sequence":           []any{map[string]any{"navigate": "/"}},
-				"sideEffects":        []any{"read_only"},
-				"confirmationPolicy": map[string]any{"required": false},
+var assessmentTime = time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+
+func baseProfile() *profile.Profile {
+	return &profile.Profile{
+		Schema:          "uws.browser.1.5",
+		Info:            profile.Info{Title: "Test", Origin: profile.Origins{"https://example.test"}},
+		ObservationKind: profile.ObservationAccessibilitySnapshot,
+		Evidence:        profile.Evidence{LearnedAt: "2026-01-01T00:00:00Z"},
+		Confidence:      profile.ConfidenceMedium,
+		ExpiresAfter:    profile.Duration("P30D"),
+		Verification:    profile.Verification{LastVerifiedAt: "2026-01-01T00:00:00Z", SuccessfulRuns: 1},
+		Actions: map[string]profile.Action{
+			"read_status": {
+				Sequence:           []profile.Step{{Kind: profile.StepNavigate, Navigate: "/"}},
+				SideEffects:        []profile.SideEffect{profile.SideEffectReadOnly},
+				ConfirmationPolicy: profile.ConfirmationPolicy{Required: false},
 			},
 		},
 	}
@@ -46,216 +43,196 @@ func baseRecord() evidence.Record {
 	}
 }
 
-// TestCheckClean passes with a consistent profile and matching evidence.
-func TestCheckClean(t *testing.T) {
-	r := Check(baseProfile(), []evidence.Record{baseRecord()})
-	if !r.OK {
-		t.Errorf("expected OK=true, got failures: %+v", r.Failures)
+func TestCheckAtCleanNavigateOnly(t *testing.T) {
+	result, err := CheckAt(baseProfile(), []evidence.Record{baseRecord()}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK {
+		t.Fatalf("expected OK, got %+v", result.Failures)
 	}
 }
 
-// TestCheckOriginMismatch detects evidence from a non-allowlisted origin.
-func TestCheckOriginMismatch(t *testing.T) {
-	rec := baseRecord()
-	rec.Origin = "https://evil.test"
-	r := Check(baseProfile(), []evidence.Record{rec})
-	if r.OK {
-		t.Error("expected OK=false for origin mismatch")
-	}
-	if !hasFailure(r, CheckOriginMismatch) {
-		t.Errorf("expected CheckOriginMismatch failure, got: %+v", r.Failures)
-	}
-}
-
-// TestCheckMissingLocator detects an action with no candidate locators.
-func TestCheckMissingLocator(t *testing.T) {
-	rec := baseRecord()
-	rec.CandidateLocators = nil
-	r := Check(baseProfile(), []evidence.Record{rec})
-	if r.OK {
-		t.Error("expected OK=false for missing locator")
-	}
-	if !hasFailure(r, CheckMissingLocator) {
-		t.Errorf("expected CheckMissingLocator failure, got: %+v", r.Failures)
+func TestCheckAtRequiresAssessmentTime(t *testing.T) {
+	if _, err := CheckAt(baseProfile(), []evidence.Record{baseRecord()}, nil, time.Time{}); err == nil {
+		t.Fatal("expected zero-time error")
 	}
 }
 
 func TestCheckMissingActionEvidence(t *testing.T) {
-	r := Check(baseProfile(), nil)
-	if r.OK {
-		t.Error("expected OK=false for missing action evidence")
-	}
-	if !hasFailure(r, CheckMissingEvidence) {
-		t.Errorf("expected CheckMissingEvidence failure, got: %+v", r.Failures)
-	}
-}
-
-func TestCheckAmbiguousLocator(t *testing.T) {
-	rec := baseRecord()
-	rec.CandidateLocators = []evidence.CandidateLocator{
-		{Role: "button", Name: "Save", AmbiguityNote: "two buttons match"},
-	}
-	r := Check(baseProfile(), []evidence.Record{rec})
-	if r.OK {
-		t.Error("expected OK=false for ambiguous locator evidence")
-	}
-	if !hasFailure(r, CheckAmbiguousLocator) {
-		t.Errorf("expected CheckAmbiguousLocator failure, got: %+v", r.Failures)
-	}
-}
-
-// TestCheckExpired detects a profile whose lastVerifiedAt + expiresAfter has elapsed.
-func TestCheckExpired(t *testing.T) {
-	prof := baseProfile()
-	prof["verification"].(map[string]any)["lastVerifiedAt"] = "2020-01-01T00:00:00Z"
-	r := Check(prof, nil)
-	if r.OK {
-		t.Error("expected OK=false for expired profile")
-	}
-	if !hasFailure(r, CheckExpired) {
-		t.Errorf("expected CheckExpired failure, got: %+v", r.Failures)
-	}
-}
-
-// TestCheckCSSMissingFallback detects a css output without fallbackReason.
-func TestCheckCSSMissingFallback(t *testing.T) {
-	prof := baseProfile()
-	prof["actions"].(map[string]any)["read_status"].(map[string]any)["outputs"] = map[string]any{
-		"items": map[string]any{
-			"type":     "array",
-			"source":   "css",
-			"selector": ".items li",
-			// fallbackReason absent
-		},
-	}
-	r := Check(prof, nil)
-	if r.OK {
-		t.Error("expected OK=false for CSS missing fallback")
-	}
-	if !hasFailure(r, CheckCSSMissingFallback) {
-		t.Errorf("expected CheckCSSMissingFallback failure, got: %+v", r.Failures)
-	}
-}
-
-func TestCheckInvalidOutputShapes(t *testing.T) {
-	prof := baseProfile()
-	prof["actions"].(map[string]any)["read_status"].(map[string]any)["outputs"] = map[string]any{
-		"missing_type": map[string]any{
-			"source": "a11y",
-			"locator": map[string]any{
-				"role": "status",
-			},
-		},
-		"missing_locator": map[string]any{
-			"type":   "string",
-			"source": "a11y",
-		},
-		"missing_css_validation": map[string]any{
-			"type":           "array",
-			"source":         "css",
-			"selector":       ".items li",
-			"fallbackReason": "no_structured_data",
-		},
-	}
-	r := Check(prof, nil)
-	if r.OK {
-		t.Error("expected OK=false for invalid output shapes")
-	}
-	if !hasFailure(r, CheckInvalidOutputShape) {
-		t.Errorf("expected CheckInvalidOutputShape failure, got: %+v", r.Failures)
-	}
-}
-
-// TestCheckSideEffectNoConfirmation detects a write action with required=false.
-func TestCheckSideEffectNoConfirmation(t *testing.T) {
-	prof := baseProfile()
-	prof["actions"].(map[string]any)["read_status"].(map[string]any)["sideEffects"] = []any{"creates_record"}
-	prof["actions"].(map[string]any)["read_status"].(map[string]any)["confirmationPolicy"] = map[string]any{"required": false}
-	r := Check(prof, nil)
-	if r.OK {
-		t.Error("expected OK=false for side effect without confirmation")
-	}
-	if !hasFailure(r, CheckSideEffectNoConfirm) {
-		t.Errorf("expected CheckSideEffectNoConfirm failure, got: %+v", r.Failures)
-	}
-}
-
-func TestCheckSideEffectRequiresSafeWait(t *testing.T) {
-	prof := baseProfile()
-	action := prof["actions"].(map[string]any)["read_status"].(map[string]any)
-	action["sideEffects"] = []any{"updates_record"}
-	action["confirmationPolicy"] = map[string]any{"required": true}
-	r := Check(prof, nil)
-	if r.OK {
-		t.Error("expected OK=false for write action without wait")
-	}
-	if !hasFailure(r, CheckSideEffectNoSafeWait) {
-		t.Errorf("expected CheckSideEffectNoSafeWait failure, got: %+v", r.Failures)
-	}
-}
-
-func TestCheckSideEffectAllowsClickWait(t *testing.T) {
-	prof := baseProfile()
-	action := prof["actions"].(map[string]any)["read_status"].(map[string]any)
-	action["sideEffects"] = []any{"updates_record"}
-	action["confirmationPolicy"] = map[string]any{"required": true}
-	action["sequence"] = []any{
-		map[string]any{"click": map[string]any{
-			"locator":  map[string]any{"role": "button", "name": "Save"},
-			"wait_for": map[string]any{"navigation": "network_idle"},
-		}},
-	}
-	r := Check(prof, nil)
-	if hasFailure(r, CheckSideEffectNoSafeWait) {
-		t.Errorf("did not expect CheckSideEffectNoSafeWait failure, got: %+v", r.Failures)
-	}
-}
-
-// TestCheckFailuresSorted verifies the Failures slice is sorted by (Kind, Field).
-func TestCheckFailuresSorted(t *testing.T) {
-	prof := baseProfile()
-	// Trigger both an expired and a side-effect failure.
-	prof["verification"].(map[string]any)["lastVerifiedAt"] = "2020-01-01T00:00:00Z"
-	prof["actions"].(map[string]any)["read_status"].(map[string]any)["sideEffects"] = []any{"creates_record"}
-	prof["actions"].(map[string]any)["read_status"].(map[string]any)["confirmationPolicy"] = map[string]any{"required": false}
-	r := Check(prof, nil)
-	for i := 1; i < len(r.Failures); i++ {
-		a, b := r.Failures[i-1], r.Failures[i]
-		if string(a.Kind) > string(b.Kind) {
-			t.Errorf("failures not sorted: %q > %q", a.Kind, b.Kind)
-		}
-	}
-}
-
-// TestLiveRevalidatorReturnsError confirms LiveRevalidator never runs.
-func TestLiveRevalidatorReturnsError(t *testing.T) {
-	lr := LiveRevalidator{}
-	_, err := lr.Revalidate(baseProfile(), nil)
-	if err == nil {
-		t.Error("expected ErrLiveNotSupported, got nil")
-	}
-	if err != ErrLiveNotSupported {
-		t.Errorf("expected ErrLiveNotSupported, got: %v", err)
-	}
-}
-
-// TestFixtureRevalidatorInterface confirms FixtureRevalidator satisfies the interface.
-func TestFixtureRevalidatorInterface(t *testing.T) {
-	var r Revalidator = FixtureRevalidator{}
-	result, err := r.Revalidate(baseProfile(), []evidence.Record{baseRecord()})
+	result, err := CheckAt(baseProfile(), nil, nil, assessmentTime)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckMissingEvidence)
+}
+
+func TestCheckRejectsNonNormalizedEvidence(t *testing.T) {
+	rec := baseRecord()
+	rec.RedactionStatus = evidence.RedactionPending
+	result, err := CheckAt(baseProfile(), []evidence.Record{rec}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckInvalidEvidence)
+
+	rec = baseRecord()
+	rec.ObservedAt = "2026-01-01T00:00:00+00:00"
+	result, err = CheckAt(baseProfile(), []evidence.Record{rec}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckInvalidEvidence)
+}
+
+func TestCheckDeclaredLocatorMatching(t *testing.T) {
+	prof := baseProfile()
+	action := prof.Actions["read_status"]
+	action.Sequence = []profile.Step{{Kind: profile.StepClick, Click: &profile.LocatorStep{Locator: profile.Locator{Role: "button", Name: "Save"}}}}
+	prof.Actions["read_status"] = action
+	result, err := CheckAt(prof, []evidence.Record{baseRecord()}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckMissingLocator)
+
+	rec := baseRecord()
+	rec.CandidateLocators = []evidence.CandidateLocator{{Role: "button", Name: "Save"}}
+	result, err = CheckAt(prof, []evidence.Record{rec}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if !result.OK {
-		t.Errorf("expected OK, got failures: %+v", result.Failures)
+		t.Fatalf("expected matching locator to pass, got %+v", result.Failures)
 	}
 }
 
-func hasFailure(r Result, kind CheckKind) bool {
-	for _, f := range r.Failures {
-		if f.Kind == kind {
-			return true
+func TestCheckAmbiguityRequiresDecisionRationale(t *testing.T) {
+	prof := baseProfile()
+	action := prof.Actions["read_status"]
+	action.Sequence = []profile.Step{{Kind: profile.StepClick, Click: &profile.LocatorStep{Locator: profile.Locator{Role: "button", Name: "Save"}}}}
+	prof.Actions["read_status"] = action
+	rec := baseRecord()
+	rec.CandidateLocators = []evidence.CandidateLocator{{Role: "button", Name: "Save", AmbiguityNote: "two matches"}}
+
+	result, err := CheckAt(prof, []evidence.Record{rec}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckAmbiguousLocator)
+
+	decisions := []evidence.LocatorDecision{{
+		ActionHint: "read_status",
+		Locator:    evidence.CandidateLocator{Role: "button", Name: "Save"},
+		Rationale:  "reviewed in the Save dialog",
+	}}
+	result, err = CheckAt(prof, []evidence.Record{rec}, decisions, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK {
+		t.Fatalf("expected reviewed decision to pass, got %+v", result.Failures)
+	}
+}
+
+func TestCheckOriginCanonicalizationAndMismatch(t *testing.T) {
+	rec := baseRecord()
+	rec.Origin = "https://EXAMPLE.test:443"
+	result, err := CheckAt(baseProfile(), []evidence.Record{rec}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK {
+		t.Fatalf("expected default-port equivalent origin to pass: %+v", result.Failures)
+	}
+
+	rec.Origin = "https://evil.test"
+	result, err = CheckAt(baseProfile(), []evidence.Record{rec}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckOriginMismatch)
+}
+
+func TestCheckExpiryUsesReferenceAwareDuration(t *testing.T) {
+	prof := baseProfile()
+	prof.Verification.LastVerifiedAt = "2026-01-31T00:00:00Z"
+	prof.ExpiresAfter = "P1M"
+	result, err := CheckAt(prof, []evidence.Record{baseRecord()}, nil, time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckExpired)
+}
+
+func TestCheckExpiryRejectsExactExpiryInstant(t *testing.T) {
+	prof := baseProfile()
+	verifiedAt, err := time.Parse(time.RFC3339, prof.Verification.LastVerifiedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt, err := prof.ExpiresAfter.AddTo(verifiedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := CheckAt(prof, []evidence.Record{baseRecord()}, nil, expiresAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckExpired)
+}
+
+func TestSideEffectRequiresWaitAfterFinalAction(t *testing.T) {
+	prof := baseProfile()
+	action := prof.Actions["read_status"]
+	action.SideEffects = []profile.SideEffect{profile.SideEffectUpdatesRecord}
+	action.ConfirmationPolicy = profile.ConfirmationPolicy{Required: true}
+	action.Sequence = []profile.Step{
+		{Kind: profile.StepWaitFor, WaitFor: &profile.WaitForCondition{Locator: &profile.Locator{Role: "status", Name: "Ready"}}},
+		{Kind: profile.StepClick, Click: &profile.LocatorStep{Locator: profile.Locator{Role: "button", Name: "Save"}}},
+	}
+	prof.Actions["read_status"] = action
+	rec := baseRecord()
+	rec.CandidateLocators = []evidence.CandidateLocator{{Role: "button", Name: "Save"}, {Role: "status", Name: "Ready"}}
+	result, err := CheckAt(prof, []evidence.Record{rec}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckSideEffectNoSafeWait)
+
+	action.Sequence = append(action.Sequence, profile.Step{Kind: profile.StepWaitFor, WaitFor: &profile.WaitForCondition{Locator: &profile.Locator{Role: "status", Name: "Saved"}}})
+	prof.Actions["read_status"] = action
+	rec.CandidateLocators = append(rec.CandidateLocators, evidence.CandidateLocator{Role: "status", Name: "Saved"})
+	result, err = CheckAt(prof, []evidence.Record{rec}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK {
+		t.Fatalf("expected final wait to pass, got %+v", result.Failures)
+	}
+}
+
+func TestA11yOutputLocatorNeedsEvidence(t *testing.T) {
+	prof := baseProfile()
+	action := prof.Actions["read_status"]
+	action.Outputs = map[string]profile.Output{"status": {
+		Type: profile.OutputString, Source: profile.OutputA11y,
+		Locator: &profile.Locator{Role: "status", Name: "System status"},
+	}}
+	prof.Actions["read_status"] = action
+	result, err := CheckAt(prof, []evidence.Record{baseRecord()}, nil, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckMissingLocator)
+}
+
+func assertFailure(t *testing.T, result Result, kind CheckKind) {
+	t.Helper()
+	for _, failure := range result.Failures {
+		if failure.Kind == kind {
+			return
 		}
 	}
-	return false
+	t.Fatalf("expected failure %q, got %+v", kind, result.Failures)
 }

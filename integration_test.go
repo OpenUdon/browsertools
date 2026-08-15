@@ -4,8 +4,10 @@ package browsertools_test
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/OpenUdon/browsertools/adapter"
 	"github.com/OpenUdon/browsertools/adapter/playwright"
@@ -52,21 +54,32 @@ func TestEndToEndPipeline(t *testing.T) {
 	}
 
 	// 3. Build a draft profile.
-	result, err := draft.Build(records, draft.Options{
-		Info:            draft.ProfileInfo{Title: "Example", Origin: "https://example.test"},
-		ObservationKind: "accessibility_snapshot",
-		Confidence:      "medium",
+	result, err := draft.Build(records, draft.Spec{
+		Info:            profile.Info{Title: "Example", Origin: profile.Origins{"https://example.test"}},
+		ObservationKind: profile.ObservationAccessibilitySnapshot,
+		Confidence:      profile.ConfidenceMedium,
 		ExpiresAfter:    "P30D",
+		Actions: map[string]draft.ActionSpec{"read_status": {
+			Sequence: []profile.Step{
+				{Kind: profile.StepNavigate, Navigate: "/status"},
+				{Kind: profile.StepWaitFor, WaitFor: &profile.WaitForCondition{Locator: &profile.Locator{Role: "status", Name: "All systems operational"}}},
+			},
+			SideEffects:        []profile.SideEffect{profile.SideEffectReadOnly},
+			ConfirmationPolicy: profile.ConfirmationPolicy{Required: false},
+		}},
 	})
 	if err != nil {
 		t.Fatalf("draft.Build: %v", err)
 	}
-	if len(result.ValidationErrors) > 0 {
-		t.Errorf("draft validation errors: %v", result.ValidationErrors)
+	if !result.ReadyForReview() {
+		t.Errorf("draft diagnostics: %v", result.Diagnostics)
 	}
 
 	// 4. Build a review bundle and assert it is promotable.
-	bundle := review.Build(result.Draft, records)
+	bundle, err := review.Build(result.Profile, records, result.Decisions, time.Date(2099, 1, 2, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("review.Build: %v", err)
+	}
 	if !bundle.Validation.Valid {
 		t.Errorf("bundle validation failed: %v", bundle.Validation.Errors)
 	}
@@ -76,6 +89,37 @@ func TestEndToEndPipeline(t *testing.T) {
 		for _, g := range bundle.Gaps {
 			t.Errorf("unexpected gap: %s at %s — %s", g.Kind, g.Field, g.Message)
 		}
+	}
+	if !bundle.Promotable() {
+		t.Error("expected bundle to be promotable")
+	}
+}
+
+// TestOpenUdonBundleVerify proves the committed handoff bundle is bound to the
+// exact profile and normalized evidence shipped with the example.
+func TestOpenUdonBundleVerify(t *testing.T) {
+	prof, err := profile.LoadFile("examples/wikipedia-lookup/browser-profiles/wikipedia.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceData, err := os.ReadFile("examples/openudon-binding/evidence.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []evidence.Record
+	if err := json.Unmarshal(evidenceData, &records); err != nil {
+		t.Fatal(err)
+	}
+	bundleData, err := os.ReadFile("examples/openudon-binding/review-bundle.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundle review.Bundle
+	if err := json.Unmarshal(bundleData, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if err := review.Verify(&bundle, prof, records, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("verify OpenUdon handoff bundle: %v", err)
 	}
 }
 
@@ -97,7 +141,7 @@ func TestExampleProfilesValidate(t *testing.T) {
 		for _, path := range matches {
 			found++
 			t.Run(filepath.Base(path), func(t *testing.T) {
-				if err := profile.ValidateFile(path); err != nil {
+				if _, err := profile.LoadFile(path); err != nil {
 					t.Errorf("profile failed validation: %v", err)
 				}
 			})

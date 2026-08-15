@@ -6,40 +6,72 @@
   "reviewBundle": {
     "profile": {
       "profile": "uws.browser.1.5",
-      "info": { "title": "Example Status Service", "origin": "https://status.example.test" },
+      "info": {
+        "title": "Example Status Service",
+        "origin": "https://status.example.test"
+      },
       "observationKind": "accessibility_snapshot",
-      "evidence": { "learnedAt": "2026-06-01T00:00:00Z", "source": "synthetic_fixture" },
+      "evidence": {
+        "learnedAt": "2026-06-01T00:00:00Z",
+        "source": "synthetic_fixture"
+      },
       "confidence": "medium",
       "expiresAfter": "P30D",
-      "verification": { "lastVerifiedAt": "2026-06-01T00:00:00Z", "successfulRuns": 1 },
+      "verification": {
+        "lastVerifiedAt": "2026-06-01T00:00:00Z",
+        "successfulRuns": 1
+      },
       "actions": {
         "get_status": {
-          "sequence": [{ "navigate": "/status" }],
+          "description": "Reads the current service status and incident list.",
+          "sequence": [
+            {"navigate": "/status"},
+            {"wait_for": {"navigation": "load"}}
+          ],
+          "outputs": {
+            "incident_count": {
+              "type": "integer",
+              "source": "microdata",
+              "property": "activeIncidents"
+            },
+            "overall_status": {
+              "type": "string",
+              "source": "a11y",
+              "locator": {"role": "status", "name": "Overall"}
+            }
+          },
           "sideEffects": ["read_only"],
-          "confirmationPolicy": { "required": false }
+          "confirmationPolicy": {"required": false}
         }
       }
     },
-    "validation": { "valid": true },
+    "profileDigest": "sha256:5a1d462e6f3103b2f642d55e26b2f15f2b91b0daf639d9f7476373ecc7714e48",
+    "evidenceDigest": "sha256:fba5940e0ea98b0e9b5ba08e345fe8e5de94826034e893ed6edbb8ca43d64123",
+    "assessedAt": "2026-06-02T00:00:00Z",
+    "validation": {"valid": true, "errors": []},
+    "revalidation": {"ok": true, "failures": []},
     "evidence": {
       "origins": ["https://status.example.test"],
-      "observationKind": "accessibility_snapshot",
+      "observationKinds": ["accessibility_snapshot"],
       "tools": ["synthetic"],
-      "recordCount": 1
+      "recordCount": 1,
+      "earliestAt": "2026-06-01T00:00:00Z",
+      "latestAt": "2026-06-01T00:00:00Z"
     },
+    "decisions": [],
     "gaps": [],
     "confidenceRationale": "confidence=medium; evidence_records=1",
-    "expiryNote": "profile expires after P30D from last verification; revalidate before use in production",
-    "origins": { "origins": ["https://status.example.test"] },
+    "expiryNote": "profile expires P30D after verification.lastVerifiedAt",
+    "origins": {"origins": ["https://status.example.test"]},
     "sideEffects": {
       "hasWriteActions": false,
       "actionsRequiringConfirmation": [],
-      "actionsWithSideEffects": { "get_status": ["read_only"] }
+      "actionsWithSideEffects": {"get_status": ["read_only"]}
     }
   },
   "operationMappings": {
     "getStatus": {
-      "openAPIOperationId": "getStatus",
+      "openapiOperationId": "getStatus",
       "profileActionName": "get_status",
       "confidenceNote": "direct path mapping; stable as of 2026-06-01"
     }

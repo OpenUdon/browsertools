@@ -1,0 +1,221 @@
+package registry
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestClientLocalSearchPullAndDefaultLimit(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "registry")
+	base := loadFixtureBundle(t, "read-only")
+	for _, release := range []string{"1.0.0", "2.0.0", "3.0.0", "4.0.0"} {
+		value := rebuildRelease(t, base, release, "reviewed_synthetic_fixture")
+		if _, err := PublishLocal(context.Background(), PublishOptions{Root: root, Bundle: value, At: registryTime}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	client := &Client{NetworkPolicy: NetworkNever}
+	report, err := client.Search(context.Background(), SearchOptions{Location: root, Query: "status", At: registryTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) != DefaultMaxResults {
+		t.Fatalf("results = %d, want %d", len(report.Results), DefaultMaxResults)
+	}
+	for _, result := range report.Results {
+		if result.Score == 0 || result.Entry.ID != "example/status" || result.Status != "active" {
+			t.Fatalf("result = %#v", result)
+		}
+	}
+	pulled, err := client.Pull(context.Background(), PullOptions{
+		Location: root, Coordinate: &Coordinate{ID: "example/status", Release: "2.0.0"}, At: registryTime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pulled.Bundle.Payload.Identity.Release != "2.0.0" || len(pulled.Content) == 0 {
+		t.Fatalf("pull = %#v", pulled.Entry)
+	}
+	byDigest, err := client.Pull(context.Background(), PullOptions{
+		Location: root, Digest: pulled.Entry.Bundle.Digest.String(), At: registryTime,
+	})
+	if err != nil || byDigest.Entry.Release != "2.0.0" {
+		t.Fatalf("digest pull = %#v, %v", byDigest.Entry, err)
+	}
+}
+
+func TestNilClientUsesOfflineDefaults(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "registry")
+	value := loadFixtureBundle(t, "read-only")
+	if _, err := PublishLocal(context.Background(), PublishOptions{Root: root, Bundle: value, At: registryTime}); err != nil {
+		t.Fatal(err)
+	}
+	var client *Client
+	if _, err := client.Search(context.Background(), SearchOptions{Location: root, At: registryTime}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Search(context.Background(), SearchOptions{Location: "https://example.com", At: registryTime}); err == nil || !strings.Contains(err.Error(), "forbids") {
+		t.Fatalf("expected nil-client network denial, got %v", err)
+	}
+}
+
+func TestClientInactiveFilteringAndPullPolicy(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "registry")
+	value := loadFixtureBundle(t, "read-only")
+	if _, err := PublishLocal(context.Background(), PublishOptions{Root: root, Bundle: value, At: registryTime}); err != nil {
+		t.Fatal(err)
+	}
+	coordinate := Coordinate{ID: "example/status", Release: "1.0.0"}
+	if _, err := UpdateLifecycleLocal(context.Background(), root, coordinate, "revoked", registryTime.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{}
+	report, err := client.Search(context.Background(), SearchOptions{Location: root, At: registryTime.Add(time.Hour)})
+	if err != nil || len(report.Results) != 0 {
+		t.Fatalf("active search = %#v, %v", report.Results, err)
+	}
+	report, err = client.Search(context.Background(), SearchOptions{Location: root, At: registryTime.Add(time.Hour), IncludeInactive: true})
+	if err != nil || len(report.Results) != 1 || report.Results[0].Status != "revoked" {
+		t.Fatalf("inactive search = %#v, %v", report.Results, err)
+	}
+	if _, err := client.Pull(context.Background(), PullOptions{Location: root, Coordinate: &coordinate, At: registryTime.Add(time.Hour)}); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("expected revoked pull rejection, got %v", err)
+	}
+	if _, err := client.Pull(context.Background(), PullOptions{Location: root, Coordinate: &coordinate, At: registryTime.Add(time.Hour), AllowInactive: true}); err != nil {
+		t.Fatalf("historical pull: %v", err)
+	}
+}
+
+func TestClientHTTPSReadAndVerify(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "registry")
+	value := loadFixtureBundle(t, "read-only")
+	if _, err := PublishLocal(context.Background(), PublishOptions{Root: root, Bundle: value, At: registryTime}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(http.FileServer(http.Dir(root)))
+	defer server.Close()
+	client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client(), AllowUnsafeHosts: true}
+	report, err := client.Search(context.Background(), SearchOptions{Location: server.URL, Query: "read_status", At: registryTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) != 1 || !strings.HasPrefix(report.Registry, server.URL) {
+		t.Fatalf("search = %#v", report)
+	}
+	pulled, err := client.Pull(context.Background(), PullOptions{
+		Location: server.URL, Coordinate: &Coordinate{ID: "example/status", Release: "1.0.0"}, At: registryTime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(pulled.Source, server.URL) {
+		t.Fatalf("pull source = %q", pulled.Source)
+	}
+	verified, err := client.Verify(context.Background(), server.URL, registryTime)
+	if err != nil || len(verified.Entries) != 1 {
+		t.Fatalf("verify = %#v, %v", verified, err)
+	}
+}
+
+func TestClientNetworkPolicyUnsafeHostAndHTTPSOnly(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	for _, policy := range []NetworkPolicy{NetworkNever, NetworkAsk, "invalid"} {
+		client := &Client{NetworkPolicy: policy, HTTPClient: server.Client(), AllowUnsafeHosts: true}
+		_, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime})
+		if err == nil {
+			t.Fatalf("policy %q unexpectedly allowed network", policy)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("policy rejection made %d requests", requests.Load())
+	}
+	client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client()}
+	if _, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime}); err == nil || !strings.Contains(err.Error(), "private") {
+		t.Fatalf("expected unsafe host rejection, got %v", err)
+	}
+	client.AllowUnsafeHosts = true
+	if _, err := client.Search(context.Background(), SearchOptions{Location: strings.Replace(server.URL, "https://", "http://", 1), At: registryTime}); err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("expected HTTPS rejection, got %v", err)
+	}
+}
+
+func TestClientBoundsCancellationTimeoutAndRedirect(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "registry")
+	value := loadFixtureBundle(t, "read-only")
+	if _, err := PublishLocal(context.Background(), PublishOptions{Root: root, Bundle: value, At: registryTime}); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("size", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			_, _ = writer.Write([]byte(strings.Repeat("x", 65)))
+		}))
+		defer server.Close()
+		client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client(), AllowUnsafeHosts: true, MaxBytes: 64}
+		if _, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime}); err == nil || !strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("expected size rejection, got %v", err)
+		}
+	})
+	t.Run("timeout", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			time.Sleep(100 * time.Millisecond)
+		}))
+		defer server.Close()
+		client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client(), AllowUnsafeHosts: true, Timeout: 10 * time.Millisecond}
+		if _, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime}); err == nil {
+			t.Fatal("expected timeout")
+		}
+	})
+	t.Run("cancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		client := &Client{}
+		if _, err := client.Search(ctx, SearchOptions{Location: root, At: registryTime}); err == nil {
+			t.Fatal("expected cancellation")
+		}
+	})
+	t.Run("unsafe redirect scheme", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			http.Redirect(writer, request, "http://example.com/index.json", http.StatusFound)
+		}))
+		defer server.Close()
+		client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client(), AllowUnsafeHosts: true}
+		if _, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime}); err == nil || !strings.Contains(err.Error(), "redirect") {
+			t.Fatalf("expected redirect rejection, got %v", err)
+		}
+	})
+}
+
+func TestClientRejectsRemoteTamperAndBadSelection(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "registry")
+	value := loadFixtureBundle(t, "read-only")
+	report, err := PublishLocal(context.Background(), PublishOptions{Root: root, Bundle: value, At: registryTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(report.BlobPath, []byte("tampered"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(http.FileServer(http.Dir(root)))
+	defer server.Close()
+	client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client(), AllowUnsafeHosts: true}
+	coordinate := Coordinate{ID: "example/status", Release: "1.0.0"}
+	if _, err := client.Pull(context.Background(), PullOptions{Location: server.URL, Coordinate: &coordinate, At: registryTime}); err == nil || !strings.Contains(err.Error(), "descriptor") {
+		t.Fatalf("expected remote tamper rejection, got %v", err)
+	}
+	if _, err := client.Pull(context.Background(), PullOptions{Location: server.URL, At: registryTime}); err == nil {
+		t.Fatal("expected missing selector rejection")
+	}
+	if _, err := client.Pull(context.Background(), PullOptions{Location: server.URL, Coordinate: &coordinate, Digest: fmt.Sprintf("sha256:%064d", 0), At: registryTime}); err == nil {
+		t.Fatal("expected duplicate selector rejection")
+	}
+}
