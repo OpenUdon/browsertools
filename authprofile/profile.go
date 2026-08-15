@@ -22,7 +22,7 @@ import (
 	"github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/evidence/redact"
 	"github.com/OpenUdon/uws/browserauthentication"
-	"github.com/OpenUdon/uws/versions"
+	"github.com/OpenUdon/uws/schemas"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,7 +38,7 @@ var (
 
 // Parse validates and decodes one JSON or YAML authentication profile.
 func Parse(data []byte) (*Profile, error) {
-	if err := versions.ValidateBrowserAuthenticationProfile(data); err != nil {
+	if err := schemas.ValidateBrowserAuthenticationProfile(data); err != nil {
 		return nil, fmt.Errorf("authentication profile: %w", err)
 	}
 	value, err := decodeOne(data)

@@ -22,8 +22,8 @@ import (
 	eartifact "github.com/OpenUdon/evidence/artifact"
 	"github.com/OpenUdon/evidence/digest"
 	"github.com/OpenUdon/evidence/redact"
+	"github.com/OpenUdon/uws/schemas"
 	"github.com/OpenUdon/uws/uws1"
-	"github.com/OpenUdon/uws/versions"
 	"gopkg.in/yaml.v3"
 )
 
@@ -349,7 +349,7 @@ func validatePayload(value Payload, at time.Time, building bool) error {
 	if err != nil {
 		return err
 	}
-	if err := versions.ValidateBrowserSourceProfile(profileJSON); err != nil {
+	if err := schemas.ValidateBrowserSourceProfile(profileJSON); err != nil {
 		return fmt.Errorf("bundle UWS profile validation: %w", err)
 	}
 	profileValue, err := value.Profile.Value()
