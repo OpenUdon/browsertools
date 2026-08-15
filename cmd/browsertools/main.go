@@ -1,5 +1,5 @@
-// Command browsertools provides offline, file-first profile authoring and
-// review operations. It never launches a browser or contacts a network.
+// Command browsertools provides file-first profile authoring, review, and
+// explicitly selected browser acquisition operations.
 package main
 
 import (
@@ -25,6 +25,7 @@ import (
 	"github.com/OpenUdon/browsertools/authreview"
 	capabilitybundle "github.com/OpenUdon/browsertools/bundle"
 	"github.com/OpenUdon/browsertools/cache"
+	"github.com/OpenUdon/browsertools/capture"
 	"github.com/OpenUdon/browsertools/draft"
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/profile"
@@ -84,6 +85,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCacheList(args[2:], stdout, stderr)
 	case "cache prune":
 		return runCachePrune(args[2:], stdout, stderr)
+	case "playwright doctor":
+		return runPlaywrightDoctor(args[2:], stdout, stderr)
 	default:
 		usage(stderr)
 		return exitUsageOrIO
@@ -91,7 +94,48 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune> [flags]")
+	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|playwright doctor> [flags]")
+}
+
+func runPlaywrightDoctor(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("playwright doctor", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	engineName := fs.String("engine", string(capture.EngineChromium), "chromium, firefox, or webkit")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	format := fs.String("format", "text", "text or json")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "playwright doctor: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *format != "text" && *format != "json" {
+		fmt.Fprintln(stderr, "playwright doctor: --format must be text or json")
+		return exitUsageOrIO
+	}
+	engine, err := capture.ParseEngine(*engineName)
+	if err != nil {
+		fmt.Fprintln(stderr, "playwright doctor:", err)
+		return exitUsageOrIO
+	}
+	report, doctorErr := capture.Doctor(context.Background(), capture.NewPlaywrightRuntime(*driverDirectory), engine)
+	if *format == "json" {
+		if err := json.NewEncoder(stdout).Encode(report); err != nil {
+			fmt.Fprintln(stderr, err)
+			return exitUsageOrIO
+		}
+	} else {
+		if doctorErr == nil {
+			fmt.Fprintf(stdout, "%s ready (playwright-go %s, Playwright %s)\n", report.Engine, report.PlaywrightGoVersion, report.PlaywrightVersion)
+			fmt.Fprintf(stdout, "browser executable: %s\n", report.BrowserExecutable)
+		}
+	}
+	if doctorErr != nil {
+		fmt.Fprintln(stderr, "playwright doctor:", doctorErr)
+		return exitRejected
+	}
+	return exitOK
 }
 
 func runRegistryPublish(args []string, stdin io.Reader, stdout, stderr io.Writer) int {

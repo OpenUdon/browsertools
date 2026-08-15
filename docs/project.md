@@ -37,6 +37,7 @@ reviewed artifact.
 
 Browsertools owns the tooling around browser profiles:
 
+- explicitly selected, bounded authoring-time browser acquisition
 - collecting or importing UI evidence
 - normalizing evidence into secret-free records
 - proposing draft browser profiles
@@ -53,8 +54,8 @@ Browsertools does not own:
 - OpenAPI/API-source discovery
 - provider catalogs
 - live credentials
-- browser sessions
-- cookies
+- retained or production browser sessions
+- stored cookies
 - captcha or MFA handling
 - production browser execution
 - runtime retries, throttling, or account selection
@@ -194,7 +195,9 @@ portable contract itself.
 Playwright is the primary candidate for local browser observation. It can
 collect accessibility-tree snapshots, verify roles and names, test waits, and
 record safe probes. Browsertools should import saved Playwright evidence first;
-live browser capture should remain explicit and disabled in default tests.
+live browser capture is a separate explicit authoring path and remains disabled
+in default tests. Browsertools pins Playwright-Go and exposes an installation
+doctor without turning Playwright scripts into the portable profile contract.
 
 ### llm-scraper
 
@@ -309,12 +312,19 @@ credential/session storage, or runtime retry/session policy.
 18. Deterministic evidence matching and revalidation (`E01`).
 19. Strict drafting and unified promotion (`P01`).
 20. Offline file-first CLI and digest-bound handoff (`M18`).
+21. Private browser-experience cache (`E02`).
+22. Publishable browser capability bundle (`P02`).
+23. Static browser capability registry (`M19`).
+24. Local-only browser authentication profile tooling (`A01`).
+25. Playwright-Go acquisition foundation and installation doctor (`M20`).
 
 ## CLI
 
-The CLI is offline and file-first. It accepts `-` for one input or for output,
-requires explicit redaction state during adapter import, and never launches a
-browser.
+The artifact CLI commands are offline and file-first. They accept `-` for one
+input or for output and require explicit redaction state during adapter import.
+The separately selected `playwright doctor` command starts only an installed
+driver long enough to verify its pinned browser executable; it does not launch
+a browser, install software, or contact a site.
 
 ```bash
 browsertools profile validate --input ./profiles/example.yaml
@@ -329,6 +339,7 @@ browsertools review bundle --profile ./profiles/example.yaml \
 browsertools revalidate check --profile ./profiles/example.yaml \
   --evidence ./evidence.json --at 2026-08-14T00:00:00Z \
   --out ./revalidation.json
+browsertools playwright doctor --engine chromium
 ```
 
 ## Fixture Policy

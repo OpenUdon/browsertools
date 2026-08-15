@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/OpenUdon/evidence v0.0.0-20260815084845-0c17258b9736
 	github.com/OpenUdon/uws v0.0.0-20260815150806-ab7144ca6a41
+	github.com/mxschmitt/playwright-go v0.6201.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -17,12 +18,16 @@ require (
 	github.com/apparentlymart/go-cidr v1.1.0 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/bmatcuk/doublestar v1.3.4 // indirect
+	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
 	github.com/genelet/horizon v1.14.5 // indirect
+	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
+	github.com/go-stack/stack v1.8.1 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/hcl/v2 v2.24.0 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/zclconf/go-cty v1.17.0 // indirect

@@ -33,6 +33,33 @@ func TestProfileValidateExitCodes(t *testing.T) {
 	}
 }
 
+func TestPlaywrightDoctorFailsOfflineWithoutInstalling(t *testing.T) {
+	t.Setenv("PLAYWRIGHT_DRIVER_PATH", "")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"playwright", "doctor", "--driver-dir", t.TempDir(), "--format", "json",
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitRejected || !strings.Contains(stdout.String(), `"version":"browsertools.playwright-doctor.v1"`) ||
+		!strings.Contains(stdout.String(), `"driver_ready":false`) ||
+		!strings.Contains(stdout.String(), `"capability_policy":[`) ||
+		strings.Contains(stdout.String(), `"capabilities":`) {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestPlaywrightDoctorRejectsInvalidArgumentsBeforeRuntime(t *testing.T) {
+	for _, args := range [][]string{
+		{"playwright", "doctor", "--format", "yaml"},
+		{"playwright", "doctor", "unexpected"},
+		{"playwright", "doctor", "--engine", "chrome"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, strings.NewReader(""), &stdout, &stderr); code != exitUsageOrIO || stderr.Len() == 0 {
+			t.Fatalf("args=%v code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestProfileValidateFromStdin(t *testing.T) {
 	data, err := os.ReadFile("../../profile/testdata/valid_minimal.yaml")
 	if err != nil {

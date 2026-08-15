@@ -112,6 +112,21 @@ go run ./cmd/browsertools registry search \
   --at 2026-08-14T00:00:00Z
 ```
 
+Browser acquisition is an explicit, separately installed authoring feature.
+Browsertools pins Playwright-Go `v0.6201.0` (Playwright `1.62.1`). Install the
+matching driver and Chromium deliberately, then verify the local installation:
+
+```bash
+go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.0 install chromium
+go run ./cmd/browsertools playwright doctor --engine chromium
+```
+
+`playwright doctor` starts and stops only the installed Playwright driver. It
+does not install software, contact a site, or launch a browser. The other CLI
+commands remain file-first and do not acquire live evidence. Live Chromium
+capture is introduced separately with exact-origin and ephemeral-context
+controls.
+
 Portable sign-in recipes use a separate additive contract and remain local to
 the workflow package:
 
@@ -168,6 +183,8 @@ go run ./cmd/browsertools cache prune \
 - Browser-profile, scraper/crawler, and browser-backed wrapper examples.
 - Optional adapters for Playwright, llm-scraper, Crawl4AI, and Firecrawl
   outputs.
+- An isolated Playwright-Go acquisition boundary, pinned capability policy,
+  and offline installation doctor for authoring-only browser tooling.
 
 ## What It Does Not Own
 
@@ -175,11 +192,12 @@ go run ./cmd/browsertools cache prune \
   [`github.com/OpenUdon/uws`](https://github.com/OpenUdon/uws).
 - OpenAPI/API-source discovery and provider catalog metadata. Those belong in
   `github.com/OpenUdon/apitools`.
-- Live browser execution, credentials, cookies, sessions, retries, account
-  selection, or production side effects.
+- Production browser execution, runtime credential resolution, retained
+  cookies/sessions, retries, account selection, or production side effects.
 - A general Playwright, WebDriver, Puppeteer, or scraping DSL.
-- Launching a browser or uploading cached content. Cache commands are local and
-  offline; publication has a separate verification boundary.
+- Implicit browser launch or uploading cached content. Acquisition commands
+  are separately selected; cache commands are local and offline, and
+  publication has a separate verification boundary.
 - Accounts, membership, a registry database, remote writes, or deployment
   credentials. Static catalogs are reviewed and deployed by existing
   repository/hosting workflows.
@@ -228,5 +246,8 @@ website UI
 go test ./...
 go vet ./...
 git diff --check
-(cd ../uws && go test ./versions ./uws1)
+(cd ../uws && go test ./...)
 ```
+
+Default tests use fakes and synthetic fixtures; they do not install or launch
+browsers and do not contact the network.
