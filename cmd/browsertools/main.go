@@ -28,6 +28,7 @@ import (
 	"github.com/OpenUdon/browsertools/capture"
 	"github.com/OpenUdon/browsertools/draft"
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/guide"
 	"github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/browsertools/registry"
 	"github.com/OpenUdon/browsertools/revalidate"
@@ -36,9 +37,10 @@ import (
 )
 
 const (
-	exitOK        = 0
-	exitRejected  = 1
-	exitUsageOrIO = 2
+	exitOK                      = 0
+	exitRejected                = 1
+	exitUsageOrIO               = 2
+	maxGuidedEvidenceInputBytes = int64(16 << 20)
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -87,6 +89,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCachePrune(args[2:], stdout, stderr)
 	case "capture chromium":
 		return runCaptureChromium(args[2:], stdout, stderr)
+	case "guide author":
+		return runGuideAuthor(args[2:], stdin, stdout, stderr)
+	case "live-check chromium":
+		return runLiveCheckChromium(args[2:], stdin, stdout, stderr)
 	case "playwright doctor":
 		return runPlaywrightDoctor(args[2:], stdout, stderr)
 	default:
@@ -96,7 +102,138 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|capture chromium|playwright doctor> [flags]")
+	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|capture chromium|guide author|live-check chromium|playwright doctor> [flags]")
+}
+
+func runGuideAuthor(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("guide author", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	evidencePath := fs.String("evidence", "", "reviewed normalized evidence JSON path (stdin is reserved for wizard answers)")
+	at := fs.String("at", "", "RFC3339 assessment time")
+	out := fs.String("out", "-", "guided-authoring bundle JSON path or -")
+	force := fs.Bool("force", false, "overwrite an existing output")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "guide author: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *evidencePath == "" || *at == "" {
+		fmt.Fprintln(stderr, "guide author: --evidence and --at are required")
+		return exitUsageOrIO
+	}
+	if *evidencePath == "-" {
+		fmt.Fprintln(stderr, "guide author: --evidence cannot use stdin because stdin carries wizard answers")
+		return exitUsageOrIO
+	}
+	assessedAt, err := time.Parse(time.RFC3339, *at)
+	if err != nil {
+		fmt.Fprintln(stderr, "guide author: invalid --at:", err)
+		return exitUsageOrIO
+	}
+	records, err := readEvidenceStrictBounded(*evidencePath, stdin, maxGuidedEvidenceInputBytes)
+	if err != nil {
+		fmt.Fprintln(stderr, "guide author:", err)
+		return exitUsageOrIO
+	}
+	bundle, err := guide.RunWizard(stdin, stderr, records, assessedAt)
+	if err != nil {
+		fmt.Fprintln(stderr, "guide author:", err)
+		return exitRejected
+	}
+	data, err := guide.MarshalDeterministic(bundle)
+	if err != nil {
+		fmt.Fprintln(stderr, "guide author:", err)
+		return exitRejected
+	}
+	if err := writeOutput(*out, data, *force, stdout); err != nil {
+		fmt.Fprintln(stderr, "guide author:", err)
+		return exitUsageOrIO
+	}
+	return exitOK
+}
+
+func runLiveCheckChromium(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runLiveCheckChromiumWith(args, stdin, stdout, stderr, capture.NewPlaywrightAcquirer)
+}
+
+func runLiveCheckChromiumWith(
+	args []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	newAcquirer func(string) capture.Acquirer,
+) int {
+	fs := flag.NewFlagSet("live-check chromium", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	profilePath := fs.String("profile", "", "validated browser profile JSON/YAML path or -")
+	targetURL := fs.String("url", "", "explicit current-page HTTPS or loopback HTTP URL")
+	at := fs.String("at", "", "RFC3339 check time")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	navigationTimeout := fs.Duration("navigation-timeout", capture.DefaultNavigationTimeout, "per-navigation/observation timeout")
+	totalTimeout := fs.Duration("timeout", capture.DefaultTotalTimeout, "total live-check deadline")
+	maxRequests := fs.Int("max-requests", capture.DefaultMaxRequests, "maximum routed requests")
+	maxResponseBytes := fs.Int64("max-response-bytes", capture.DefaultMaxResponseBytes, "maximum total response bytes")
+	maxEvidenceBytes := fs.Int64("max-evidence-bytes", capture.DefaultMaxEvidenceBytes, "maximum transient observation bytes")
+	ariaDepth := fs.Int("aria-depth", capture.DefaultARIADepth, "maximum transient ARIA snapshot depth")
+	out := fs.String("out", "-", "value-free live-check report JSON path or -")
+	force := fs.Bool("force", false, "overwrite an existing output")
+	var allowedOrigins stringList
+	var actions stringList
+	fs.Var(&allowedOrigins, "allow-origin", "exact allowed origin; repeatable")
+	fs.Var(&actions, "action", "profile action to check; repeatable, defaults to all")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "live-check chromium: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *profilePath == "" || *targetURL == "" || *at == "" || len(allowedOrigins) == 0 {
+		fmt.Fprintln(stderr, "live-check chromium: --profile, --url, --at, and at least one --allow-origin are required")
+		return exitUsageOrIO
+	}
+	checkedAt, err := time.Parse(time.RFC3339, *at)
+	if err != nil {
+		fmt.Fprintln(stderr, "live-check chromium: invalid --at:", err)
+		return exitUsageOrIO
+	}
+	prof, err := loadProfileInput(*profilePath, stdin)
+	if err != nil {
+		fmt.Fprintln(stderr, "live-check chromium:", err)
+		return classifyProfileError(err)
+	}
+	if newAcquirer == nil {
+		fmt.Fprintln(stderr, "live-check chromium: capture dependency is unavailable")
+		return exitUsageOrIO
+	}
+	result, err := capture.Check(context.Background(), newAcquirer(*driverDirectory), capture.LiveCheckRequest{
+		Profile: prof, Actions: []string(actions),
+		Capture: capture.LiveRequest{
+			URL: *targetURL, AllowedOrigins: []string(allowedOrigins), ObservedAt: checkedAt,
+			NavigationTimeout: *navigationTimeout, TotalTimeout: *totalTimeout,
+			MaxRequests: *maxRequests, MaxResponseBytes: *maxResponseBytes,
+			MaxEvidenceBytes: *maxEvidenceBytes, ARIADepth: *ariaDepth,
+		},
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "live-check chromium:", err)
+		return exitRejected
+	}
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, "live-check chromium:", err)
+		return exitRejected
+	}
+	data = append(data, '\n')
+	if err := writeOutput(*out, data, *force, stdout); err != nil {
+		fmt.Fprintln(stderr, "live-check chromium:", err)
+		return exitUsageOrIO
+	}
+	if !result.OK {
+		return exitRejected
+	}
+	return exitOK
 }
 
 func runCaptureChromium(args []string, stdout, stderr io.Writer) int {
@@ -1237,6 +1374,29 @@ func readEvidenceStrict(path string, stdin io.Reader) ([]evidence.Record, error)
 	data, err := readInput(path, stdin)
 	if err != nil {
 		return nil, err
+	}
+	var records []evidence.Record
+	if err := decodeStrictJSON(data, &records); err != nil {
+		return nil, fmt.Errorf("decode evidence: %w", err)
+	}
+	return records, nil
+}
+
+func readEvidenceStrictBounded(path string, stdin io.Reader, maximum int64) ([]evidence.Record, error) {
+	if maximum < 1 {
+		return nil, fmt.Errorf("decode evidence: invalid input bound")
+	}
+	reader, closeInput, err := openInput(path, stdin)
+	if err != nil {
+		return nil, err
+	}
+	defer closeInput()
+	data, err := io.ReadAll(io.LimitReader(reader, maximum+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maximum {
+		return nil, fmt.Errorf("decode evidence: input exceeds %d bytes", maximum)
 	}
 	var records []evidence.Record
 	if err := decodeStrictJSON(data, &records); err != nil {

@@ -51,6 +51,10 @@ type LiveRequest struct {
 	MaxResponseBytes  int64
 	MaxEvidenceBytes  int64
 	ARIADepth         int
+	// Probes are populated only by Check. They are a closed, read-only set of
+	// locator, wait, and output-shape observations; capture CLI callers cannot
+	// provide them.
+	Probes []Probe
 }
 
 // Observation is the minimal private result returned by an acquisition
@@ -60,6 +64,7 @@ type Observation struct {
 	ARIASnapshot   string
 	StructuredData []json.RawMessage
 	Network        playwrightadapter.NetworkSummary
+	ProbeResults   []ProbeResult
 }
 
 // Acquirer performs the browser-specific part of a validated live request.
@@ -71,9 +76,10 @@ type Acquirer interface {
 // LiveResult is a validated private capture ready for KindPrivateRaw cache
 // storage. JSON always ends with one newline.
 type LiveResult struct {
-	Origin  string
-	Fixture playwrightadapter.Fixture
-	JSON    []byte
+	Origin       string
+	Fixture      playwrightadapter.Fixture
+	JSON         []byte
+	ProbeResults []ProbeResult
 }
 
 // Acquire validates a request, applies its total deadline, invokes the
@@ -104,6 +110,13 @@ func Acquire(ctx context.Context, acquirer Acquirer, request LiveRequest) (LiveR
 	if err := validateObservation(normalized, observation); err != nil {
 		return LiveResult{}, err
 	}
+	if len(normalized.Probes) > 0 {
+		// A live check needs only value-free facts. Do not serialize another
+		// private raw fixture when no capture artifact was requested.
+		return LiveResult{
+			Origin: origin, ProbeResults: append([]ProbeResult(nil), observation.ProbeResults...),
+		}, nil
+	}
 	fixture := playwrightadapter.Fixture{
 		Version: playwrightadapter.FixtureVersion, URL: observation.FinalURL,
 		ObservedAt: normalized.ObservedAt.UTC().Format(time.RFC3339Nano),
@@ -119,7 +132,10 @@ func Acquire(ctx context.Context, acquirer Acquirer, request LiveRequest) (LiveR
 	if int64(len(encoded)) > normalized.MaxEvidenceBytes {
 		return LiveResult{}, fmt.Errorf("private capture exceeds max evidence bytes")
 	}
-	return LiveResult{Origin: origin, Fixture: fixture, JSON: encoded}, nil
+	return LiveResult{
+		Origin: origin, Fixture: fixture, JSON: encoded,
+		ProbeResults: append([]ProbeResult(nil), observation.ProbeResults...),
+	}, nil
 }
 
 func normalizeLiveRequest(request LiveRequest) (LiveRequest, string, error) {
@@ -202,6 +218,10 @@ func normalizeLiveRequest(request LiveRequest) (LiveRequest, string, error) {
 	if request.ARIADepth < 1 || request.ARIADepth > 32 {
 		return LiveRequest{}, "", fmt.Errorf("ARIA depth must be between 1 and 32")
 	}
+	request.Probes, err = normalizeProbes(request.Probes)
+	if err != nil {
+		return LiveRequest{}, "", err
+	}
 	return request, origin, nil
 }
 
@@ -246,6 +266,9 @@ func validateObservation(request LiveRequest, observation Observation) error {
 	}
 	if observation.Network.Requests > request.MaxRequests || observation.Network.ResponseBytes > request.MaxResponseBytes {
 		return fmt.Errorf("capture backend exceeded network bounds")
+	}
+	if err := validateProbeResults(request.Probes, observation.ProbeResults); err != nil {
+		return err
 	}
 	return nil
 }

@@ -43,6 +43,10 @@ Browsertools owns the tooling around browser profiles:
 - proposing draft browser profiles
 - validating profiles against the UWS browser-profile schema
 - producing review bundles
+- guiding explicit terminal authoring and ambiguity decisions from reviewed
+  evidence
+- performing value-free, origin-bounded live checks without executing profile
+  macros
 - maintaining browser-profile, scraping, crawling, and wrapper-service examples
 - recording confidence, expiry, fallback reasons, side effects, and
   confirmation policy
@@ -230,15 +234,18 @@ The expected artifact flow is:
 2. **Normalized evidence**: secret-free records with origin, observation kind,
    candidate locators, candidate outputs, diagnostics, provenance, and
    redaction state.
-3. **Draft profile**: a typed candidate generated from normalized evidence and
+3. **Guided authoring bundle**: an optional deterministic envelope containing
+   accepted explicit intent, action-bound normalized evidence, ambiguity
+   decisions, the generated profile, and its promotable review.
+4. **Draft profile**: a typed candidate generated from normalized evidence and
    an explicit `draft.Spec`. Evidence may propose locators and outputs, but it
    never invents macros or assumes that an action is read-only.
-4. **Validation report**: schema validation plus browsertools semantic review
+5. **Validation report**: schema validation plus browsertools semantic review
    checks.
-5. **Review bundle**: typed profile, profile/evidence digests, assessment time,
+6. **Review bundle**: typed profile, profile/evidence digests, assessment time,
    validation and fixture-revalidation results, explicit locator decisions,
    unresolved gaps, confidence, expiry, origins, and side-effect assessment.
-6. **Reviewed profile**: the artifact consumed by UWS/OpenUdon/browser
+7. **Reviewed profile**: the artifact consumed by UWS/OpenUdon/browser
    runtimes.
 
 Browsertools also owns example bundles that combine UWS workflows with reviewed

@@ -145,6 +145,38 @@ ARIA-depth, evidence-size, and retention limits. Only cache metadata is printed;
 raw ARIA/JSON-LD content is never written to stdout. See
 [Safe live capture](docs/live-capture.md) for the review/redaction handoff.
 
+After normalization, the terminal guide makes every capability and safety
+decision explicit and emits one deterministic envelope containing the accepted
+spec, generated profile, action-bound evidence, ambiguity decisions, and
+promotable review:
+
+```bash
+go run ./cmd/browsertools guide author \
+  --evidence ./evidence.json \
+  --at 2026-08-16T12:00:00Z \
+  --out ./guided-authoring.json
+```
+
+A separately selected live check can compare declared locators, waits, and
+output shapes with the current page without executing any profile macro or
+emitting page values:
+
+```bash
+go run ./cmd/browsertools live-check chromium \
+  --profile ./profile.yaml \
+  --url https://example.test/member \
+  --allow-origin https://example.test \
+  --action read_dashboard \
+  --at 2026-08-16T12:00:00Z \
+  --out ./live-check.json
+```
+
+Both paths keep sequence intent, side effects, confirmation, expiry, and
+ambiguity decisions human-authored. The live check reuses the exact-origin
+ephemeral capture policy, accepts plain CSS outputs but no Playwright selector
+language, and writes only profile-bound match/type facts. See
+[Guided capability authoring and live checks](docs/guided-authoring.md).
+
 Portable sign-in recipes use a separate additive contract and remain local to
 the workflow package:
 
@@ -205,6 +237,10 @@ go run ./cmd/browsertools cache prune \
   and offline installation doctor for authoring-only browser tooling.
 - Explicit headless Chromium acquisition into the private raw cache with exact
   origins, ephemeral context destruction, and closed activity/resource bounds.
+- Deterministic terminal-guided authoring that binds explicit intent, reviewed
+  evidence, decisions, a valid profile, and a promotable review.
+- Value-free Chromium live checks for declared locators, waits, and output
+  shapes without macro execution.
 
 ## What It Does Not Own
 
@@ -259,6 +295,7 @@ website UI
 - [Static registry and contribution workflow](docs/static-registry.md)
 - [Browser authentication profiles](docs/browser-authentication.md)
 - [Safe live capture](docs/live-capture.md)
+- [Guided capability authoring and live checks](docs/guided-authoring.md)
 - [Examples](examples/README.md)
 
 ## Development

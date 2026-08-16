@@ -8,10 +8,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/OpenUdon/browsertools/profile"
 	playwright "github.com/mxschmitt/playwright-go"
 )
 
@@ -208,6 +210,10 @@ func (a *playwrightAcquirer) Acquire(ctx context.Context, request LiveRequest) (
 	if err != nil {
 		return Observation{}, err
 	}
+	probeResults, err := runReadOnlyProbes(ctx, page, structured, request)
+	if err != nil {
+		return Observation{}, err
+	}
 
 	finalURL := page.URL()
 	if closeErr := browserContext.Close(); closeErr != nil {
@@ -220,7 +226,7 @@ func (a *playwrightAcquirer) Acquire(ctx context.Context, request LiveRequest) (
 	}
 	return Observation{
 		FinalURL: finalURL, ARIASnapshot: aria,
-		StructuredData: structured, Network: summary,
+		StructuredData: structured, Network: summary, ProbeResults: probeResults,
 	}, nil
 }
 
@@ -258,6 +264,197 @@ func collectStructuredData(ctx context.Context, page playwright.Page, request Li
 		result = append(result, json.RawMessage(append([]byte(nil), text...)))
 	}
 	return result, nil
+}
+
+func runReadOnlyProbes(ctx context.Context, page playwright.Page, structured []json.RawMessage, request LiveRequest) ([]ProbeResult, error) {
+	results := make([]ProbeResult, 0, len(request.Probes))
+	for _, probe := range request.Probes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		result := ProbeResult{ID: probe.ID}
+		switch probe.Kind {
+		case ProbeLocator:
+			matches, failure := countAccessibilityLocator(page, *probe.Locator)
+			result.Matches, result.FailureCode = matches, failure
+		case ProbeNavigationWait:
+			if *probe.Navigation == profile.NavigationLoad || *probe.Navigation == profile.NavigationDOMContentLoaded {
+				result.Reached = true // Goto completed the load state, which implies DOMContentLoaded.
+				break
+			}
+			timeout, err := operationTimeout(ctx, request.NavigationTimeout)
+			if err != nil {
+				return nil, err
+			}
+			waitErr := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+				State: playwright.LoadStateNetworkidle, Timeout: playwright.Float(timeout),
+			})
+			if waitErr == nil {
+				result.Reached = true
+			} else if ctx.Err() != nil {
+				return nil, ctx.Err()
+			} else {
+				result.FailureCode = "timeout"
+			}
+		case ProbeOutput:
+			result = probeOutputShape(page, structured, probe)
+		default:
+			result.FailureCode = "unsupported"
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func countAccessibilityLocator(page playwright.Page, locator profile.Locator) (int, string) {
+	if locator.Value != "" {
+		// Inspecting input values could read credentials. The safe live check
+		// deliberately declines value-based locators instead.
+		return 0, "unsupported"
+	}
+	options := playwright.PageGetByRoleOptions{Exact: playwright.Bool(true)}
+	if locator.Name != "" {
+		options.Name = locator.Name
+	}
+	matched := page.GetByRole(playwright.AriaRole(locator.Role), options)
+	if locator.Text != "" {
+		matched = matched.Filter(playwright.LocatorFilterOptions{
+			HasText: regexp.MustCompile("^" + regexp.QuoteMeta(locator.Text) + "$"),
+		})
+	}
+	count, err := matched.Count()
+	if err != nil {
+		return 0, "probe_failed"
+	}
+	return count, ""
+}
+
+func probeOutputShape(page playwright.Page, structured []json.RawMessage, probe Probe) ProbeResult {
+	result := ProbeResult{ID: probe.ID}
+	output := *probe.Output
+	switch output.Source {
+	case profile.OutputA11y:
+		if output.Locator == nil {
+			result.FailureCode = "unsupported"
+			return result
+		}
+		result.Matches, result.FailureCode = countAccessibilityLocator(page, *output.Locator)
+		if output.Presence != nil && *output.Presence {
+			result.ObservedType = profile.OutputBoolean
+		} else if result.Matches > 0 {
+			result.ObservedType = profile.OutputString
+		}
+	case profile.OutputJSONLD:
+		property := output.Property
+		if property == "" {
+			property = probe.OutputKey
+		}
+		result.Matches, result.ObservedType, result.FailureCode = jsonLDShape(structured, property)
+	case profile.OutputMicrodata:
+		property := output.Property
+		if property == "" {
+			property = probe.OutputKey
+		}
+		selector := fmt.Sprintf(`[itemprop=%s]`, strconv.Quote(property))
+		count, err := page.Locator("css=" + selector).Count()
+		if err != nil {
+			result.FailureCode = "probe_failed"
+			return result
+		}
+		result.Matches = count
+		result.ObservedType = textShape(count)
+	case profile.OutputCSS:
+		selector := output.Selector
+		if output.Attribute != "" {
+			selector += "[" + output.Attribute + "]"
+		}
+		count, err := page.Locator("css=" + selector).Count()
+		if err != nil {
+			result.FailureCode = "probe_failed"
+			return result
+		}
+		result.Matches = count
+		result.ObservedType = textShape(count)
+	default:
+		result.FailureCode = "unsupported"
+	}
+	return result
+}
+
+func textShape(matches int) profile.OutputType {
+	switch {
+	case matches == 1:
+		return profile.OutputString
+	case matches > 1:
+		return profile.OutputArray
+	default:
+		return ""
+	}
+}
+
+func jsonLDShape(documents []json.RawMessage, property string) (int, profile.OutputType, string) {
+	var observed profile.OutputType
+	matches := 0
+	for _, document := range documents {
+		decoder := json.NewDecoder(strings.NewReader(string(document)))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return 0, "", "probe_failed"
+		}
+		for _, object := range jsonLDObjects(value) {
+			item, ok := object[property]
+			if !ok {
+				continue
+			}
+			matches++
+			kind := observedJSONType(item)
+			if observed != "" && observed != kind {
+				return matches, "", "probe_failed"
+			}
+			observed = kind
+		}
+	}
+	return matches, observed, ""
+}
+
+func jsonLDObjects(value any) []map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return []map[string]any{typed}
+	case []any:
+		result := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if object, ok := item.(map[string]any); ok {
+				result = append(result, object)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func observedJSONType(value any) profile.OutputType {
+	switch typed := value.(type) {
+	case nil:
+		return profile.OutputNull
+	case bool:
+		return profile.OutputBoolean
+	case json.Number:
+		if strings.ContainsAny(string(typed), ".eE") {
+			return profile.OutputNumber
+		}
+		return profile.OutputInteger
+	case string:
+		return profile.OutputString
+	case []any:
+		return profile.OutputArray
+	case map[string]any:
+		return profile.OutputObject
+	default:
+		return ""
+	}
 }
 
 func operationTimeout(ctx context.Context, maximum time.Duration) (float64, error) {

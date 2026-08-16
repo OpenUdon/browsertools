@@ -24,15 +24,34 @@ import (
 type cliCaptureAcquirer struct {
 	request capture.LiveRequest
 	calls   int
+	fail    bool
 }
 
 func (a *cliCaptureAcquirer) Acquire(_ context.Context, request capture.LiveRequest) (capture.Observation, error) {
 	a.calls++
 	a.request = request
+	probeResults := make([]capture.ProbeResult, 0, len(request.Probes))
+	for _, probe := range request.Probes {
+		result := capture.ProbeResult{ID: probe.ID}
+		switch probe.Kind {
+		case capture.ProbeLocator:
+			result.Matches = 1
+		case capture.ProbeNavigationWait:
+			result.Reached = true
+		case capture.ProbeOutput:
+			result.Matches = 1
+			result.ObservedType = probe.Output.Type
+		}
+		if a.fail {
+			result.FailureCode = "probe_failed"
+		}
+		probeResults = append(probeResults, result)
+	}
 	return capture.Observation{
 		FinalURL: request.URL, ARIASnapshot: "- button \"Refresh\"\n",
 		StructuredData: []json.RawMessage{json.RawMessage(`{"status":"active"}`)},
 		Network:        playwrightadapter.NetworkSummary{Requests: 1, Responses: 1, ResponseBytes: 512},
+		ProbeResults:   probeResults,
 	}, nil
 }
 
@@ -170,6 +189,100 @@ func TestCaptureChromiumRejectsBadCLIInputsWithoutAcquiring(t *testing.T) {
 		if code != exitUsageOrIO || fake.calls != 0 || stderr.Len() == 0 {
 			t.Fatalf("args=%v code=%d calls=%d stderr=%q", args, code, fake.calls, stderr.String())
 		}
+	}
+}
+
+func TestGuideAuthorCLIProducesStrictBundleWithoutMixingPrompts(t *testing.T) {
+	tmp := t.TempDir()
+	evidencePath := filepath.Join(tmp, "evidence.json")
+	writeJSON(t, evidencePath, []evidence.Record{{
+		Origin: "https://example.test", ObservationKind: evidence.ObservationA11ySnapshot,
+		ObservedAt: "2026-08-16T12:00:00Z", RedactionStatus: evidence.RedactionNotRequired,
+		CandidateLocators: []evidence.CandidateLocator{{Role: "button", Name: "Look up"}},
+		CandidateOutputs:  []evidence.CandidateOutput{{Key: "headline", Type: "string", Source: "jsonld", Property: "headline"}},
+		Provenance:        evidence.Provenance{Tool: "synthetic-test", Version: "1"},
+	}})
+	answers := strings.Join([]string{
+		"Example lookup", "example", "no", "O001", "accessibility_snapshot", "high", "P14D", "1",
+		"lookup", "Read a status.", "E001", "0", "E001.O001", "1", "click", "E001.L001", "none", "read_only", "no",
+	}, "\n") + "\n"
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"guide", "author", "--evidence", evidencePath, "--at", "2026-08-16T12:00:00Z",
+	}, strings.NewReader(answers), &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Accessibility locator candidates") || strings.Contains(stdout.String(), "profile title:") {
+		t.Fatalf("prompt/output boundary failed stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	var bundle struct {
+		Version string        `json:"version"`
+		Review  review.Bundle `json:"review"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Version != "browsertools.guided-authoring.v1" || !bundle.Review.Promotable() {
+		t.Fatalf("bundle = %#v", bundle)
+	}
+}
+
+func TestGuidedEvidenceReaderEnforcesBoundBeforeDecode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.json")
+	if err := os.WriteFile(path, []byte("[123456789]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readEvidenceStrictBounded(path, strings.NewReader(""), 4); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("expected bounded read rejection, got %v", err)
+	}
+}
+
+func TestLiveCheckChromiumCLIEmitsOnlyValueFreeReport(t *testing.T) {
+	tmp := t.TempDir()
+	profilePath := filepath.Join(tmp, "profile.json")
+	navigation := profile.NavigationLoad
+	prof := profile.Profile{
+		Schema:          "uws.browser.1.5",
+		Info:            profile.Info{Title: "Example dashboard", Origin: profile.Origins{"https://example.test"}},
+		ObservationKind: profile.ObservationAccessibilitySnapshot,
+		Evidence:        profile.Evidence{LearnedAt: "2026-08-16T10:00:00Z", Source: "reviewed_fixture"},
+		Confidence:      profile.ConfidenceHigh, ExpiresAfter: "P14D",
+		Verification: profile.Verification{LastVerifiedAt: "2026-08-16T10:00:00Z", SuccessfulRuns: 1},
+		Actions: map[string]profile.Action{"read_status": {
+			Sequence: []profile.Step{{Kind: profile.StepClick, Click: &profile.LocatorStep{
+				Locator: profile.Locator{Role: profile.RoleButton, Name: "Refresh"},
+				WaitFor: &profile.WaitForCondition{Navigation: &navigation},
+			}}},
+			Outputs:            map[string]profile.Output{"status": {Type: profile.OutputString, Source: profile.OutputJSONLD, Property: "status"}},
+			SideEffects:        []profile.SideEffect{profile.SideEffectReadOnly},
+			ConfirmationPolicy: profile.ConfirmationPolicy{Required: false},
+		}},
+	}
+	writeJSON(t, profilePath, prof)
+	fake := &cliCaptureAcquirer{}
+	var stdout, stderr bytes.Buffer
+	code := runLiveCheckChromiumWith([]string{
+		"--profile", profilePath, "--url", "https://example.test/member", "--allow-origin", "https://example.test",
+		"--action", "read_status", "--at", "2026-08-16T12:00:00Z",
+	}, strings.NewReader(""), &stdout, &stderr, func(string) capture.Acquirer { return fake })
+	if code != exitOK || fake.calls != 1 || !strings.Contains(stdout.String(), `"version": "browsertools.live-check.v1"`) ||
+		!strings.Contains(stdout.String(), `"ok": true`) {
+		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, fake.calls, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Refresh") || strings.Contains(stdout.String(), "active") {
+		t.Fatalf("page content leaked into live-check report: %s", stdout.String())
+	}
+
+	fake = &cliCaptureAcquirer{fail: true}
+	stdout.Reset()
+	stderr.Reset()
+	code = runLiveCheckChromiumWith([]string{
+		"--profile", profilePath, "--url", "https://example.test/member", "--allow-origin", "https://example.test",
+		"--action", "read_status", "--at", "2026-08-16T12:00:00Z",
+	}, strings.NewReader(""), &stdout, &stderr, func(string) capture.Acquirer { return fake })
+	if code != exitRejected || !strings.Contains(stdout.String(), `"ok": false`) {
+		t.Fatalf("failed check code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }
 

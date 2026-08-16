@@ -110,6 +110,11 @@ types remain review diagnostics.
 Files below `captures/` and `.browsertools-cache/` are ignored by this
 repository. Do not move raw captures into tracked examples.
 
+Reviewed normalized evidence can next enter the deterministic terminal guide.
+Validated profiles can use the same acquisition envelope for value-free,
+current-page locator/wait/output checks. Neither path executes a profile macro;
+see [Guided capability authoring and live checks](guided-authoring.md).
+
 ## Tests
 
 Default tests use fakes and synthetic loopback URLs and never install or launch

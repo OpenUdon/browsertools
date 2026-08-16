@@ -32,7 +32,7 @@ type ActionSpec struct {
 	Description        string                     `json:"description,omitempty" yaml:"description,omitempty"`
 	Parameters         profile.JSONSchema         `json:"parameters,omitempty" yaml:"parameters,omitempty"`
 	Sequence           []profile.Step             `json:"sequence" yaml:"sequence"`
-	Outputs            map[string]profile.Output  `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	Outputs            map[string]profile.Output  `json:"outputs" yaml:"outputs"`
 	SideEffects        []profile.SideEffect       `json:"sideEffects" yaml:"sideEffects"`
 	ConfirmationPolicy profile.ConfirmationPolicy `json:"confirmationPolicy" yaml:"confirmationPolicy"`
 }
@@ -93,7 +93,12 @@ func Build(records []evidence.Record, spec Spec) (*Result, error) {
 			return nil, fmt.Errorf("draft: action %q must explicitly declare sideEffects", actionName)
 		}
 		outputs := cloneOutputs(actionSpec.Outputs)
-		if len(outputs) == 0 {
+		// A nil map means the author omitted output intent and permits the
+		// historical deterministic candidate import. A present-but-empty map is
+		// an explicit declaration that the action has no outputs. Guided
+		// authoring relies on this distinction so an operator's "none" answer
+		// cannot silently turn into inferred outputs.
+		if actionSpec.Outputs == nil {
 			outputs = candidateOutputs(actionName, records)
 		}
 		action := profile.Action{

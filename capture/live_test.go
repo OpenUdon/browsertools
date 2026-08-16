@@ -286,4 +286,16 @@ func TestPlaywrightLiveCaptureLoopbackOptIn(t *testing.T) {
 	if !strings.Contains(result.Fixture.ARIASnapshot, "Member dashboard") || len(result.Fixture.StructuredData) != 1 {
 		t.Fatalf("fixture = %#v", result.Fixture)
 	}
+	prof := validCheckProfile()
+	prof.Info.Origin = profile.Origins{origin}
+	liveCheck, err := Check(context.Background(), NewPlaywrightAcquirer(os.Getenv("PLAYWRIGHT_DRIVER_PATH")), LiveCheckRequest{
+		Profile: prof, Actions: []string{"read_status"},
+		Capture: LiveRequest{URL: server.URL, AllowedOrigins: []string{origin}, ObservedAt: time.Now().UTC()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !liveCheck.OK {
+		t.Fatalf("live check = %#v", liveCheck)
+	}
 }

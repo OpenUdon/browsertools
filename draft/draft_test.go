@@ -127,6 +127,22 @@ func TestBuildImportsCandidateOutputsOnly(t *testing.T) {
 	}
 }
 
+func TestBuildPreservesExplicitNoOutputs(t *testing.T) {
+	rec := baseRecord("read_status")
+	rec.CandidateOutputs = []evidence.CandidateOutput{{Key: "status", Type: "string", Source: "microdata", Property: "status"}}
+	spec := baseSpec()
+	action := spec.Actions["read_status"]
+	action.Outputs = map[string]profile.Output{}
+	spec.Actions["read_status"] = action
+	result, err := Build([]evidence.Record{rec}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Profile.Actions["read_status"].Outputs) != 0 {
+		t.Fatalf("explicit no-output decision inferred candidates: %#v", result.Profile.Actions["read_status"].Outputs)
+	}
+}
+
 func TestBuildWriteActionRequiresFinalWait(t *testing.T) {
 	spec := baseSpec()
 	action := spec.Actions["read_status"]
