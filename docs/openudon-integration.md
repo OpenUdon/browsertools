@@ -3,6 +3,12 @@
 This document describes how `github.com/OpenUdon/openudon` consumes browsertools
 review bundles and how UWS workflows bind to reviewed browser-profile actions.
 
+The explicit live iCoT/Browsertools design for human authentication followed
+by same-context goal exploration is specified in
+[Authenticated goal-directed browser authoring](authenticated-goal-authoring.md).
+Its private candidate envelope is independently validated before any canonical
+profile enters the artifact handoff described here.
+
 ## The artifact
 
 A `review.Bundle` is a JSON-serializable struct produced by `review.Build`. It

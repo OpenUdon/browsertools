@@ -355,6 +355,7 @@ website UI
 ## Documentation
 
 - [Project description](docs/project.md)
+- [Authenticated goal-directed browser authoring](docs/authenticated-goal-authoring.md)
 - [OpenUdon integration](docs/openudon-integration.md)
 - [Wrapper-service guidance](docs/wrapper-service.md)
 - [Typed-profile migration](docs/migration-typed-profile.md)

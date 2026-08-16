@@ -5,6 +5,12 @@ Browsertools validates and reviews the additive
 evidence; they are not browser drivers and do not contain credentials or
 sessions.
 
+For the reviewed design that keeps one headed context alive after human login
+so authenticated capabilities can be learned without exporting session state,
+see [Authenticated goal-directed browser authoring](authenticated-goal-authoring.md).
+That future author-session path is additive; the A02 `auth-assist` behavior
+documented here remains a profile-driven, per-flow verification command.
+
 Authentication profiles remain package-local in this release. Local discovery
 returns them as `browser_authentication_profile` candidates, but capability
 bundle construction and static-registry publication reject them. This prevents
