@@ -26,6 +26,14 @@ func TestPlaywrightAuthorHasNoCredentialReadOrSessionExportAPI(t *testing.T) {
 	if !strings.Contains(source, "Headless: playwright.Bool(false)") || !strings.Contains(source, "ServiceWorkerPolicyBlock") {
 		t.Fatal("headed non-persistent launch policy is not explicit")
 	}
+	if !strings.Contains(source, "OnRequestFinished") || !strings.Contains(source, "request.Sizes()") || strings.Contains(source, `HeaderValue("content-length")`) {
+		t.Fatal("response accounting must use actual completed transfer sizes, including chunked responses")
+	}
+	for _, required := range []string{"resolveCandidate(action", "candidate is missing, changed, or ambiguous", "frame.IsDetached()", "frame context identity changed", "popup context origin changed"} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("action-time/context freshness policy is missing %q", required)
+		}
+	}
 }
 
 func TestAuthorNetworkGuardExactOriginsMethodsAndBounds(t *testing.T) {
@@ -67,6 +75,15 @@ func TestAuthorNetworkGuardExactOriginsMethodsAndBounds(t *testing.T) {
 	})
 	if err := guard.beginPOST(1); err != nil || !guard.allow("https://example.test/submit", "POST") || guard.allow("https://example.test/again", "POST") {
 		t.Fatalf("bounded POST policy mismatch: %v", err)
+	}
+
+	guard = newAuthorNetworkGuard(authorsession.BrowserRequest{
+		ApprovedOrigins: []string{"https://example.test"}, MaxRequests: 4, MaxResponseBytes: 16,
+	})
+	guard.observeBytes(9)
+	guard.observeBytes(8)
+	if err := guard.result(); err == nil || !strings.Contains(err.Error(), "response_limit") {
+		t.Fatalf("completed response sizes did not enforce the cumulative byte bound: %v", err)
 	}
 }
 
@@ -137,16 +154,20 @@ func TestPlaywrightAuthorRedirectLoginLoopbackOptIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	buttonID := ""
+	var button authorsession.RawCandidate
 	for _, candidate := range login.Candidates {
 		if candidate.Role == "button" && candidate.Label == "Sign in" {
-			buttonID = candidate.BackendID
+			button = candidate
 		}
 	}
-	if buttonID == "" {
+	if button.BackendID == "" {
 		t.Fatalf("login candidates = %#v", login.Candidates)
 	}
-	if _, err := session.Execute(context.Background(), authorsession.BrowserAction{Kind: "click", BackendID: buttonID, Context: "main", POSTBudget: 1}); err != nil {
+	if _, err := session.Execute(context.Background(), authorsession.BrowserAction{
+		Kind: "click", BackendID: button.BackendID, Context: "main", POSTBudget: 1,
+		Role: button.Role, Label: button.Label, InputKind: button.InputKind,
+		TargetOrigin: button.TargetOrigin, Matches: button.Matches,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	dashboard, err := session.Observe(context.Background(), "main")

@@ -104,19 +104,20 @@ type Envelope struct {
 
 // BuildRequest contains only already reduced and reviewed authoring facts.
 type BuildRequest struct {
-	ObservedAt     time.Time
-	Title          string
-	Goal           string
-	InitialURL     string
-	DashboardURL   string
-	Origins        []string
-	Contexts       map[string]Context
-	Bounds         Bounds
-	Trace          []TraceStep
-	GoalPredicate  GoalPredicate
-	GoalProof      GoalProof
-	HumanConfirmed bool
-	Diagnostics    []string
+	ObservedAt          time.Time
+	Title               string
+	Goal                string
+	InitialURL          string
+	DashboardURL        string
+	Origins             []string
+	Contexts            map[string]Context
+	Bounds              Bounds
+	Trace               []TraceStep
+	GoalPredicate       GoalPredicate
+	GoalProof           GoalProof
+	AuthenticationProof GoalProof
+	HumanConfirmed      bool
+	Diagnostics         []string
 }
 
 // Build produces the oldest sufficient profile versions. Context topology or
@@ -124,6 +125,13 @@ type BuildRequest struct {
 func Build(request BuildRequest) (*Envelope, error) {
 	if request.ObservedAt.IsZero() || strings.TrimSpace(request.Goal) == "" || !request.HumanConfirmed {
 		return nil, fmt.Errorf("observed time, goal, and human completion are required")
+	}
+	// Preserve source compatibility for callers built against the original v1
+	// builder, where authentication success was necessarily the final goal.
+	// Live author sessions always provide the separately captured dashboard
+	// proof; legacy callers retain their former semantics.
+	if request.AuthenticationProof == (GoalProof{}) {
+		request.AuthenticationProof = request.GoalProof
 	}
 	if request.GoalProof.Matches != 1 || request.GoalProof.Origin != request.GoalPredicate.Origin || request.GoalProof.Path != request.GoalPredicate.Path ||
 		request.GoalProof.Role != request.GoalPredicate.Role || normalizedContext(request.GoalProof.Context) != normalizedContext(request.GoalPredicate.Context) ||
@@ -205,6 +213,22 @@ func validateBuildRequest(request BuildRequest, origins []string) error {
 			return fmt.Errorf("result URL origin is not approved")
 		}
 	}
+	dashboard, err := url.Parse(request.DashboardURL)
+	if err != nil {
+		return fmt.Errorf("result dashboard URL is invalid")
+	}
+	dashboardOrigin, err := exactOrigin(dashboard.Scheme + "://" + dashboard.Host)
+	if err != nil {
+		return err
+	}
+	dashboardPath := dashboard.EscapedPath()
+	if dashboardPath == "" {
+		dashboardPath = "/"
+	}
+	if request.AuthenticationProof.Matches != 1 || request.AuthenticationProof.Origin != dashboardOrigin || request.AuthenticationProof.Path != dashboardPath ||
+		!identifier.MatchString(request.AuthenticationProof.Role) || request.AuthenticationProof.Label == "[redacted]" || request.AuthenticationProof.Label == "[untrusted-label]" {
+		return fmt.Errorf("authentication success proof does not match the dashboard boundary")
+	}
 	if _, ok := allowed[request.GoalPredicate.Origin]; !ok || !cleanPath(request.GoalPredicate.Path) || !identifier.MatchString(request.GoalPredicate.Role) {
 		return fmt.Errorf("result goal predicate is invalid")
 	}
@@ -245,6 +269,11 @@ func validateBuildRequest(request BuildRequest, origins []string) error {
 	if context := normalizedContext(request.GoalPredicate.Context); context != "main" {
 		if _, ok := request.Contexts[context]; !ok {
 			return fmt.Errorf("result goal context is missing")
+		}
+	}
+	if context := normalizedContext(request.AuthenticationProof.Context); context != "main" {
+		if _, ok := request.Contexts[context]; !ok {
+			return fmt.Errorf("authentication success context is missing")
 		}
 	}
 	for _, step := range request.Trace {
@@ -331,10 +360,12 @@ func buildAuthenticationProfile(request BuildRequest, origins []string) (map[str
 	sequence := []any{map[string]any{"navigate": initial}}
 	credentialSlots := map[string]any{}
 	hasChallenge := false
+	authContextIDs := []string{request.AuthenticationProof.Context}
 	for _, step := range request.Trace {
 		if step.Phase != "authentication" || step.Kind == "navigate" {
 			continue
 		}
+		authContextIDs = append(authContextIDs, step.Context, step.OpensContext)
 		switch step.Kind {
 		case "focus_human_input":
 			if step.InputKind == "mfa" {
@@ -377,16 +408,17 @@ func buildAuthenticationProfile(request BuildRequest, origins []string) (map[str
 			sequence = append(sequence, map[string]any{"click": click})
 		}
 	}
-	successLocator := map[string]any{"role": request.GoalPredicate.Role}
-	if request.GoalPredicate.Label != "" {
-		successLocator["name"] = request.GoalPredicate.Label
+	successLocator := map[string]any{"role": request.AuthenticationProof.Role}
+	if request.AuthenticationProof.Label != "" {
+		successLocator["name"] = request.AuthenticationProof.Label
 	}
-	success := map[string]any{"origin": request.GoalPredicate.Origin, "locator": successLocator}
-	use11 := len(request.Contexts) > 0 || request.GoalPredicate.Path != ""
-	if request.GoalPredicate.Path != "" {
-		success["path"] = request.GoalPredicate.Path
+	success := map[string]any{"origin": request.AuthenticationProof.Origin, "locator": successLocator}
+	authContexts := selectContexts(request.Contexts, authContextIDs...)
+	use11 := len(authContexts) > 0 || request.AuthenticationProof.Path != ""
+	if request.AuthenticationProof.Path != "" {
+		success["path"] = request.AuthenticationProof.Path
 	}
-	putContext(success, request.GoalPredicate.Context)
+	putContext(success, request.AuthenticationProof.Context)
 	profileName := "uws.browser-authentication.1.0"
 	versionDecision := "uws.browser-authentication.1.0"
 	if use11 {
@@ -408,7 +440,7 @@ func buildAuthenticationProfile(request BuildRequest, origins []string) (map[str
 		}},
 	}
 	if use11 {
-		profile["contexts"] = contextMap(request.Contexts)
+		profile["contexts"] = contextMap(authContexts)
 	}
 	return profile, versionDecision, nil
 }
@@ -418,13 +450,53 @@ func buildCapabilityProfile(request BuildRequest, origins []string) (map[string]
 	if request.GoalPredicate.Label != "" {
 		locator["name"] = request.GoalPredicate.Label
 	}
-	use16 := request.GoalPredicate.Context != "" && request.GoalPredicate.Context != "main"
+	goalUsesContext := normalizedContext(request.GoalPredicate.Context) != "main"
+	use16 := goalUsesContext
+	capabilityContextIDs := []string{request.GoalPredicate.Context}
+	sequence := make([]any, 0, len(request.Trace)+1)
+	for _, step := range request.Trace {
+		if step.Phase != "exploration" {
+			continue
+		}
+		capabilityContextIDs = append(capabilityContextIDs, step.Context, step.OpensContext)
+		switch step.Kind {
+		case "navigate":
+			target, err := cleanURL(step.URL)
+			if err != nil {
+				return nil, "", fmt.Errorf("exploration navigation: %w", err)
+			}
+			if normalizedContext(step.Context) == "main" {
+				sequence = append(sequence, map[string]any{"navigate": target})
+			} else {
+				use16 = true
+				sequence = append(sequence, map[string]any{"navigate": map[string]any{"url": target, "context": step.Context}})
+			}
+		case "click":
+			portable, err := portableLocator(step)
+			if err != nil {
+				return nil, "", err
+			}
+			click := map[string]any{"locator": portable}
+			putContext(click, step.Context)
+			if normalizedContext(step.Context) != "main" {
+				use16 = true
+			}
+			if step.OpensContext != "" {
+				use16 = true
+				click["opensContext"] = step.OpensContext
+			}
+			sequence = append(sequence, map[string]any{"click": click})
+		default:
+			return nil, "", fmt.Errorf("unsupported exploration trace step %q", step.Kind)
+		}
+	}
 	var wait any = locator
-	if use16 {
+	if goalUsesContext {
 		wait = map[string]any{"locator": locator, "context": request.GoalPredicate.Context}
 	}
+	sequence = append(sequence, map[string]any{"wait_for": wait})
 	output := map[string]any{"type": "boolean", "source": "a11y", "locator": locator, "presence": true}
-	if use16 {
+	if goalUsesContext {
 		output["context"] = request.GoalPredicate.Context
 	}
 	originValue := any(origins[0])
@@ -444,13 +516,13 @@ func buildCapabilityProfile(request BuildRequest, origins []string) (map[string]
 		"verification": map[string]any{"lastVerifiedAt": request.ObservedAt.UTC().Format(time.RFC3339), "successfulRuns": 1},
 		"actions": map[string]any{"reach_authenticated_goal": map[string]any{
 			"description": request.Goal,
-			"sequence":    []any{map[string]any{"wait_for": wait}},
+			"sequence":    sequence,
 			"outputs":     map[string]any{"goal_present": output},
 			"sideEffects": []any{"read_only"}, "confirmationPolicy": map[string]any{"required": false},
 		}},
 	}
 	if use16 {
-		profile["contexts"] = contextMap(request.Contexts)
+		profile["contexts"] = contextMap(selectContexts(request.Contexts, capabilityContextIDs...))
 	}
 	return profile, versionDecision, nil
 }
@@ -476,6 +548,21 @@ func contextMap(contexts map[string]Context) map[string]any {
 	result := make(map[string]any, len(contexts))
 	for id, context := range contexts {
 		result[id] = context
+	}
+	return result
+}
+
+func selectContexts(contexts map[string]Context, ids ...string) map[string]Context {
+	result := make(map[string]Context)
+	for _, id := range ids {
+		for current := normalizedContext(id); current != "main"; {
+			context, ok := contexts[current]
+			if !ok {
+				break
+			}
+			result[current] = context
+			current = normalizedContext(context.Parent)
+		}
 	}
 	return result
 }

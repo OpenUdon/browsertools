@@ -34,7 +34,7 @@ func (b *fakeBrowser) Open(ctx context.Context, request BrowserRequest) (Session
 type fakeSession struct {
 	observations []RawObservation
 	index        int
-	focused      []string
+	focused      []BrowserAction
 	actions      []BrowserAction
 	origins      []string
 	execution    Execution
@@ -54,11 +54,11 @@ func (s *fakeSession) Observe(context.Context, string) (RawObservation, error) {
 	s.index++
 	return result, nil
 }
-func (s *fakeSession) Focus(_ context.Context, id string) error {
+func (s *fakeSession) Focus(_ context.Context, action BrowserAction) error {
 	if s.err != nil {
 		return s.err
 	}
-	s.focused = append(s.focused, id)
+	s.focused = append(s.focused, action)
 	return nil
 }
 func (s *fakeSession) Execute(_ context.Context, action BrowserAction) (Execution, error) {
@@ -83,7 +83,7 @@ func TestServeAuthenticatedGoalHappyPathIsDeterministicAndPrivate(t *testing.T) 
 	if len(firstSession.focused) != 2 {
 		t.Fatalf("phone-push checkpoint was focused or credential fields were skipped: %#v", firstSession.focused)
 	}
-	if len(firstSession.actions) != 1 || firstSession.actions[0].BackendID != "submit" || firstSession.actions[0].POSTBudget != 1 {
+	if len(firstSession.actions) != 1 || firstSession.actions[0].BackendID != "submit" || firstSession.actions[0].POSTBudget != 1 || firstSession.actions[0].Role != "button" || firstSession.actions[0].Label != "Sign in" || firstSession.actions[0].Matches != 1 {
 		t.Fatalf("approved candidate action mismatch: %#v", firstSession.actions)
 	}
 	if firstSession.closed != 1 {
@@ -109,7 +109,7 @@ func TestServeFailsClosedForDenialMalformedAndBrowserFailure(t *testing.T) {
 	}{
 		{
 			name:    "denial",
-			input:   protocolLines(startMessage(), ClientMessage{Protocol: Protocol, Type: "observe"}, ClientMessage{Protocol: Protocol, Type: "execute", Action: "click", CandidateID: candidateID("main", "button", "Sign in", 0)}, ClientMessage{Protocol: Protocol, Type: "deny", ApprovalID: "approval-0001"}),
+			input:   protocolLines(startMessage(), ClientMessage{Protocol: Protocol, Type: "observe"}, ClientMessage{Protocol: Protocol, Type: "execute", Action: "click", CandidateID: candidateID(1, "main", "button", "Sign in", 0)}, ClientMessage{Protocol: Protocol, Type: "deny", ApprovalID: "approval-0001"}),
 			browser: &fakeBrowser{session: &fakeSession{observations: []RawObservation{loginObservation()}}}, diagnostic: "approval_denied",
 		},
 		{
@@ -168,7 +168,7 @@ func TestClickToNewOriginRequiresOriginThenActionApproval(t *testing.T) {
 		Origin: "https://members.example.test", Path: "/login", Context: "main",
 		Candidates: []RawCandidate{{BackendID: "sso", Role: "link", Label: "Use SSO", TargetOrigin: "https://login.example.test", Matches: 1}},
 	}}}
-	candidate := candidateID("main", "link", "Use SSO", 0)
+	candidate := candidateID(1, "main", "link", "Use SSO", 0)
 	input := protocolLines(
 		startMessage(), ClientMessage{Protocol: Protocol, Type: "observe"},
 		ClientMessage{Protocol: Protocol, Type: "execute", Action: "click", CandidateID: candidate},
@@ -223,13 +223,139 @@ func TestContextGraphCanonicalizationAndDepthBound(t *testing.T) {
 	}
 }
 
+func TestContextInventoryResolvesParentsDeterministically(t *testing.T) {
+	s := &server{origins: map[string]struct{}{"https://login.example.test": {}}, contexts: map[string]authorresult.Context{}}
+	err := s.addContexts(map[string]authorresult.Context{
+		"child":  {Kind: "frame", Parent: "parent", Origin: "https://login.example.test", Name: "Child"},
+		"parent": {Kind: "frame", Parent: "main", Origin: "https://login.example.test", Name: "Parent"},
+	})
+	if err != nil || s.contexts["child"].Parent != "parent" {
+		t.Fatalf("nested context inventory was order-dependent: %#v %v", s.contexts, err)
+	}
+}
+
+func TestObservationGenerationExpiresPriorCandidateAuthority(t *testing.T) {
+	session := &fakeSession{observations: []RawObservation{loginObservation(), loginObservation()}}
+	stale := candidateID(1, "main", "button", "Sign in", 0)
+	input := protocolLines(
+		startMessage(),
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		ClientMessage{Protocol: Protocol, Type: "execute", Action: "click", CandidateID: stale, POSTBudget: 1},
+	)
+	var output bytes.Buffer
+	err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+	if err == nil || !strings.Contains(output.String(), `"code":"ambiguous_target"`) || len(session.actions) != 0 {
+		t.Fatalf("stale candidate retained action authority: %v\n%s\n%#v", err, output.String(), session.actions)
+	}
+	if current := candidateID(2, "main", "button", "Sign in", 0); current == stale || !strings.Contains(output.String(), current) {
+		t.Fatalf("observation generation did not rotate candidate identity: stale=%q current=%q\n%s", stale, current, output.String())
+	}
+}
+
+func TestObservationGenerationExpiresCandidatesFromOtherContexts(t *testing.T) {
+	popup := authorresult.Context{Kind: "popup", Parent: "main", Origin: "https://login.example.test"}
+	session := &fakeSession{observations: []RawObservation{
+		{
+			Origin: "https://members.example.test", Path: "/login", Context: "main",
+			Contexts:   map[string]authorresult.Context{"idp_popup": popup},
+			Candidates: []RawCandidate{{BackendID: "submit", Role: "button", Label: "Sign in", Matches: 1}},
+		},
+		{Origin: "https://login.example.test", Path: "/sso", Context: "idp_popup", Contexts: map[string]authorresult.Context{"idp_popup": popup}},
+	}}
+	start := startMessage()
+	start.Origins = append(start.Origins, "https://login.example.test")
+	stale := candidateID(1, "main", "button", "Sign in", 0)
+	input := protocolLines(
+		start,
+		ClientMessage{Protocol: Protocol, Type: "observe", Context: "main"},
+		ClientMessage{Protocol: Protocol, Type: "observe", Context: "idp_popup"},
+		ClientMessage{Protocol: Protocol, Type: "execute", Action: "click", CandidateID: stale},
+	)
+	var output bytes.Buffer
+	err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+	if err == nil || !strings.Contains(output.String(), `"code":"ambiguous_target"`) || len(session.actions) != 0 {
+		t.Fatalf("cross-context stale candidate retained authority: %v\n%s\n%#v", err, output.String(), session.actions)
+	}
+}
+
+func TestOpenedContextIsNamedAndPublishedInNextObservation(t *testing.T) {
+	popupContext := authorresult.Context{Kind: "popup", Parent: "main", Origin: "https://login.example.test"}
+	session := &fakeSession{
+		observations: []RawObservation{
+			{Origin: "https://members.example.test", Path: "/login", Context: "main", Candidates: []RawCandidate{{BackendID: "sso", Role: "link", Label: "Use SSO", TargetOrigin: "https://login.example.test", Matches: 1}}, Contexts: map[string]authorresult.Context{}},
+			{Origin: "https://login.example.test", Path: "/sso", Context: "popup_1", Candidates: []RawCandidate{}, Contexts: map[string]authorresult.Context{"popup_1": popupContext}},
+		},
+		execution: Execution{OpenedID: "popup_1", Opened: &popupContext},
+	}
+	start := startMessage()
+	start.Origins = append(start.Origins, "https://login.example.test")
+	input := protocolLines(
+		start,
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		ClientMessage{Protocol: Protocol, Type: "execute", Action: "click", CandidateID: candidateID(1, "main", "link", "Use SSO", 0)},
+		ClientMessage{Protocol: Protocol, Type: "approve", ApprovalID: "approval-0001"},
+		ClientMessage{Protocol: Protocol, Type: "observe", Context: "popup_1"},
+		ClientMessage{Protocol: Protocol, Type: "close"},
+	)
+	var output bytes.Buffer
+	if err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock}); err != nil {
+		t.Fatal(err)
+	}
+	messages := decodeServerMessages(t, output.Bytes())
+	foundState, foundInventory := false, false
+	for _, message := range messages {
+		if message.Type == "state" && message.Context == "popup_1" {
+			foundState = true
+		}
+		if message.Observation != nil && message.Observation.Context == "popup_1" && message.Observation.Contexts["popup_1"] == popupContext {
+			foundInventory = true
+		}
+	}
+	if !foundState || !foundInventory {
+		t.Fatalf("popup context was not discoverable: %s", output.String())
+	}
+}
+
+func TestActionInvalidatesGoalProofAndCompletedPhaseIsClosed(t *testing.T) {
+	t.Run("action invalidates proof", func(t *testing.T) {
+		session := &fakeSession{observations: []RawObservation{dashboardObservation()}}
+		input := protocolLines(
+			startMessage(),
+			ClientMessage{Protocol: Protocol, Type: "observe"},
+			ClientMessage{Protocol: Protocol, Type: "execute", Action: "navigate_get", URL: "https://members.example.test/dashboard"},
+			ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true},
+		)
+		var output bytes.Buffer
+		err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+		if err == nil || !strings.Contains(output.String(), `"code":"completion_denied"`) {
+			t.Fatalf("stale goal proof completed the run: %v\n%s", err, output.String())
+		}
+	})
+
+	t.Run("completed accepts finish or close only", func(t *testing.T) {
+		session := &fakeSession{observations: []RawObservation{dashboardObservation()}}
+		input := protocolLines(
+			startMessage(),
+			ClientMessage{Protocol: Protocol, Type: "observe"},
+			ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true},
+			ClientMessage{Protocol: Protocol, Type: "observe"},
+		)
+		var output bytes.Buffer
+		err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+		if err == nil || !strings.Contains(output.String(), `"code":"invalid_state"`) {
+			t.Fatalf("completed phase accepted another authoring action: %v\n%s", err, output.String())
+		}
+	})
+}
+
 func runHappySession(t *testing.T) ([]byte, []ServerMessage, *fakeSession) {
 	t.Helper()
 	session := &fakeSession{observations: []RawObservation{loginObservation(), dashboardObservation()}, execution: Execution{POSTObserved: 1}}
-	username := candidateID("main", "textbox", "Email", 2)
-	password := candidateID("main", "textbox", "Password", 3)
-	push := candidateID("main", "status", "Check your phone", 1)
-	submit := candidateID("main", "button", "Sign in", 0)
+	username := candidateID(1, "main", "textbox", "Email", 2)
+	password := candidateID(1, "main", "textbox", "Password", 3)
+	push := candidateID(1, "main", "status", "Check your phone", 1)
+	submit := candidateID(1, "main", "button", "Sign in", 0)
 	input := protocolLines(
 		startMessage(),
 		ClientMessage{Protocol: Protocol, Type: "observe"},

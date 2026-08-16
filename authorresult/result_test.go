@@ -49,10 +49,7 @@ func TestBuiltProfilesValidateAgainstInstalledUWSSchemas(t *testing.T) {
 	}
 	authSchema, schemaErr := schemas.BrowserAuthenticationProfileSchema("uws.browser-authentication.1.1")
 	if schemaErr != nil || !bytes.Contains(authSchema, []byte("uws.browser-authentication.1.1")) {
-		// Browsertools deliberately keeps its published dependency pin until the
-		// coordinated UWS release is available. A standalone checkout of that
-		// older pin cannot know 1.1; the repository workspace must validate it.
-		t.Skip("published UWS dependency predates browser-authentication 1.1")
+		t.Fatalf("pinned UWS dependency lacks browser-authentication 1.1: %v", schemaErr)
 	}
 	if err := schemas.ValidateBrowserAuthenticationProfile(envelope.AuthenticationProfile); err != nil {
 		t.Fatalf("authentication candidate is not valid UWS: %v", err)
@@ -62,13 +59,19 @@ func TestBuiltProfilesValidateAgainstInstalledUWSSchemas(t *testing.T) {
 func TestBuildContextAndPushChallengeRequireNewProfiles(t *testing.T) {
 	request := baseBuildRequest()
 	request.Contexts = map[string]Context{
-		"idp_popup": {Kind: "popup", Parent: "main", Origin: "https://login.example.test"},
+		"idp_popup":   {Kind: "popup", Parent: "main", Origin: "https://login.example.test"},
+		"login_frame": {Kind: "frame", Parent: "main", Origin: "https://login.example.test", Path: "/embedded/login", Name: "Login"},
 	}
 	request.Origins = append(request.Origins, "https://login.example.test")
-	request.GoalPredicate.Context = "idp_popup"
+	request.GoalPredicate.Context = "login_frame"
 	request.GoalPredicate.Origin = "https://login.example.test"
-	request.GoalProof.Context = "idp_popup"
+	request.GoalPredicate.Path = "/embedded/login"
+	request.GoalProof.Context = "login_frame"
 	request.GoalProof.Origin = "https://login.example.test"
+	request.GoalProof.Path = "/embedded/login"
+	request.Trace = append(request.Trace, TraceStep{
+		Kind: "click", Phase: "authentication", Context: "main", CandidateID: "candidate-sso", Role: "button", Label: "Use SSO", OpensContext: "idp_popup",
+	})
 	request.Trace = append(request.Trace, TraceStep{
 		Kind: "focus_human_input", Phase: "authentication", Context: "idp_popup", InputKind: "mfa",
 	})
@@ -95,6 +98,87 @@ func TestBuildContextAndPushChallengeRequireNewProfiles(t *testing.T) {
 	}
 	if !foundPush {
 		t.Fatal("push challenge was not synthesized")
+	}
+	if err := schemas.ValidateBrowserAuthenticationProfile(envelope.AuthenticationProfile); err != nil {
+		t.Fatalf("context authentication profile is not valid UWS: %v", err)
+	}
+	if err := schemas.ValidateBrowserSourceProfile(envelope.CapabilityProfile); err != nil {
+		t.Fatalf("context capability profile is not valid UWS: %v", err)
+	}
+}
+
+func TestBuildSeparatesAuthenticationSuccessFromCompleteExplorationTrace(t *testing.T) {
+	request := baseBuildRequest()
+	request.Goal = "open account details and read account status"
+	request.GoalPredicate = GoalPredicate{Origin: "https://members.example.test", Path: "/account", Role: "status", Label: "Active"}
+	request.GoalProof = GoalProof{Origin: "https://members.example.test", Path: "/account", Context: "main", Role: "status", Label: "Active", Matches: 1}
+	request.Trace = append(request.Trace,
+		TraceStep{Kind: "click", Phase: "exploration", CandidateID: "candidate-account", Context: "main", Role: "link", Label: "Account details"},
+		TraceStep{Kind: "navigate", Phase: "exploration", Context: "main", URL: "https://members.example.test/account?private=discarded"},
+	)
+	envelope, err := Build(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var authentication, capability map[string]any
+	if err := json.Unmarshal(envelope.AuthenticationProfile, &authentication); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(envelope.CapabilityProfile, &capability); err != nil {
+		t.Fatal(err)
+	}
+	success := authentication["flows"].(map[string]any)["authenticated_goal"].(map[string]any)["success"].(map[string]any)
+	if success["path"] != "/dashboard" || success["origin"] != "https://members.example.test" {
+		t.Fatalf("authentication success drifted to final goal: %#v", success)
+	}
+	sequence := capability["actions"].(map[string]any)["reach_authenticated_goal"].(map[string]any)["sequence"].([]any)
+	if len(sequence) != 3 || sequence[0].(map[string]any)["click"] == nil || sequence[1].(map[string]any)["navigate"] != "https://members.example.test/account" || sequence[2].(map[string]any)["wait_for"] == nil {
+		t.Fatalf("exploration trace was not preserved before final proof: %#v", sequence)
+	}
+	if err := schemas.ValidateBrowserSourceProfile(envelope.CapabilityProfile); err != nil {
+		t.Fatalf("exploration capability is not valid UWS: %v", err)
+	}
+}
+
+func TestBuildContextualExplorationKeepsMainGoalUnqualified(t *testing.T) {
+	request := baseBuildRequest()
+	request.Contexts = map[string]Context{
+		"statement_popup": {Kind: "popup", Parent: "main", Origin: "https://members.example.test"},
+	}
+	request.Trace = append(request.Trace,
+		TraceStep{Kind: "click", Phase: "exploration", CandidateID: "candidate-open", Context: "main", Role: "link", Label: "Open statement", OpensContext: "statement_popup"},
+		TraceStep{Kind: "click", Phase: "exploration", CandidateID: "candidate-close", Context: "statement_popup", Role: "button", Label: "Done"},
+	)
+	envelope, err := Build(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schemas.ValidateBrowserSourceProfile(envelope.CapabilityProfile); err != nil {
+		t.Fatalf("contextual exploration with main goal is not valid UWS: %v\n%s", err, envelope.CapabilityProfile)
+	}
+	var capability map[string]any
+	if err := json.Unmarshal(envelope.CapabilityProfile, &capability); err != nil {
+		t.Fatal(err)
+	}
+	if capability["profile"] != "uws.browser.1.6" {
+		t.Fatalf("contextual exploration profile = %v", capability["profile"])
+	}
+	action := capability["actions"].(map[string]any)["reach_authenticated_goal"].(map[string]any)
+	sequence := action["sequence"].([]any)
+	finalWait := sequence[len(sequence)-1].(map[string]any)["wait_for"].(map[string]any)
+	if _, qualified := finalWait["context"]; qualified {
+		t.Fatalf("main goal wait was incorrectly context-qualified: %#v", finalWait)
+	}
+	if _, qualified := action["outputs"].(map[string]any)["goal_present"].(map[string]any)["context"]; qualified {
+		t.Fatal("main goal output was incorrectly context-qualified")
+	}
+}
+
+func TestBuildRejectsPartialAuthenticationProofInsteadOfApplyingCompatibilityFallback(t *testing.T) {
+	request := baseBuildRequest()
+	request.AuthenticationProof = GoalProof{Origin: request.GoalProof.Origin}
+	if _, err := Build(request); err == nil {
+		t.Fatal("partial authentication proof was silently replaced by final goal proof")
 	}
 }
 
@@ -135,8 +219,9 @@ func baseBuildRequest() BuildRequest {
 			{Kind: "focus_human_input", Phase: "authentication", CandidateID: "candidate-password", Context: "main", Role: "textbox", Label: "Password", InputKind: "password"},
 			{Kind: "click", Phase: "authentication", CandidateID: "candidate-submit", Context: "main", Role: "button", Label: "Sign in", POSTBudget: 1, POSTObserved: 1},
 		},
-		GoalPredicate:  GoalPredicate{Origin: "https://members.example.test", Path: "/dashboard", Role: "heading", Label: "Dashboard"},
-		GoalProof:      GoalProof{Origin: "https://members.example.test", Path: "/dashboard", Context: "main", Role: "heading", Label: "Dashboard", Matches: 1},
-		HumanConfirmed: true,
+		GoalPredicate:       GoalPredicate{Origin: "https://members.example.test", Path: "/dashboard", Role: "heading", Label: "Dashboard"},
+		GoalProof:           GoalProof{Origin: "https://members.example.test", Path: "/dashboard", Context: "main", Role: "heading", Label: "Dashboard", Matches: 1},
+		AuthenticationProof: GoalProof{Origin: "https://members.example.test", Path: "/dashboard", Context: "main", Role: "heading", Label: "Dashboard", Matches: 1},
+		HumanConfirmed:      true,
 	}
 }

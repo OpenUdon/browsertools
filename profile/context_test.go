@@ -36,7 +36,7 @@ func TestContextQualifiedUnionsRoundTrip(t *testing.T) {
 func TestBrowser16ProfileTypedRoundTrip(t *testing.T) {
 	schema, err := schemas.BrowserSourceProfileSchema("uws.browser.1.6")
 	if err != nil || !bytes.Contains(schema, []byte("uws.browser.1.6")) {
-		t.Skip("published UWS dependency predates browser 1.6")
+		t.Fatalf("pinned UWS dependency lacks browser 1.6: %v", err)
 	}
 	data := []byte(`
 profile: uws.browser.1.6

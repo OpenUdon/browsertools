@@ -46,7 +46,7 @@ type Browser interface {
 // contains no API for input values, cookies, storage, or session export.
 type Session interface {
 	Observe(context.Context, string) (RawObservation, error)
-	Focus(context.Context, string) error
+	Focus(context.Context, BrowserAction) error
 	Execute(context.Context, BrowserAction) (Execution, error)
 	AddOrigin(string) error
 	Close() error
@@ -89,11 +89,16 @@ type RawCandidate struct {
 
 // BrowserAction is a closed action against a backend-owned candidate.
 type BrowserAction struct {
-	Kind       string
-	BackendID  string
-	URL        string
-	Context    string
-	POSTBudget int
+	Kind         string
+	BackendID    string
+	URL          string
+	Context      string
+	POSTBudget   int
+	Role         string
+	Label        string
+	InputKind    string
+	TargetOrigin string
+	Matches      int
 }
 
 // Execution contains only value-free action facts.
@@ -132,11 +137,12 @@ type Candidate struct {
 
 // Observation is the only page-derived semantic protocol payload.
 type Observation struct {
-	Origin      string      `json:"origin"`
-	Path        string      `json:"path"`
-	Context     string      `json:"context"`
-	Candidates  []Candidate `json:"candidates"`
-	Diagnostics []string    `json:"diagnostics"`
+	Origin      string                          `json:"origin"`
+	Path        string                          `json:"path"`
+	Context     string                          `json:"context"`
+	Contexts    map[string]authorresult.Context `json:"contexts"`
+	Candidates  []Candidate                     `json:"candidates"`
+	Diagnostics []string                        `json:"diagnostics"`
 }
 
 // ServerMessage is the closed NDJSON output union.
@@ -218,6 +224,7 @@ type server struct {
 	approvalCounter int
 	pending         *pendingApproval
 	goalProof       *authorresult.GoalProof
+	authProof       *authorresult.GoalProof
 	humanConfirmed  bool
 	observedAt      time.Time
 }
@@ -282,8 +289,11 @@ func (s *server) handle(message ClientMessage) (bool, error) {
 	if s.pending != nil && message.Type != "approve" && message.Type != "deny" && message.Type != "close" {
 		return false, s.fail("approval_pending", fmt.Errorf("approval response required"))
 	}
-	if !s.started && message.Type != "start" && message.Type != "close" {
-		return false, s.fail("invalid_state", fmt.Errorf("start is required"))
+	if _, known := clientFields[message.Type]; !known || message.Type == "unknown" {
+		return false, s.fail("unknown_message", fmt.Errorf("unknown message type"))
+	}
+	if !phaseMessages[s.phase][message.Type] {
+		return false, s.fail("invalid_state", fmt.Errorf("message is not valid in phase %q", s.phase))
 	}
 	switch message.Type {
 	case "start":
@@ -386,24 +396,30 @@ func (s *server) observe(contextID string) error {
 	if err != nil {
 		return s.fail("invalid_observation", err)
 	}
+	if err := s.addContexts(raw.Contexts); err != nil {
+		return s.fail("invalid_context", err)
+	}
+	// One reduced observation is one complete authority generation. Expire
+	// candidates from every context so a later observation cannot leave an
+	// undisclosed, stale target actionable in a background popup or frame.
+	clear(s.candidates)
 	for id, record := range records {
 		s.candidates[id] = record
 	}
-	for id, context := range raw.Contexts {
-		if err := s.addContext(id, context); err != nil {
-			return s.fail("invalid_context", err)
+	observation.Contexts = cloneContexts(s.contexts)
+	if s.phase == "authentication" && dashboardMatches(s.start.DashboardURL, observation.Origin, observation.Path) {
+		proof := authenticationSuccessProof(observation, *s.start.GoalPredicate)
+		if proof == nil {
+			return s.fail("invalid_observation", fmt.Errorf("dashboard success evidence is missing or ambiguous"))
 		}
-	}
-	if dashboardMatches(s.start.DashboardURL, observation.Origin, observation.Path) {
+		s.authProof = proof
 		s.phase = "exploration"
 	}
-	if proof := matchGoal(*s.start.GoalPredicate, observation); proof != nil {
-		s.goalProof = proof
-	}
+	s.goalProof = matchGoal(*s.start.GoalPredicate, observation)
 	if err := s.write(ServerMessage{Type: "observation", Observation: &observation}); err != nil {
 		return err
 	}
-	if s.goalProof != nil {
+	if s.phase == "exploration" && s.goalProof != nil {
 		return s.write(ServerMessage{Type: "human_checkpoint", Checkpoint: &Checkpoint{Kind: "completion"}})
 	}
 	return nil
@@ -415,7 +431,7 @@ func (s *server) focus(candidateID string) error {
 		return s.fail("invalid_candidate", fmt.Errorf("candidate cannot receive human input"))
 	}
 	if record.raw.InputKind != "mfa" {
-		if err := s.session.Focus(s.ctx, record.raw.BackendID); err != nil {
+		if err := s.session.Focus(s.ctx, browserActionForRecord("focus_human_input", record)); err != nil {
 			return s.fail("browser_failure", err)
 		}
 	}
@@ -436,6 +452,15 @@ func (s *server) focus(candidateID string) error {
 func (s *server) requestExecute(message ClientMessage) error {
 	switch message.Action {
 	case "navigate_get":
+		if message.CandidateID != "" || message.URL == "" || message.POSTBudget != 0 {
+			return s.fail("invalid_action", fmt.Errorf("navigate action fields are invalid"))
+		}
+		message.Context = normalizedContext(message.Context)
+		if message.Context != "main" {
+			if _, ok := s.contexts[message.Context]; !ok {
+				return s.fail("unknown_context", fmt.Errorf("navigation context is unknown"))
+			}
+		}
 		origin, err := originForURL(message.URL)
 		if err != nil {
 			return s.fail("invalid_action", err)
@@ -445,12 +470,18 @@ func (s *server) requestExecute(message ClientMessage) error {
 		}
 		return s.execute(message)
 	case "click":
+		if message.URL != "" {
+			return s.fail("invalid_action", fmt.Errorf("click action fields are invalid"))
+		}
 		record, ok := s.candidates[message.CandidateID]
 		if !ok || record.protocol.Matches != 1 {
 			return s.fail("ambiguous_target", fmt.Errorf("click candidate is missing or ambiguous"))
 		}
 		if message.POSTBudget < 0 || message.POSTBudget > 32 {
 			return s.fail("invalid_action", fmt.Errorf("POST budget is invalid"))
+		}
+		if message.Context != "" && normalizedContext(message.Context) != normalizedContext(record.context) {
+			return s.fail("invalid_action", fmt.Errorf("click context does not match candidate"))
 		}
 		if record.raw.TargetOrigin != "" {
 			origin, err := exactOrigin(record.raw.TargetOrigin)
@@ -512,8 +543,11 @@ func (s *server) execute(message ClientMessage) error {
 	var record candidateRecord
 	if message.Action == "click" {
 		record = s.candidates[message.CandidateID]
-		action.BackendID, action.Context = record.raw.BackendID, record.context
+		action = browserActionForRecord(message.Action, record)
+		action.POSTBudget = message.POSTBudget
 	}
+	s.goalProof = nil
+	s.humanConfirmed = false
 	execution, err := s.session.Execute(s.ctx, action)
 	if err != nil {
 		return s.fail("browser_failure", err)
@@ -536,11 +570,15 @@ func (s *server) execute(message ClientMessage) error {
 		trace.OpensContext = execution.OpenedID
 	}
 	s.trace = append(s.trace, trace)
-	return s.write(ServerMessage{Type: "state", Phase: s.phase, Context: action.Context})
+	stateContext := action.Context
+	if execution.Opened != nil {
+		stateContext = execution.OpenedID
+	}
+	return s.write(ServerMessage{Type: "state", Phase: s.phase, Context: normalizedContext(stateContext)})
 }
 
 func (s *server) complete(confirmed bool) error {
-	if !confirmed || s.goalProof == nil {
+	if s.phase != "exploration" || !confirmed || s.goalProof == nil {
 		return s.fail("completion_denied", fmt.Errorf("typed goal and human confirmation are required"))
 	}
 	s.humanConfirmed, s.phase = true, "completed"
@@ -548,7 +586,7 @@ func (s *server) complete(confirmed bool) error {
 }
 
 func (s *server) finish() error {
-	if !s.humanConfirmed || s.goalProof == nil {
+	if s.phase != "completed" || !s.humanConfirmed || s.goalProof == nil || s.authProof == nil {
 		return s.fail("invalid_state", fmt.Errorf("goal completion is not confirmed"))
 	}
 	if err := s.closeSession(); err != nil {
@@ -559,7 +597,8 @@ func (s *server) finish() error {
 		InitialURL: s.start.URL, DashboardURL: s.start.DashboardURL,
 		Origins: sortedKeys(s.origins), Contexts: s.contexts, Bounds: s.bounds,
 		Trace: s.trace, GoalPredicate: *s.start.GoalPredicate, GoalProof: *s.goalProof,
-		HumanConfirmed: true, Diagnostics: s.diagnostics,
+		AuthenticationProof: *s.authProof,
+		HumanConfirmed:      true, Diagnostics: s.diagnostics,
 	})
 	if err != nil {
 		return s.failAfterClose("result_invalid", err)
@@ -643,7 +682,7 @@ func (s *server) reduceObservation(raw RawObservation, requestedContext string) 
 		}
 		return left.BackendID < right.BackendID
 	})
-	result := Observation{Origin: origin, Path: raw.Path, Context: contextID, Candidates: []Candidate{}, Diagnostics: []string{}}
+	result := Observation{Origin: origin, Path: raw.Path, Context: contextID, Contexts: map[string]authorresult.Context{}, Candidates: []Candidate{}, Diagnostics: []string{}}
 	records := make(map[string]candidateRecord, len(raw.Candidates))
 	for index, rawCandidate := range raw.Candidates {
 		if rawCandidate.BackendID == "" || !portableRoles[rawCandidate.Role] || rawCandidate.Matches < 1 || rawCandidate.Matches > s.bounds.MaxCandidates {
@@ -653,7 +692,7 @@ func (s *server) reduceObservation(raw RawObservation, requestedContext string) 
 			return Observation{}, nil, fmt.Errorf("backend input kind is invalid")
 		}
 		label, _ := reduceLabel(rawCandidate.Label)
-		id := candidateID(contextID, rawCandidate.Role, label, index)
+		id := candidateID(s.observations, contextID, rawCandidate.Role, label, index)
 		candidate := Candidate{ID: id, Role: rawCandidate.Role, Label: label, Matches: rawCandidate.Matches}
 		result.Candidates = append(result.Candidates, candidate)
 		records[id] = candidateRecord{protocol: candidate, raw: rawCandidate, context: contextID, label: label}
@@ -713,6 +752,37 @@ func (s *server) addContext(id string, context authorresult.Context) error {
 	return nil
 }
 
+func (s *server) addContexts(contexts map[string]authorresult.Context) error {
+	remaining := cloneContexts(contexts)
+	for len(remaining) > 0 {
+		ids := make([]string, 0, len(remaining))
+		for id := range remaining {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		progress := false
+		for _, id := range ids {
+			context := remaining[id]
+			if context.Parent != "main" {
+				if _, ready := s.contexts[context.Parent]; !ready {
+					if _, pending := remaining[context.Parent]; pending {
+						continue
+					}
+				}
+			}
+			if err := s.addContext(id, context); err != nil {
+				return err
+			}
+			delete(remaining, id)
+			progress = true
+		}
+		if !progress {
+			return fmt.Errorf("context graph cannot be resolved")
+		}
+	}
+	return nil
+}
+
 func (s *server) write(message ServerMessage) error {
 	message.Protocol = Protocol
 	data, err := json.Marshal(message)
@@ -768,6 +838,13 @@ var clientFields = map[string]map[string]bool{
 	"finish":            fields("protocol", "type"),
 	"close":             fields("protocol", "type"),
 	"unknown":           fields("protocol", "type"),
+}
+
+var phaseMessages = map[string]map[string]bool{
+	"awaiting_start": fields("start", "close"),
+	"authentication": fields("observe", "focus_human_input", "execute", "approve", "deny", "close"),
+	"exploration":    fields("observe", "execute", "approve", "deny", "human_complete", "close"),
+	"completed":      fields("finish", "close"),
 }
 
 func fields(names ...string) map[string]bool {
@@ -853,6 +930,58 @@ func matchGoal(predicate authorresult.GoalPredicate, observation Observation) *a
 	return &authorresult.GoalProof{Origin: observation.Origin, Path: observation.Path, Context: observation.Context, Role: matches[0].Role, Label: matches[0].Label, Matches: 1}
 }
 
+func authenticationSuccessProof(observation Observation, goal authorresult.GoalPredicate) *authorresult.GoalProof {
+	if proof := matchGoal(goal, observation); proof != nil {
+		return proof
+	}
+	priority := map[string]int{"heading": 0, "region": 1, "status": 2, "table": 3}
+	candidates := append([]Candidate(nil), observation.Candidates...)
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, leftOK := priority[candidates[i].Role]
+		right, rightOK := priority[candidates[j].Role]
+		if !leftOK {
+			left = len(priority)
+		}
+		if !rightOK {
+			right = len(priority)
+		}
+		return left < right
+	})
+	for _, candidate := range candidates {
+		if candidate.Matches != 1 || candidate.Label == "[redacted]" || candidate.Label == "[untrusted-label]" {
+			continue
+		}
+		return &authorresult.GoalProof{
+			Origin: observation.Origin, Path: observation.Path, Context: observation.Context,
+			Role: candidate.Role, Label: candidate.Label, Matches: 1,
+		}
+	}
+	return nil
+}
+
+func browserActionForRecord(kind string, record candidateRecord) BrowserAction {
+	return BrowserAction{
+		Kind: kind, BackendID: record.raw.BackendID, Context: normalizedContext(record.context),
+		Role: record.raw.Role, Label: record.raw.Label, InputKind: record.raw.InputKind,
+		TargetOrigin: record.raw.TargetOrigin, Matches: record.raw.Matches,
+	}
+}
+
+func cloneContexts(contexts map[string]authorresult.Context) map[string]authorresult.Context {
+	result := make(map[string]authorresult.Context, len(contexts))
+	for id, context := range contexts {
+		result[id] = context
+	}
+	return result
+}
+
+func normalizedContext(value string) string {
+	if value == "" {
+		return "main"
+	}
+	return value
+}
+
 func reduceLabel(raw string) (string, bool) {
 	raw = strings.Join(strings.FieldsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
 	if raw == "" {
@@ -873,8 +1002,8 @@ func reduceLabel(raw string) (string, bool) {
 	return raw, true
 }
 
-func candidateID(contextID, role, label string, ordinal int) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d", contextID, role, label, ordinal)))
+func candidateID(generation int, contextID, role, label string, ordinal int) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%d", generation, contextID, role, label, ordinal)))
 	return "candidate-" + hex.EncodeToString(sum[:8])
 }
 

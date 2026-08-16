@@ -137,11 +137,16 @@ Server output types are:
 - `diagnostic`: one fixed public code and closed metadata.
 - `result`: the completed private envelope after teardown.
 
-Messages are legal only in their documented phase. At most one approval is
-pending. `approve` and `deny` carry the matching approval ID and cannot grant
-future authority. Executor and model actions reference Browsertools-issued
-candidate IDs; CSS, XPath, coordinates, JavaScript, raw Playwright objects,
-DOM paths, and caller-supplied locators are rejected.
+Messages are legal only in their documented phase. The closed phase table is
+`awaiting_start` -> `authentication` -> `exploration` -> `completed`;
+authentication success is captured at the first reviewed dashboard
+observation, and only exploration can request completion. Any navigation or
+action invalidates prior goal evidence and human confirmation, and no action is
+legal after completion. At most one approval is pending. `approve` and `deny`
+carry the matching approval ID and cannot grant future authority. Executor and
+model actions reference Browsertools-issued candidate IDs; CSS, XPath,
+coordinates, JavaScript, raw Playwright objects, DOM paths, and caller-supplied
+locators are rejected.
 
 Cancellation, EOF, timeout, malformed input, an unknown message, browser/page
 crash, unexpected navigation, unapproved origin, excess POST, CAPTCHA,
@@ -156,15 +161,22 @@ One observation contains only:
 
 - the exact approved origin and clean path without query or fragment;
 - a Browsertools page/frame context ID;
-- stable, session-local candidate IDs;
+- the complete reviewed context inventory known at that observation;
+- observation-generation-scoped candidate IDs;
 - each candidate's accessibility role and redacted accessible label;
 - bounded match counts and closed diagnostic codes.
 
 Accessible labels are normalized, bounded, screened for secret/PII shapes and
 prompt-injection text, and replaced with fixed redaction markers when unsafe.
-Candidate IDs are derived deterministically within the observation from the
-context, role, redacted label, and ordinal, but reveal none of the original
-page content.
+Candidate IDs are derived deterministically within one observation generation
+from the context, role, redacted label, and ordinal, but reveal none of the
+original page content. A subsequent observation expires every earlier
+candidate in that context. Immediately before focus or click, the Playwright
+adapter re-enumerates current accessible semantics and requires the approved
+role, raw accessible label, input kind, exact target origin, and unique match
+count to remain identical; it never caches a locator as authority. Explicitly
+opened popup IDs and their parent topology appear in the next state and
+observation, so the client never has to guess a portable context name.
 
 The protocol never exposes DOM, ARIA snapshots, page text, screenshots, input
 values, cookies, local/session storage, request or response bodies, headers,
@@ -184,6 +196,12 @@ operator's private root. It contains:
 - the typed goal predicate and evidence plus human confirmation;
 - the exact approved origin/context inventory and finite session bounds;
 - fixed diagnostics and no raw protocol transcript.
+
+The authentication profile proves the first reviewed dashboard boundary. The
+capability profile independently retains every approved exploration navigation
+and click, in order, before a final portable wait/presence assertion for the
+typed goal. This prevents a successful login redirect from being mistaken for
+proof that the post-login capability was learned.
 
 The envelope is `0600`, atomically created, excluded from capability bundles,
 registries, example packages, and normal iCoT transcripts, and never written
@@ -245,11 +263,14 @@ becomes a trusted runtime and its browser state never becomes a UWS artifact.
 
 Udon and Browserdriver replay the reviewed profiles later, after a separate
 runtime approval, in a new private session. Browserdriver v2 remains the
-main-page compatibility protocol. `udon.browser-driver.v3` adds exact
-context-qualified popup/frame execution, rejects missing, ambiguous, duplicate,
-or extra contexts, and continues to hide credentials, MFA values, cookies, and
-session material. Udon selects v3 only when the reviewed profile requires it
-and preserves its existing credential-slot resolution, MFA challenge broker,
+authentication-1.0/main-page compatibility protocol. `udon.browser-driver.v3`
+accepts authentication 1.1 followed by either Browsertools' oldest-sufficient
+browser 1.5 capability or a context-qualified browser 1.6 capability. It
+rejects missing, ambiguous, duplicate, changed, detached, or extra contexts,
+revalidates cached page/frame identities before every use and at flow
+completion, and continues to hide credentials, MFA values, cookies, and
+session material. Udon selects v3 for authentication 1.1 or browser 1.6 and
+preserves its existing credential-slot resolution, MFA challenge broker,
 origin enforcement, and side-effect approval boundary.
 
 ## Failure behavior and exclusions
@@ -280,6 +301,10 @@ limited to a non-production tenant; only value-free evidence may be retained.
 6. OpenUdon A04 adds explicit iCoT live orchestration and atomic candidate
    consumption.
 7. OpenUdon E02 runs the cross-repository integration and release matrix.
+8. Browsertools M22, Browserdriver M04, Udon M30, and OpenUdon E03 close the
+   integration review with generation-scoped authority, exact response-body
+   accounting, replayable exploration synthesis, and real producer-to-runtime
+   seam tests.
 
 Default tests stay browser-free and network-free. Fake-session suites cover
 every protocol phase, malformed/denied/timeout/crash path, redaction and prompt
@@ -287,3 +312,16 @@ injection, deterministic output, rollback, and sentinel credential
 environments. Installed-Chromium tests are separate opt-in loopback fixtures
 for redirect login, phone-push checkpoints, popup SSO, iframe login, origin
 and POST approval, goal completion, and teardown.
+
+Default qualification constructs a real Browsertools result envelope, consumes
+it through OpenUdon's full validation/staging boundary, and separately decodes
+the same producer's authentication/capability pair through Udon into
+Browserdriver v3. Dependency pins name the exact UWS 1.8-aware commits. Before
+those commits are published, standalone release testing may map the module URLs
+to clean local Git clones of those exact commits; ordinary proxy/direct module
+resolution is required after publication. A component-local schema fixture or
+a skipped feature test is not producer/consumer/replay evidence.
+
+Network accounting uses Playwright's completed-request size report, including
+actual response-body bytes for chunked responses without `Content-Length`.
+Header declarations are never treated as the response budget measurement.

@@ -104,11 +104,11 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		pw: pw, browser: browser, browserContext: browserContext, request: request, guard: guard,
 		pages: map[string]playwright.Page{"main": page}, pageIDs: map[playwright.Page]string{page: "main"},
 		frames: make(map[string]playwright.Frame), frameIDs: make(map[playwright.Frame]string),
-		locators: make(map[string]playwright.Locator), contexts: make(map[string]authorresult.Context),
+		contexts: make(map[string]authorresult.Context),
 	}
 	session.installSurfacePolicy(page)
 	browserContext.OnPage(func(popup playwright.Page) {
-		if !session.popupExpected() {
+		if !session.recordPopupEvent(popup) {
 			guard.block("unexpected_popup")
 			_ = popup.Close()
 			return
@@ -144,11 +144,11 @@ type playwrightAuthorSession struct {
 	pageIDs        map[playwright.Page]string
 	frames         map[string]playwright.Frame
 	frameIDs       map[playwright.Frame]string
-	locators       map[string]playwright.Locator
 	contexts       map[string]authorresult.Context
 	popupCounter   int
 	frameCounter   int
 	expectingPopup bool
+	popupEvents    []playwright.Page
 }
 
 func (s *playwrightAuthorSession) Observe(ctx context.Context, contextID string) (authorsession.RawObservation, error) {
@@ -224,16 +224,10 @@ func (s *playwrightAuthorSession) Observe(ctx context.Context, contextID string)
 	}
 	candidates := make([]authorsession.RawCandidate, 0, len(keys))
 	s.mu.Lock()
-	for id := range s.locators {
-		if strings.HasPrefix(id, contextID+":") {
-			delete(s.locators, id)
-		}
-	}
 	for index, key := range keys {
 		item := groups[key]
 		backendID := fmt.Sprintf("%s:%03d", contextID, index)
 		item.candidate.BackendID = backendID
-		s.locators[backendID] = item.locator
 		candidates = append(candidates, item.candidate)
 	}
 	contexts := make(map[string]authorresult.Context, len(s.contexts))
@@ -251,20 +245,76 @@ func (s *playwrightAuthorSession) Observe(ctx context.Context, contextID string)
 	}, s.health(ctx)
 }
 
-func (s *playwrightAuthorSession) Focus(ctx context.Context, backendID string) error {
+func (s *playwrightAuthorSession) Focus(ctx context.Context, action authorsession.BrowserAction) error {
 	if err := s.health(ctx); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	locator := s.locators[backendID]
-	s.mu.Unlock()
-	if locator == nil {
-		return fmt.Errorf("author candidate expired")
+	locator, err := s.resolveCandidate(action)
+	if err != nil {
+		return err
 	}
 	if err := locator.Focus(playwright.LocatorFocusOptions{Timeout: playwright.Float(float64(s.request.NavigationTimeout.Milliseconds()))}); err != nil {
 		return fmt.Errorf("focus human input candidate")
 	}
 	return s.health(ctx)
+}
+
+// resolveCandidate deliberately ignores the cached observation locator. A
+// protocol candidate is authority for one reviewed semantic tuple, not for a
+// Playwright Locator whose live query may point at a different node after DOM
+// mutation. Re-enumeration immediately before focus/click makes a changed,
+// missing, or newly ambiguous target fail closed.
+func (s *playwrightAuthorSession) resolveCandidate(action authorsession.BrowserAction) (playwright.Locator, error) {
+	if action.BackendID == "" || action.Matches != 1 || action.Role == "" {
+		return nil, fmt.Errorf("author candidate authority is invalid")
+	}
+	if err := s.discoverFrames(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	page, frame := s.pages[normalizedAuthorContext(action.Context)], s.frames[normalizedAuthorContext(action.Context)]
+	s.mu.Unlock()
+	var targetURL string
+	var elements []playwright.Locator
+	var err error
+	switch {
+	case page != nil:
+		targetURL = page.URL()
+		elements, err = page.Locator(authorSemanticSelector).All()
+	case frame != nil:
+		targetURL = frame.URL()
+		elements, err = frame.Locator(authorSemanticSelector).All()
+	default:
+		return nil, fmt.Errorf("author candidate context is unavailable")
+	}
+	if err != nil || len(elements) > s.request.MaxCandidates*8 {
+		return nil, fmt.Errorf("revalidate semantic candidate")
+	}
+	var resolved playwright.Locator
+	matches := 0
+	for _, locator := range elements {
+		visible, visibleErr := locator.IsVisible()
+		if visibleErr != nil || !visible {
+			continue
+		}
+		snapshot, snapshotErr := locator.AriaSnapshot(playwright.LocatorAriaSnapshotOptions{Timeout: playwright.Float(float64(s.request.NavigationTimeout.Milliseconds()))})
+		if snapshotErr != nil {
+			return nil, fmt.Errorf("revalidate accessible candidate")
+		}
+		role, label, ok := parseAuthorARIA(snapshot)
+		if !ok || role != action.Role || label != action.Label || authorInputKind(locator, role, label) != action.InputKind {
+			continue
+		}
+		if authorTargetOrigin(locator, targetURL) != action.TargetOrigin {
+			return nil, fmt.Errorf("author candidate target changed")
+		}
+		matches++
+		resolved = locator
+	}
+	if matches != action.Matches || resolved == nil {
+		return nil, fmt.Errorf("author candidate is missing, changed, or ambiguous")
+	}
+	return resolved, nil
 }
 
 func (s *playwrightAuthorSession) Execute(ctx context.Context, action authorsession.BrowserAction) (authorsession.Execution, error) {
@@ -286,24 +336,24 @@ func (s *playwrightAuthorSession) Execute(ctx context.Context, action authorsess
 		}
 		return authorsession.Execution{}, s.health(ctx)
 	case "click":
+		locator, err := s.resolveCandidate(action)
+		if err != nil {
+			return authorsession.Execution{}, err
+		}
 		s.mu.Lock()
-		locator := s.locators[action.BackendID]
 		before := make(map[playwright.Page]struct{}, len(s.pageIDs))
 		for page := range s.pageIDs {
 			before[page] = struct{}{}
 		}
 		s.expectingPopup = true
+		s.popupEvents = nil
 		s.mu.Unlock()
-		if locator == nil {
-			s.setExpectingPopup(false)
-			return authorsession.Execution{}, fmt.Errorf("author candidate expired")
-		}
 		if err := s.guard.beginPOST(action.POSTBudget); err != nil {
 			s.setExpectingPopup(false)
 			return authorsession.Execution{}, err
 		}
 		clickErr := locator.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(float64(s.request.NavigationTimeout.Milliseconds()))})
-		s.setExpectingPopup(false)
+		popupEvents := s.endPopupWindow()
 		postObserved, postErr := s.guard.endPOST()
 		if clickErr != nil || postErr != nil {
 			return authorsession.Execution{}, errors.Join(fmt.Errorf("approved click failed"), postErr)
@@ -314,7 +364,7 @@ func (s *playwrightAuthorSession) Execute(ctx context.Context, action authorsess
 				newPages = append(newPages, page)
 			}
 		}
-		if len(newPages) > 1 {
+		if len(newPages) > 1 || len(popupEvents) > 1 || len(newPages) != len(popupEvents) || len(newPages) == 1 && newPages[0] != popupEvents[0] {
 			for _, page := range newPages {
 				_ = page.Close()
 			}
@@ -387,19 +437,37 @@ func (s *playwrightAuthorSession) installSurfacePolicy(page playwright.Page) {
 		s.mu.Unlock()
 		if id == "main" {
 			s.guard.block("page_close")
+		} else if id != "" {
+			s.guard.block("context_close")
 		}
 	})
 }
 
-func (s *playwrightAuthorSession) popupExpected() bool {
+func (s *playwrightAuthorSession) recordPopupEvent(page playwright.Page) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.expectingPopup
+	if !s.expectingPopup {
+		return false
+	}
+	s.popupEvents = append(s.popupEvents, page)
+	return true
 }
 func (s *playwrightAuthorSession) setExpectingPopup(value bool) {
 	s.mu.Lock()
 	s.expectingPopup = value
+	if !value {
+		s.popupEvents = nil
+	}
 	s.mu.Unlock()
+}
+
+func (s *playwrightAuthorSession) endPopupWindow() []playwright.Page {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expectingPopup = false
+	result := append([]playwright.Page(nil), s.popupEvents...)
+	s.popupEvents = nil
+	return result
 }
 
 func (s *playwrightAuthorSession) navigate(ctx context.Context, contextID, target string) (playwright.Response, error) {
@@ -443,6 +511,48 @@ func (s *playwrightAuthorSession) discoverFrames() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	seenIdentity := make(map[string]struct{})
+	presentFrames := make(map[playwright.Frame]struct{})
+	for pageID, page := range s.pages {
+		if page.IsClosed() {
+			return fmt.Errorf("author page context is closed")
+		}
+		if pageID != "main" {
+			stored, ok := s.contexts[pageID]
+			if !ok || stored.Kind != "popup" {
+				return fmt.Errorf("popup context registry is inconsistent")
+			}
+			origin, _, err := authorURLFacts(page.URL(), s.guard.allowedOrigin)
+			if err != nil || origin != stored.Origin {
+				return fmt.Errorf("popup context origin changed")
+			}
+		}
+		for _, frame := range page.Frames() {
+			presentFrames[frame] = struct{}{}
+		}
+	}
+	for id, frame := range s.frames {
+		stored, ok := s.contexts[id]
+		if !ok || stored.Kind != "frame" || frame.IsDetached() {
+			return fmt.Errorf("frame context is detached or inconsistent")
+		}
+		if _, present := presentFrames[frame]; !present {
+			return fmt.Errorf("frame context is missing")
+		}
+		parentID, ok := s.frameIDs[frame.ParentFrame()]
+		if !ok || parentID != stored.Parent {
+			return fmt.Errorf("frame context parent changed")
+		}
+		origin, path, err := authorURLFacts(frame.URL(), s.guard.allowedOrigin)
+		name := strings.TrimSpace(frame.Name())
+		if err != nil || origin != stored.Origin || path != stored.Path || name != stored.Name {
+			return fmt.Errorf("frame context identity changed")
+		}
+		identity := parentID + "\x00" + origin + "\x00" + path + "\x00" + name
+		if _, duplicate := seenIdentity[identity]; duplicate {
+			return fmt.Errorf("frame identity is ambiguous")
+		}
+		seenIdentity[identity] = struct{}{}
+	}
 	for pageID, page := range s.pages {
 		main := page.MainFrame()
 		s.frameIDs[main] = pageID
@@ -488,6 +598,13 @@ func (s *playwrightAuthorSession) discoverFrames() error {
 	return nil
 }
 
+func normalizedAuthorContext(value string) string {
+	if value == "" {
+		return "main"
+	}
+	return value
+}
+
 type authorNetworkGuard struct {
 	mu               sync.Mutex
 	origins          map[string]struct{}
@@ -527,21 +644,13 @@ func installAuthorNetworkPolicy(browserContext playwright.BrowserContext, guard 
 	if err := browserContext.RouteWebSocket("**/*", func(route playwright.WebSocketRoute) { guard.block("websocket"); route.Close() }); err != nil {
 		return fmt.Errorf("install author WebSocket blocker")
 	}
-	browserContext.OnResponse(func(response playwright.Response) {
-		value, err := response.HeaderValue("content-length")
-		if err != nil {
-			guard.block("response_header")
+	browserContext.OnRequestFinished(func(request playwright.Request) {
+		sizes, err := request.Sizes()
+		if err != nil || sizes == nil || sizes.ResponseBodySize < 0 {
+			guard.block("response_size")
 			return
 		}
-		if value == "" {
-			return
-		}
-		length, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-		if err != nil || length < 0 {
-			guard.block("response_header")
-			return
-		}
-		guard.observeBytes(length)
+		guard.observeBytes(int64(sizes.ResponseBodySize))
 	})
 	return nil
 }
