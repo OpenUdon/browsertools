@@ -197,3 +197,94 @@ func TestImportDuplicateRoleNameMarkedAmbiguous(t *testing.T) {
 		}
 	}
 }
+
+func TestImportLiveARIASnapshotAndJSONLD(t *testing.T) {
+	fixture := Fixture{
+		Version: FixtureVersion, URL: "https://example.test/member", ObservedAt: "2026-08-15T12:00:00Z",
+		ActionHint: "read_dashboard", PlaywrightVersion: "1.62.1",
+		ARIASnapshot: `- heading "Member dashboard" [level=1]
+- paragraph: button
+- button "Refresh"
+- textbox "Search"
+- button "Refresh"
+`,
+		StructuredData: []json.RawMessage{
+			json.RawMessage(`{"status":"active","count":2,"details":{"tier":"gold"},"token":"do-not-copy"}`),
+			json.RawMessage(`{"status":7,"enabled":true}`),
+		},
+	}
+	raw, err := json.Marshal(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := (&Adapter{}).Import(raw, adapter.Options{
+		Origin: "https://example.test", RedactionStatus: evidence.RedactionCompleted,
+		RedactedFields: []string{"structuredData[0].token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := records[0]
+	if record.ActionHint != "read_dashboard" || record.Provenance.Version != "1.62.1" {
+		t.Fatalf("record = %#v", record)
+	}
+	refreshes := 0
+	for _, locator := range record.CandidateLocators {
+		if locator.Role == "button" && locator.Name == "" {
+			t.Fatalf("mapping text was interpreted as a locator: %#v", record.CandidateLocators)
+		}
+		if locator.Role == "button" && locator.Name == "Refresh" {
+			refreshes++
+			if locator.AmbiguityNote == "" {
+				t.Fatalf("ambiguous locator is unmarked: %#v", locator)
+			}
+		}
+	}
+	if refreshes != 2 {
+		t.Fatalf("locators = %#v", record.CandidateLocators)
+	}
+	outputs := map[string]string{}
+	for _, output := range record.CandidateOutputs {
+		outputs[output.Key] = output.Type
+	}
+	if outputs["enabled"] != "boolean" || outputs["details"] != "object" || outputs["count"] != "integer" {
+		t.Fatalf("outputs = %#v", record.CandidateOutputs)
+	}
+	if _, ok := outputs["status"]; ok {
+		t.Fatalf("conflicting output was retained: %#v", record.CandidateOutputs)
+	}
+	if _, ok := outputs["token"]; ok {
+		t.Fatalf("credential-shaped output was retained: %#v", record.CandidateOutputs)
+	}
+	encoded, err := evidence.MarshalDeterministic(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "do-not-copy") {
+		t.Fatalf("structured value leaked into normalized evidence: %s", encoded)
+	}
+}
+
+func TestImportLiveFixtureFailsClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "unknown field", raw: `{"url":"https://example.test","observedAt":"2026-01-01T00:00:00Z","unknown":true}`},
+		{name: "wrong version", raw: `{"version":"browsertools.playwright-capture.v2","url":"https://example.test","observedAt":"2026-01-01T00:00:00Z"}`},
+		{name: "two snapshots", raw: `{"url":"https://example.test","observedAt":"2026-01-01T00:00:00Z","snapshot":{"role":"region"},"ariaSnapshot":"- button \\"Go\\""}`},
+		{name: "trailing document", raw: `{"url":"https://example.test","observedAt":"2026-01-01T00:00:00Z"} {}`},
+		{name: "malformed aria name", raw: `{"url":"https://example.test","observedAt":"2026-01-01T00:00:00Z","ariaSnapshot":"- button \\"unterminated"}`},
+		{name: "invalid jsonld", raw: `{"url":"https://example.test","observedAt":"2026-01-01T00:00:00Z","structuredData":[{"ok":true},invalid]}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := (&Adapter{}).Import([]byte(test.raw), adapter.Options{
+				Origin: "https://example.test", RedactionStatus: evidence.RedactionNotRequired,
+			})
+			if err == nil {
+				t.Fatal("expected rejection")
+			}
+		})
+	}
+}

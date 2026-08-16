@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,14 +10,31 @@ import (
 	"testing"
 	"time"
 
+	playwrightadapter "github.com/OpenUdon/browsertools/adapter/playwright"
 	"github.com/OpenUdon/browsertools/authprofile"
 	"github.com/OpenUdon/browsertools/authreview"
 	capabilitybundle "github.com/OpenUdon/browsertools/bundle"
 	"github.com/OpenUdon/browsertools/cache"
+	"github.com/OpenUdon/browsertools/capture"
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/browsertools/review"
 )
+
+type cliCaptureAcquirer struct {
+	request capture.LiveRequest
+	calls   int
+}
+
+func (a *cliCaptureAcquirer) Acquire(_ context.Context, request capture.LiveRequest) (capture.Observation, error) {
+	a.calls++
+	a.request = request
+	return capture.Observation{
+		FinalURL: request.URL, ARIASnapshot: "- button \"Refresh\"\n",
+		StructuredData: []json.RawMessage{json.RawMessage(`{"status":"active"}`)},
+		Network:        playwrightadapter.NetworkSummary{Requests: 1, Responses: 1, ResponseBytes: 512},
+	}, nil
+}
 
 func TestProfileValidateExitCodes(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -56,6 +74,101 @@ func TestPlaywrightDoctorRejectsInvalidArgumentsBeforeRuntime(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, strings.NewReader(""), &stdout, &stderr); code != exitUsageOrIO || stderr.Len() == 0 {
 			t.Fatalf("args=%v code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestCaptureChromiumStoresOnlyPrivateRawMetadata(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cache")
+	observedAt := time.Date(2026, 8, 16, 1, 2, 3, 0, time.UTC)
+	fake := &cliCaptureAcquirer{}
+	var stdout, stderr bytes.Buffer
+	code := runCaptureChromiumWith([]string{
+		"--url", "https://example.test/member", "--allow-origin", "https://example.test",
+		"--cache-root", root, "--action-hint", "read_dashboard", "--retain-for", "2h",
+	}, &stdout, &stderr, func() time.Time { return observedAt }, func(driverDirectory string) capture.Acquirer {
+		if driverDirectory != "" {
+			t.Fatalf("driver directory = %q", driverDirectory)
+		}
+		return fake
+	})
+	if code != exitOK || fake.calls != 1 {
+		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, fake.calls, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Refresh") || strings.Contains(stdout.String(), "example.test") {
+		t.Fatalf("private capture leaked to stdout: %s", stdout.String())
+	}
+	var entry cache.Entry
+	if err := json.Unmarshal(stdout.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Kind != cache.KindPrivateRaw || entry.PublicationEligible || entry.CreatedAt != "2026-08-16T01:02:03Z" ||
+		entry.ExpiresAt != "2026-08-16T03:02:03Z" {
+		t.Fatalf("entry = %#v", entry)
+	}
+	store, err := cache.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := store.Get(context.Background(), entry.ID, observedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"version": "browsertools.playwright-capture.v1"`) ||
+		!strings.Contains(string(payload), `"ariaSnapshot": "- button \"Refresh\"\n"`) {
+		t.Fatalf("payload = %s", payload)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"cache", "get", "--root", root, "--id", entry.ID, "--at", "2026-08-16T01:02:03Z"}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitUsageOrIO || stdout.Len() != 0 || !strings.Contains(stderr.String(), "explicit --out") {
+		t.Fatalf("raw stdout code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	out := filepath.Join(t.TempDir(), "capture.json")
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"cache", "get", "--root", root, "--id", entry.ID, "--at", "2026-08-16T01:02:03Z", "--out", out}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("raw file code=%d stderr=%q", code, stderr.String())
+	}
+	info, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("raw output mode = %o", info.Mode().Perm())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{
+		"evidence", "import", "--adapter", "playwright", "--input", out,
+		"--origin", "https://example.test", "--redaction-status", "not_required",
+	}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK || !strings.Contains(stdout.String(), `"candidateLocators"`) ||
+		!strings.Contains(stdout.String(), `"candidateOutputs"`) || strings.Contains(stdout.String(), `"active"`) {
+		t.Fatalf("evidence code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"cache", "get", "--root", root, "--id", entry.ID, "--at", "2026-08-16T01:02:03Z", "--out", out, "--force"}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitUsageOrIO || !strings.Contains(stderr.String(), "cannot overwrite") {
+		t.Fatalf("raw force code=%d stderr=%q", code, stderr.String())
+	}
+}
+
+func TestCaptureChromiumRejectsBadCLIInputsWithoutAcquiring(t *testing.T) {
+	tests := [][]string{
+		{"--url", "https://example.test", "--cache-root", t.TempDir()},
+		{"--url", "https://example.test", "--allow-origin", "https://example.test", "--cache-root", t.TempDir(), "--retain-for", "0s"},
+		{"--url", "https://example.test", "--allow-origin", "https://example.test", "--cache-root", t.TempDir(), "unexpected"},
+	}
+	for _, args := range tests {
+		fake := &cliCaptureAcquirer{}
+		var stdout, stderr bytes.Buffer
+		code := runCaptureChromiumWith(args, &stdout, &stderr, time.Now, func(string) capture.Acquirer { return fake })
+		if code != exitUsageOrIO || fake.calls != 0 || stderr.Len() == 0 {
+			t.Fatalf("args=%v code=%d calls=%d stderr=%q", args, code, fake.calls, stderr.String())
 		}
 	}
 }

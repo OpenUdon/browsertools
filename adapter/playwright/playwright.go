@@ -1,7 +1,7 @@
 // Package playwright imports Playwright accessibility-snapshot and action-probe
 // fixtures as normalized evidence records.
 //
-// A Playwright fixture is a JSON object with the following shape:
+// A legacy Playwright fixture is a JSON object with the following shape:
 //
 //	{
 //	  "url": "https://example.test/page",
@@ -20,12 +20,31 @@
 package playwright
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/OpenUdon/browsertools/adapter"
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/evidence/redact"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	// FixtureVersion identifies raw fixtures emitted by Browsertools live
+	// acquisition. Legacy saved-tree fixtures omit this field.
+	FixtureVersion  = "browsertools.playwright-capture.v1"
+	maxFixtureBytes = 8 << 20
+	maxARIANodes    = 8192
+	maxLocators     = 4096
+	maxJSONLDDocs   = 32
+	maxOutputs      = 256
 )
 
 // interactiveRoles is the set of ARIA roles that are valid locator targets.
@@ -38,10 +57,29 @@ var interactiveRoles = map[string]bool{
 
 // Fixture is the expected shape of a saved Playwright snapshot file.
 type Fixture struct {
-	URL        string        `json:"url"`
-	ObservedAt string        `json:"observedAt"`
-	ActionHint string        `json:"actionHint,omitempty"`
-	Snapshot   *SnapshotNode `json:"snapshot"`
+	Version           string            `json:"version,omitempty"`
+	URL               string            `json:"url"`
+	ObservedAt        string            `json:"observedAt"`
+	ActionHint        string            `json:"actionHint,omitempty"`
+	PlaywrightVersion string            `json:"playwrightVersion,omitempty"`
+	Snapshot          *SnapshotNode     `json:"snapshot,omitempty"`
+	ARIASnapshot      string            `json:"ariaSnapshot,omitempty"`
+	StructuredData    []json.RawMessage `json:"structuredData,omitempty"`
+	Network           *NetworkSummary   `json:"network,omitempty"`
+}
+
+// NetworkSummary records bounded counts only. It intentionally contains no
+// URLs, headers, cookies, bodies, or timing fingerprints.
+type NetworkSummary struct {
+	Requests            int   `json:"requests"`
+	Responses           int   `json:"responses"`
+	ResponseBytes       int64 `json:"responseBytes"`
+	BlockedRequests     int   `json:"blockedRequests"`
+	BlockedWebSockets   int   `json:"blockedWebSockets"`
+	BlockedPopups       int   `json:"blockedPopups"`
+	BlockedDownloads    int   `json:"blockedDownloads"`
+	BlockedDialogs      int   `json:"blockedDialogs"`
+	BlockedFileChoosers int   `json:"blockedFileChoosers"`
 }
 
 // SnapshotNode is one node in the Playwright accessibility tree.
@@ -70,9 +108,27 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 		return nil, fmt.Errorf("playwright: opts.RedactionStatus is required; set evidence.RedactionNotRequired for synthetic fixtures")
 	}
 
+	if len(raw) > maxFixtureBytes {
+		return nil, fmt.Errorf("playwright: fixture exceeds %d bytes", maxFixtureBytes)
+	}
 	var fix Fixture
-	if err := json.Unmarshal(raw, &fix); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&fix); err != nil {
 		return nil, fmt.Errorf("playwright: parse fixture: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("multiple JSON values are not supported")
+		}
+		return nil, fmt.Errorf("playwright: parse fixture: %w", err)
+	}
+	if fix.Version != "" && fix.Version != FixtureVersion {
+		return nil, fmt.Errorf("playwright: unsupported fixture version %q", fix.Version)
+	}
+	if fix.Snapshot != nil && fix.ARIASnapshot != "" {
+		return nil, fmt.Errorf("playwright: fixture must contain only one snapshot representation")
 	}
 	if err := adapter.ValidateFixtureOrigin("playwright", fix.URL, opts.Origin); err != nil {
 		return nil, err
@@ -94,10 +150,22 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 		actionHint = fix.ActionHint
 	}
 
-	var locs []evidence.CandidateLocator
+	var (
+		locs []evidence.CandidateLocator
+		err  error
+	)
 	if fix.Snapshot != nil {
 		locs = walkSnapshot(fix.Snapshot, nil)
-		markAmbiguousLocators(locs)
+	} else if fix.ARIASnapshot != "" {
+		locs, err = locatorsFromARIA(fix.ARIASnapshot)
+		if err != nil {
+			return nil, fmt.Errorf("playwright: aria snapshot: %w", err)
+		}
+	}
+	markAmbiguousLocators(locs)
+	outputs, diagnostics, err := outputsFromJSONLD(fix.StructuredData)
+	if err != nil {
+		return nil, fmt.Errorf("playwright: structured data: %w", err)
 	}
 
 	raw2 := &evidence.RawRecord{
@@ -107,9 +175,11 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 			ObservedAt:        observedAt,
 			ActionHint:        actionHint,
 			CandidateLocators: locs,
+			CandidateOutputs:  outputs,
 			RedactionStatus:   status,
 			RedactedFields:    opts.RedactedFields,
-			Provenance:        evidence.Provenance{Tool: "playwright"},
+			Diagnostics:       diagnostics,
+			Provenance:        evidence.Provenance{Tool: "playwright", Version: fix.PlaywrightVersion},
 		},
 	}
 	rec, err := raw2.Normalize()
@@ -117,6 +187,239 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 		return nil, fmt.Errorf("playwright: normalize: %w", err)
 	}
 	return []evidence.Record{rec}, nil
+}
+
+func locatorsFromARIA(snapshot string) ([]evidence.CandidateLocator, error) {
+	if len(snapshot) > maxFixtureBytes {
+		return nil, fmt.Errorf("snapshot exceeds %d bytes", maxFixtureBytes)
+	}
+	var document yaml.Node
+	decoder := yaml.NewDecoder(strings.NewReader(snapshot))
+	if err := decoder.Decode(&document); err != nil {
+		return nil, err
+	}
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("multiple YAML documents are not supported")
+		}
+		return nil, err
+	}
+	count := 0
+	locators := make([]evidence.CandidateLocator, 0)
+	var walk func(*yaml.Node, int, bool) error
+	walk = func(node *yaml.Node, depth int, parseScalar bool) error {
+		if node == nil {
+			return nil
+		}
+		if depth > maxSnapshotDepth {
+			return fmt.Errorf("snapshot exceeds depth %d", maxSnapshotDepth)
+		}
+		count++
+		if count > maxARIANodes {
+			return fmt.Errorf("snapshot exceeds %d nodes", maxARIANodes)
+		}
+		if node.Kind == yaml.AliasNode {
+			return fmt.Errorf("YAML aliases are not supported")
+		}
+		if node.Kind == yaml.ScalarNode {
+			if !parseScalar {
+				return nil
+			}
+			role, name, err := parseARIAKey(node.Value)
+			if err != nil {
+				return err
+			}
+			if interactiveRoles[role] {
+				if len(locators) >= maxLocators {
+					return fmt.Errorf("snapshot exceeds %d locator candidates", maxLocators)
+				}
+				locators = append(locators, evidence.CandidateLocator{Role: role, Name: name})
+			}
+			return nil
+		}
+		switch node.Kind {
+		case yaml.MappingNode:
+			for index := 0; index+1 < len(node.Content); index += 2 {
+				if err := walk(node.Content[index], depth+1, true); err != nil {
+					return err
+				}
+				if err := walk(node.Content[index+1], depth+1, false); err != nil {
+					return err
+				}
+			}
+		default:
+			for _, child := range node.Content {
+				if err := walk(child, depth+1, node.Kind == yaml.SequenceNode); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := walk(&document, 0, false); err != nil {
+		return nil, err
+	}
+	return locators, nil
+}
+
+func parseARIAKey(value string) (role, name string, err error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "/") {
+		return "", "", nil
+	}
+	end := strings.IndexAny(value, " \t[")
+	if end < 0 {
+		return value, "", nil
+	}
+	role = value[:end]
+	rest := strings.TrimSpace(value[end:])
+	if !strings.HasPrefix(rest, `"`) {
+		return role, "", nil
+	}
+	quoted, ok := quotedPrefix(rest)
+	if !ok {
+		return "", "", fmt.Errorf("invalid quoted accessible name in %q", value)
+	}
+	name, err = strconv.Unquote(quoted)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid accessible name in %q: %w", value, err)
+	}
+	return role, name, nil
+}
+
+func quotedPrefix(value string) (string, bool) {
+	escaped := false
+	for index := 1; index < len(value); index++ {
+		switch value[index] {
+		case '\\':
+			escaped = !escaped
+		case '"':
+			if !escaped {
+				return value[:index+1], true
+			}
+			escaped = false
+		default:
+			escaped = false
+		}
+	}
+	return "", false
+}
+
+var outputKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func outputsFromJSONLD(documents []json.RawMessage) ([]evidence.CandidateOutput, []evidence.Diagnostic, error) {
+	if len(documents) > maxJSONLDDocs {
+		return nil, nil, fmt.Errorf("more than %d JSON-LD documents", maxJSONLDDocs)
+	}
+	types := map[string]string{}
+	conflicts := map[string]bool{}
+	sensitive := map[string]bool{}
+	properties := 0
+	for index, document := range documents {
+		decoder := json.NewDecoder(bytes.NewReader(document))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, nil, fmt.Errorf("document[%d]: %w", index, err)
+		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			return nil, nil, fmt.Errorf("document[%d] contains trailing JSON", index)
+		}
+		for _, object := range topLevelObjects(value) {
+			for key, item := range object {
+				properties++
+				if properties > maxOutputs*4 {
+					return nil, nil, fmt.Errorf("more than %d JSON-LD properties", maxOutputs*4)
+				}
+				if strings.HasPrefix(key, "@") || !outputKeyPattern.MatchString(key) {
+					continue
+				}
+				if sensitiveOutputKey(key) {
+					sensitive[key] = true
+					continue
+				}
+				itemType := jsonType(item)
+				if previous, ok := types[key]; ok && previous != itemType {
+					conflicts[key] = true
+					continue
+				}
+				types[key] = itemType
+			}
+		}
+	}
+	keys := make([]string, 0, len(types))
+	for key := range types {
+		if !conflicts[key] {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	if len(keys) > maxOutputs {
+		return nil, nil, fmt.Errorf("more than %d JSON-LD output candidates", maxOutputs)
+	}
+	outputs := make([]evidence.CandidateOutput, 0, len(keys))
+	for _, key := range keys {
+		outputs = append(outputs, evidence.CandidateOutput{Key: key, Type: types[key], Source: "jsonld", Property: key})
+	}
+	diagnostics := make([]evidence.Diagnostic, 0, len(conflicts)+len(sensitive))
+	for key := range conflicts {
+		diagnostics = append(diagnostics, evidence.Diagnostic{Level: "warn", Field: "structuredData." + key, Message: "JSON-LD property has conflicting observed types and was not proposed as an output"})
+	}
+	for key := range sensitive {
+		diagnostics = append(diagnostics, evidence.Diagnostic{Level: "warn", Field: "structuredData." + key, Message: "credential-shaped JSON-LD property was not proposed as an output"})
+	}
+	return outputs, diagnostics, nil
+}
+
+func sensitiveOutputKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
+	case "cookie", "cookies", "oauth_state", "session", "session_id", "session_storage", "local_storage":
+		return true
+	default:
+		return redact.SensitiveKey(normalized)
+	}
+}
+
+func topLevelObjects(value any) []map[string]any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return []map[string]any{typed}
+	case []any:
+		result := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if object, ok := item.(map[string]any); ok {
+				result = append(result, object)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func jsonType(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case json.Number:
+		if !strings.ContainsAny(string(typed), ".eE") {
+			return "integer"
+		}
+		return "number"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return "null"
+	}
 }
 
 // maxSnapshotDepth limits walkSnapshot recursion to prevent stack overflow on

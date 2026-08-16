@@ -85,6 +85,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCacheList(args[2:], stdout, stderr)
 	case "cache prune":
 		return runCachePrune(args[2:], stdout, stderr)
+	case "capture chromium":
+		return runCaptureChromium(args[2:], stdout, stderr)
 	case "playwright doctor":
 		return runPlaywrightDoctor(args[2:], stdout, stderr)
 	default:
@@ -94,7 +96,85 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|playwright doctor> [flags]")
+	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|capture chromium|playwright doctor> [flags]")
+}
+
+func runCaptureChromium(args []string, stdout, stderr io.Writer) int {
+	return runCaptureChromiumWith(args, stdout, stderr, time.Now, capture.NewPlaywrightAcquirer)
+}
+
+func runCaptureChromiumWith(
+	args []string,
+	stdout, stderr io.Writer,
+	clock func() time.Time,
+	newAcquirer func(string) capture.Acquirer,
+) int {
+	fs := flag.NewFlagSet("capture chromium", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	targetURL := fs.String("url", "", "exact HTTPS or loopback HTTP URL")
+	cacheRoot := fs.String("cache-root", "", "explicit private cache root")
+	actionHint := fs.String("action-hint", "", "optional portable action identifier")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	navigationTimeout := fs.Duration("navigation-timeout", capture.DefaultNavigationTimeout, "per-navigation/observation timeout")
+	totalTimeout := fs.Duration("timeout", capture.DefaultTotalTimeout, "total capture deadline")
+	maxRequests := fs.Int("max-requests", capture.DefaultMaxRequests, "maximum routed requests")
+	maxResponseBytes := fs.Int64("max-response-bytes", capture.DefaultMaxResponseBytes, "maximum total response bytes")
+	maxEvidenceBytes := fs.Int64("max-evidence-bytes", capture.DefaultMaxEvidenceBytes, "maximum private capture bytes")
+	ariaDepth := fs.Int("aria-depth", capture.DefaultARIADepth, "maximum ARIA snapshot depth")
+	retainFor := fs.Duration("retain-for", capture.DefaultPrivateRetention, "private raw retention duration")
+	var allowedOrigins stringList
+	fs.Var(&allowedOrigins, "allow-origin", "exact allowed origin; repeatable")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "capture chromium: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *targetURL == "" || *cacheRoot == "" || len(allowedOrigins) == 0 {
+		fmt.Fprintln(stderr, "capture chromium: --url, --cache-root, and at least one --allow-origin are required")
+		return exitUsageOrIO
+	}
+	if *retainFor <= 0 || *retainFor > capture.MaxPrivateRetention {
+		fmt.Fprintf(stderr, "capture chromium: --retain-for must be positive and no more than %s\n", capture.MaxPrivateRetention)
+		return exitUsageOrIO
+	}
+	if clock == nil || newAcquirer == nil {
+		fmt.Fprintln(stderr, "capture chromium: capture dependencies are unavailable")
+		return exitUsageOrIO
+	}
+	store, err := cache.Open(*cacheRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "capture chromium:", err)
+		return exitUsageOrIO
+	}
+	observedAt := clock().UTC()
+	result, err := capture.Acquire(context.Background(), newAcquirer(*driverDirectory), capture.LiveRequest{
+		URL: *targetURL, AllowedOrigins: []string(allowedOrigins), ActionHint: *actionHint,
+		ObservedAt: observedAt, NavigationTimeout: *navigationTimeout,
+		TotalTimeout: *totalTimeout, MaxRequests: *maxRequests,
+		MaxResponseBytes: *maxResponseBytes, MaxEvidenceBytes: *maxEvidenceBytes,
+		ARIADepth: *ariaDepth,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	entry, err := store.Put(context.Background(), bytes.NewReader(result.JSON), cache.PutOptions{
+		Kind: cache.KindPrivateRaw, MediaType: "application/vnd.openudon.browsertools.playwright-capture+json",
+		CreatedAt: observedAt, ExpiresAt: observedAt.Add(*retainFor), Source: "playwright-live",
+		Annotations:         map[string]string{"fixture_version": playwrightadapter.FixtureVersion},
+		PublicationEligible: false,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "capture chromium:", err)
+		return exitRejected
+	}
+	if err := json.NewEncoder(stdout).Encode(entry); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	return exitOK
 }
 
 func runPlaywrightDoctor(args []string, stdout, stderr io.Writer) int {
@@ -581,12 +661,24 @@ func runCacheGet(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return exitUsageOrIO
 	}
-	_, payload, err := store.Get(context.Background(), *id, when)
+	entry, payload, err := store.Get(context.Background(), *id, when)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitRejected
 	}
-	if err := writeOutput(*out, payload, *force, stdout); err != nil {
+	if entry.Kind == cache.KindPrivateRaw && *out == "-" {
+		fmt.Fprintln(stderr, "cache get: private_raw payloads require an explicit --out path")
+		return exitUsageOrIO
+	}
+	if entry.Kind == cache.KindPrivateRaw && *force {
+		fmt.Fprintln(stderr, "cache get: private_raw payloads cannot overwrite an existing file")
+		return exitUsageOrIO
+	}
+	mode := os.FileMode(0o644)
+	if entry.Kind == cache.KindPrivateRaw {
+		mode = 0o600
+	}
+	if err := writeOutputMode(*out, payload, *force, stdout, mode); err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitUsageOrIO
 	}
@@ -1341,6 +1433,10 @@ func marshalProfile(prof *profile.Profile, outputPath, stdoutFormat string) ([]b
 }
 
 func writeOutput(path string, data []byte, force bool, stdout io.Writer) error {
+	return writeOutputMode(path, data, force, stdout, 0o644)
+}
+
+func writeOutputMode(path string, data []byte, force bool, stdout io.Writer, mode os.FileMode) error {
 	if path == "-" {
 		_, err := stdout.Write(data)
 		return err
@@ -1351,7 +1447,7 @@ func writeOutput(path string, data []byte, force bool, stdout io.Writer) error {
 	} else {
 		flags |= os.O_EXCL
 	}
-	file, err := os.OpenFile(path, flags, 0o644)
+	file, err := os.OpenFile(path, flags, mode)
 	if errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("refusing to overwrite %s without --force", path)
 	}

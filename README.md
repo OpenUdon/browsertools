@@ -123,9 +123,27 @@ go run ./cmd/browsertools playwright doctor --engine chromium
 
 `playwright doctor` starts and stops only the installed Playwright driver. It
 does not install software, contact a site, or launch a browser. The other CLI
-commands remain file-first and do not acquire live evidence. Live Chromium
-capture is introduced separately with exact-origin and ephemeral-context
-controls.
+commands remain file-first unless explicitly named as capture commands.
+
+Safe live capture is Chromium-only, headless, non-interactive, and private. It
+requires every exact origin and writes page material only to a finite-retention
+`private_raw` cache entry:
+
+```bash
+go run ./cmd/browsertools capture chromium \
+  --url https://example.test/member \
+  --allow-origin https://example.test \
+  --cache-root ./.browsertools-cache \
+  --action-hint read_dashboard \
+  --retain-for 24h
+```
+
+The command blocks non-GET/HEAD requests, unapproved origins, child frames,
+service workers, WebSockets, popups, downloads, dialogs, file choosers, and
+non-essential resources. It uses finite navigation, total, request, response,
+ARIA-depth, evidence-size, and retention limits. Only cache metadata is printed;
+raw ARIA/JSON-LD content is never written to stdout. See
+[Safe live capture](docs/live-capture.md) for the review/redaction handoff.
 
 Portable sign-in recipes use a separate additive contract and remain local to
 the workflow package:
@@ -185,6 +203,8 @@ go run ./cmd/browsertools cache prune \
   outputs.
 - An isolated Playwright-Go acquisition boundary, pinned capability policy,
   and offline installation doctor for authoring-only browser tooling.
+- Explicit headless Chromium acquisition into the private raw cache with exact
+  origins, ephemeral context destruction, and closed activity/resource bounds.
 
 ## What It Does Not Own
 
@@ -238,6 +258,7 @@ website UI
 - [Publishable capability bundles](docs/capability-bundles.md)
 - [Static registry and contribution workflow](docs/static-registry.md)
 - [Browser authentication profiles](docs/browser-authentication.md)
+- [Safe live capture](docs/live-capture.md)
 - [Examples](examples/README.md)
 
 ## Development
@@ -251,3 +272,9 @@ git diff --check
 
 Default tests use fakes and synthetic fixtures; they do not install or launch
 browsers and do not contact the network.
+
+An installed-browser loopback integration test is opt-in:
+
+```bash
+BROWSERTOOLS_LIVE_TEST=1 go test ./capture -run PlaywrightLiveCaptureLoopback
+```

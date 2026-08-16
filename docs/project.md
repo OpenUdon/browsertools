@@ -317,6 +317,7 @@ credential/session storage, or runtime retry/session policy.
 23. Static browser capability registry (`M19`).
 24. Local-only browser authentication profile tooling (`A01`).
 25. Playwright-Go acquisition foundation and installation doctor (`M20`).
+26. Safe headless Chromium live capture into private raw cache (`E03`).
 
 ## CLI
 
@@ -340,7 +341,18 @@ browsertools revalidate check --profile ./profiles/example.yaml \
   --evidence ./evidence.json --at 2026-08-14T00:00:00Z \
   --out ./revalidation.json
 browsertools playwright doctor --engine chromium
+browsertools capture chromium --url https://example.test/member \
+  --allow-origin https://example.test \
+  --cache-root ./.browsertools-cache --retain-for 24h
 ```
+
+Live capture is the one networked command in this milestone. It is explicit,
+headless, non-interactive, exact-origin, ephemeral, read-only at the routed
+request boundary, and bounded by time/count/byte/depth controls. It writes raw
+ARIA and valid JSON-LD only as a non-publishable private cache entry and emits
+metadata to stdout. Normalized evidence is a later, explicit import after an
+operator reviews and redacts the private fixture. See
+[Safe live capture](live-capture.md).
 
 ## Fixture Policy
 

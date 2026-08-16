@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	playwright "github.com/mxschmitt/playwright-go"
@@ -32,6 +33,7 @@ func (r *playwrightRuntime) Open(ctx context.Context, engine Engine) (Session, e
 	options := &playwright.RunOptions{
 		DriverDirectory: r.driverDirectory, SkipInstallBrowsers: true, Verbose: false,
 		Stdout: io.Discard, Stderr: io.Discard,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	pw, err := playwright.Run(options)
 	if err != nil {
