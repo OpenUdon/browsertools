@@ -17,7 +17,7 @@ var discoveryTime = time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
 func TestDiscoverLocalSourcesMixedValidatedRootAndDuplicates(t *testing.T) {
 	root := t.TempDir()
 	bundleData := mustReadDiscoveryFixture(t, filepath.Join("testdata", "capability-bundles", "read-only.json"))
-	profileData := mustReadDiscoveryFixture(t, filepath.Join("..", "uws", "testdata", "browser-profile", "read-only.yaml"))
+	profileData := mustReadDiscoveryFixture(t, filepath.Join("testdata", "browser-profile", "read-only.yaml"))
 	writeDiscoveryFile(t, filepath.Join(root, "capability-bundles", "status.json"), bundleData)
 	writeDiscoveryFile(t, filepath.Join(root, "browser-profiles", "status.yaml"), profileData)
 	writeDiscoveryFile(t, filepath.Join(root, "duplicates", "status-copy.yaml"), profileData)
@@ -62,7 +62,7 @@ func TestDiscoverExplicitAmbiguityAndStaleProfile(t *testing.T) {
 	}
 
 	profilePath := filepath.Join(root, "profile.yaml")
-	writeDiscoveryFile(t, profilePath, mustReadDiscoveryFixture(t, filepath.Join("..", "uws", "testdata", "browser-profile", "read-only.yaml")))
+	writeDiscoveryFile(t, profilePath, mustReadDiscoveryFixture(t, filepath.Join("testdata", "browser-profile", "read-only.yaml")))
 	report, err = DiscoverLocalSources(context.Background(), LocalSourceDiscoveryOptions{
 		Roots: []string{profilePath}, At: time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC),
 	})
@@ -96,7 +96,7 @@ func TestDiscoverAuthenticationProfileWithoutRegistryPromotion(t *testing.T) {
 }
 
 func TestDiscoverBoundsAreVisibleAndDuplicatesDoNotConsumeCandidateBound(t *testing.T) {
-	profileData := mustReadDiscoveryFixture(t, filepath.Join("..", "uws", "testdata", "browser-profile", "read-only.yaml"))
+	profileData := mustReadDiscoveryFixture(t, filepath.Join("testdata", "browser-profile", "read-only.yaml"))
 	t.Run("visited", func(t *testing.T) {
 		root := t.TempDir()
 		writeDiscoveryFile(t, filepath.Join(root, "one.yaml"), profileData)
@@ -157,7 +157,7 @@ func TestDiscoverRejectsSymlinksCancellationAndHintOnlyFiles(t *testing.T) {
 	writeDiscoveryFile(t, filepath.Join(root, "browser-profiles", "config.json"), []byte(`{"ordinary":true}`))
 	if runtime.GOOS != "windows" {
 		target := filepath.Join(root, "target.yaml")
-		writeDiscoveryFile(t, target, mustReadDiscoveryFixture(t, filepath.Join("..", "uws", "testdata", "browser-profile", "read-only.yaml")))
+		writeDiscoveryFile(t, target, mustReadDiscoveryFixture(t, filepath.Join("testdata", "browser-profile", "read-only.yaml")))
 		if err := os.Symlink(target, filepath.Join(root, "linked.yaml")); err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +192,7 @@ func TestDiscoverRequiresExplicitInputsAndIsDeterministic(t *testing.T) {
 	if _, err := DiscoverLocalSources(context.Background(), LocalSourceDiscoveryOptions{Roots: []string{t.TempDir()}}); err == nil {
 		t.Fatal("expected explicit-time requirement")
 	}
-	profileData := mustReadDiscoveryFixture(t, filepath.Join("..", "uws", "testdata", "browser-profile", "read-only.yaml"))
+	profileData := mustReadDiscoveryFixture(t, filepath.Join("testdata", "browser-profile", "read-only.yaml"))
 	first, second := t.TempDir(), t.TempDir()
 	writeDiscoveryFile(t, filepath.Join(first, "profile.yaml"), profileData)
 	writeDiscoveryFile(t, filepath.Join(second, "profile.yaml"), profileData)
