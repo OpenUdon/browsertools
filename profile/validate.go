@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/OpenUdon/uws/schemas"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -81,6 +82,20 @@ func compileSchema() (*jsonschema.Schema, error) {
 // Validate checks a JSON-compatible browser-profile value against both the
 // embedded schema and Browsertools' engine-neutral semantic safety rules.
 func Validate(value any) error {
+	if root, ok := value.(map[string]any); ok && root["profile"] == "uws.browser.1.6" {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		if err := schemas.ValidateBrowserSourceProfile(data); err != nil {
+			return &ValidationError{Cause: err}
+		}
+		issues := Check(value)
+		if len(issues) > 0 {
+			return &ValidationError{Issues: issues}
+		}
+		return nil
+	}
 	schema, err := compileSchema()
 	if err != nil {
 		return err

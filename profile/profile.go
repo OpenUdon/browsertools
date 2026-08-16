@@ -1,6 +1,6 @@
 // Package profile loads, models, and validates UWS browser-profile documents.
 //
-// The browser.1.5 schema is owned by github.com/OpenUdon/uws. This package
+// The browser.1.5 and additive browser.1.6 schemas are owned by github.com/OpenUdon/uws. This package
 // embeds a parity-checked copy and provides a complete, engine-neutral Go view
 // of the portable document. It deliberately contains no browser runtime,
 // session, credential, or Playwright behavior.
@@ -29,16 +29,25 @@ import (
 // validation declarations.
 type JSONSchema map[string]any
 
-// Profile is the complete typed view of a uws.browser.1.5 document.
+// Profile is the complete typed view of a uws.browser.1.5 or 1.6 document.
 type Profile struct {
-	Schema          string            `json:"profile" yaml:"profile"`
-	Info            Info              `json:"info" yaml:"info"`
-	ObservationKind ObservationKind   `json:"observationKind" yaml:"observationKind"`
-	Evidence        Evidence          `json:"evidence" yaml:"evidence"`
-	Confidence      Confidence        `json:"confidence" yaml:"confidence"`
-	ExpiresAfter    Duration          `json:"expiresAfter" yaml:"expiresAfter"`
-	Verification    Verification      `json:"verification" yaml:"verification"`
-	Actions         map[string]Action `json:"actions" yaml:"actions"`
+	Schema          string             `json:"profile" yaml:"profile"`
+	Info            Info               `json:"info" yaml:"info"`
+	ObservationKind ObservationKind    `json:"observationKind" yaml:"observationKind"`
+	Evidence        Evidence           `json:"evidence" yaml:"evidence"`
+	Confidence      Confidence         `json:"confidence" yaml:"confidence"`
+	ExpiresAfter    Duration           `json:"expiresAfter" yaml:"expiresAfter"`
+	Verification    Verification       `json:"verification" yaml:"verification"`
+	Actions         map[string]Action  `json:"actions" yaml:"actions"`
+	Contexts        map[string]Context `json:"contexts,omitempty" yaml:"contexts,omitempty"`
+}
+
+type Context struct {
+	Kind   string `json:"kind" yaml:"kind"`
+	Parent string `json:"parent" yaml:"parent"`
+	Origin string `json:"origin" yaml:"origin"`
+	Path   string `json:"path,omitempty" yaml:"path,omitempty"`
+	Name   string `json:"name,omitempty" yaml:"name,omitempty"`
 }
 
 // Info is the browser-profile info block.
@@ -186,20 +195,24 @@ const (
 
 // Step is a strict tagged union. Exactly one payload matching Kind is present.
 type Step struct {
-	Kind         StepKind          `json:"-" yaml:"-"`
-	Navigate     string            `json:"-" yaml:"-"`
-	Click        *LocatorStep      `json:"-" yaml:"-"`
-	TypeText     *TypeTextStep     `json:"-" yaml:"-"`
-	CheckRadio   *LocatorStep      `json:"-" yaml:"-"`
-	Uncheck      *LocatorStep      `json:"-" yaml:"-"`
-	SelectOption *SelectOptionStep `json:"-" yaml:"-"`
-	WaitFor      *WaitForCondition `json:"-" yaml:"-"`
+	Kind            StepKind          `json:"-" yaml:"-"`
+	Navigate        string            `json:"-" yaml:"-"`
+	NavigateContext string            `json:"-" yaml:"-"`
+	NavigateObject  bool              `json:"-" yaml:"-"`
+	Click           *LocatorStep      `json:"-" yaml:"-"`
+	TypeText        *TypeTextStep     `json:"-" yaml:"-"`
+	CheckRadio      *LocatorStep      `json:"-" yaml:"-"`
+	Uncheck         *LocatorStep      `json:"-" yaml:"-"`
+	SelectOption    *SelectOptionStep `json:"-" yaml:"-"`
+	WaitFor         *WaitForCondition `json:"-" yaml:"-"`
 }
 
 // LocatorStep is shared by click, check_radio, and uncheck.
 type LocatorStep struct {
-	Locator Locator           `json:"locator" yaml:"locator"`
-	WaitFor *WaitForCondition `json:"wait_for,omitempty" yaml:"wait_for,omitempty"`
+	Locator      Locator           `json:"locator" yaml:"locator"`
+	WaitFor      *WaitForCondition `json:"wait_for,omitempty" yaml:"wait_for,omitempty"`
+	Context      string            `json:"context,omitempty" yaml:"context,omitempty"`
+	OpensContext string            `json:"opensContext,omitempty" yaml:"opensContext,omitempty"`
 }
 
 // TypeTextStep describes a type_text macro.
@@ -207,6 +220,7 @@ type TypeTextStep struct {
 	Locator Locator           `json:"locator" yaml:"locator"`
 	Value   string            `json:"value" yaml:"value"`
 	WaitFor *WaitForCondition `json:"wait_for,omitempty" yaml:"wait_for,omitempty"`
+	Context string            `json:"context,omitempty" yaml:"context,omitempty"`
 }
 
 // SelectOptionStep describes a select_option macro.
@@ -214,6 +228,7 @@ type SelectOptionStep struct {
 	Locator Locator           `json:"locator" yaml:"locator"`
 	Value   string            `json:"value" yaml:"value"`
 	WaitFor *WaitForCondition `json:"wait_for,omitempty" yaml:"wait_for,omitempty"`
+	Context string            `json:"context,omitempty" yaml:"context,omitempty"`
 }
 
 // NavigationWait is a supported navigation lifecycle event.
@@ -229,6 +244,8 @@ const (
 type WaitForCondition struct {
 	Locator    *Locator        `json:"-" yaml:"-"`
 	Navigation *NavigationWait `json:"-" yaml:"-"`
+	Context    string          `json:"-" yaml:"-"`
+	Contextual bool            `json:"-" yaml:"-"`
 }
 
 // OutputType is the declared JSON type of an extracted value.
@@ -265,6 +282,7 @@ type Output struct {
 	Presence       *bool          `json:"presence,omitempty" yaml:"presence,omitempty"`
 	Property       string         `json:"property,omitempty" yaml:"property,omitempty"`
 	Attribute      string         `json:"attribute,omitempty" yaml:"attribute,omitempty"`
+	Context        string         `json:"context,omitempty" yaml:"context,omitempty"`
 }
 
 // ParseJSON validates and decodes a JSON browser profile.
@@ -529,7 +547,18 @@ func (s *Step) UnmarshalJSON(data []byte) error {
 		s.Kind = StepKind(key)
 		switch s.Kind {
 		case StepNavigate:
-			return json.Unmarshal(payload, &s.Navigate)
+			if err := json.Unmarshal(payload, &s.Navigate); err == nil {
+				return nil
+			}
+			var navigate struct {
+				URL     string `json:"url"`
+				Context string `json:"context,omitempty"`
+			}
+			if err := json.Unmarshal(payload, &navigate); err != nil {
+				return err
+			}
+			s.Navigate, s.NavigateContext, s.NavigateObject = navigate.URL, navigate.Context, true
+			return nil
 		case StepClick:
 			s.Click = &LocatorStep{}
 			return json.Unmarshal(payload, s.Click)
@@ -590,6 +619,13 @@ func (s Step) payload() (string, any, error) {
 	switch s.Kind {
 	case StepNavigate:
 		if s.Navigate != "" {
+			if s.NavigateObject {
+				value := map[string]any{"url": s.Navigate}
+				if s.NavigateContext != "" {
+					value["context"] = s.NavigateContext
+				}
+				return string(s.Kind), value, nil
+			}
 			return string(s.Kind), s.Navigate, nil
 		}
 	case StepClick:
@@ -638,6 +674,21 @@ func (w *WaitForCondition) UnmarshalJSON(data []byte) error {
 		w.Navigation = &nav
 		return nil
 	}
+	if raw, ok := probe["locator"]; ok {
+		if len(probe) != 2 || probe["context"] == nil {
+			return fmt.Errorf("contextual locator wait must contain locator and context")
+		}
+		var loc Locator
+		if err := json.Unmarshal(raw, &loc); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(probe["context"], &w.Context); err != nil {
+			return err
+		}
+		w.Locator = &loc
+		w.Contextual = true
+		return nil
+	}
 	var loc Locator
 	if err := json.Unmarshal(data, &loc); err != nil {
 		return err
@@ -652,6 +703,9 @@ func (w WaitForCondition) MarshalJSON() ([]byte, error) {
 		return json.Marshal(map[string]any{"navigation": *w.Navigation})
 	}
 	if w.Locator != nil && w.Navigation == nil {
+		if w.Contextual {
+			return json.Marshal(map[string]any{"locator": w.Locator, "context": w.Context})
+		}
 		return json.Marshal(w.Locator)
 	}
 	return nil, fmt.Errorf("wait_for must contain exactly one locator or navigation event")
@@ -663,6 +717,9 @@ func (w WaitForCondition) MarshalYAML() (any, error) {
 		return map[string]any{"navigation": *w.Navigation}, nil
 	}
 	if w.Locator != nil && w.Navigation == nil {
+		if w.Contextual {
+			return map[string]any{"locator": w.Locator, "context": w.Context}, nil
+		}
 		return w.Locator, nil
 	}
 	return nil, fmt.Errorf("wait_for must contain exactly one locator or navigation event")
