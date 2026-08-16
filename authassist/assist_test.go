@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -219,7 +218,6 @@ func TestRunClosesAndReturnsNoArtifactOnFailure(t *testing.T) {
 	browser := &fakeBrowser{}
 	operator := &fakeOperator{}
 	profileValue := validProfile(t)
-	profileValue.Flows["push_login"] = withAmbiguousSuccess(profileValue.Flows["push_login"])
 	// The fake returns two matches only after opening; use a dedicated wrapper.
 	ambiguous := &configuredBrowser{configure: func(session *fakeSession) { session.matches = 2 }}
 	bundle, err := Run(context.Background(), ambiguous, operator, Request{
@@ -448,9 +446,4 @@ func authFlow(challengeKind string) browserauthentication.Flow {
 			Origin: "https://members.example.test", Locator: browserauthentication.Locator{Role: "heading", Name: "Member dashboard"},
 		},
 	}
-}
-
-func withAmbiguousSuccess(flow browserauthentication.Flow) browserauthentication.Flow {
-	flow.Description = fmt.Sprintf("%s", flow.Description)
-	return flow
 }

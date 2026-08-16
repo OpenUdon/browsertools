@@ -110,6 +110,67 @@ func TestStoreExpiryAndPrune(t *testing.T) {
 	}
 }
 
+func TestDeletePrivateRequiresExactVerifiedRawEntry(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := validPutOptions()
+	options.Kind = KindPrivateRaw
+	options.PublicationEligible = false
+	raw, err := store.Put(context.Background(), strings.NewReader("private"), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := store.DeletePrivate(context.Background(), raw.ID)
+	if err != nil || removed.ID != raw.ID {
+		t.Fatalf("removed=%#v err=%v", removed, err)
+	}
+	if _, _, err := store.Get(context.Background(), raw.ID, time.Time{}); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("deleted entry remains: %v", err)
+	}
+	derived, err := store.Put(context.Background(), strings.NewReader("derived"), validPutOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.DeletePrivate(context.Background(), derived.ID); err == nil || !strings.Contains(err.Error(), "only private_raw") {
+		t.Fatalf("derived delete error = %v", err)
+	}
+	if _, _, err := store.Get(context.Background(), derived.ID, time.Time{}); err != nil {
+		t.Fatalf("derived entry was removed: %v", err)
+	}
+	if _, err := store.DeletePrivate(context.Background(), "../escape"); err == nil {
+		t.Fatal("unsafe id accepted")
+	}
+}
+
+func TestOpenExistingNeverCreatesOrChangesCachePaths(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	if _, err := OpenExisting(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing root error = %v", err)
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("OpenExisting created missing root: %v", err)
+	}
+	store, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExisting(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(store.Root(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenExisting(root); err == nil || !strings.Contains(err.Error(), "permissions") {
+		t.Fatalf("broad root accepted: %v", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("OpenExisting changed mode: %v mode=%v", err, info.Mode().Perm())
+	}
+}
+
 func TestStoreRejectsOversizedCancellationAndNoProgress(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "cache"))
 	if err != nil {

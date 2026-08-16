@@ -372,6 +372,7 @@ func (client *Client) safeHTTPClient() (*http.Client, error) {
 		transport = transport.Clone()
 		transport.Proxy = nil
 		transport.DialContext = client.safeDialContext
+		//lint:ignore SA1019 A cloned legacy transport may still carry the deprecated callback; clearing it is required so HTTPS cannot bypass safeDialContext.
 		transport.DialTLS = nil
 		transport.DialTLSContext = nil
 		clone.Transport = transport

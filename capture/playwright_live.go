@@ -19,12 +19,19 @@ import (
 
 type playwrightAcquirer struct {
 	driverDirectory string
+	engine          Engine
 }
 
 // NewPlaywrightAcquirer returns the live Chromium backend. It requires the
 // pinned driver and Chromium to have been installed explicitly beforehand.
 func NewPlaywrightAcquirer(driverDirectory string) Acquirer {
-	return &playwrightAcquirer{driverDirectory: strings.TrimSpace(driverDirectory)}
+	return NewPlaywrightEngineAcquirer(driverDirectory, EngineChromium)
+}
+
+// NewPlaywrightEngineAcquirer returns a headless, read-only backend for one
+// explicitly selected engine. It never falls back to another engine.
+func NewPlaywrightEngineAcquirer(driverDirectory string, engine Engine) Acquirer {
+	return &playwrightAcquirer{driverDirectory: strings.TrimSpace(driverDirectory), engine: engine}
 }
 
 func (a *playwrightAcquirer) Acquire(ctx context.Context, request LiveRequest) (observation Observation, err error) {
@@ -34,13 +41,16 @@ func (a *playwrightAcquirer) Acquire(ctx context.Context, request LiveRequest) (
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return Observation{}, ctxErr
 	}
+	if _, parseErr := ParseEngine(string(a.engine)); parseErr != nil {
+		return Observation{}, parseErr
+	}
 	pw, err := playwright.Run(&playwright.RunOptions{
 		DriverDirectory: a.driverDirectory, SkipInstallBrowsers: true, Verbose: false,
 		Stdout: io.Discard, Stderr: io.Discard,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
-		return Observation{}, fmt.Errorf("start installed Playwright driver: %w", err)
+		return Observation{}, newEngineUnavailable(a.engine, err)
 	}
 	defer func() {
 		if closeErr := pw.Stop(); closeErr != nil {
@@ -52,16 +62,26 @@ func (a *playwrightAcquirer) Acquire(ctx context.Context, request LiveRequest) (
 	if err != nil {
 		return Observation{}, err
 	}
-	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
-		Headless: playwright.Bool(true), ChromiumSandbox: playwright.Bool(true),
-		Timeout: playwright.Float(launchTimeout), Env: captureBrowserEnvironment(),
-	})
+	var browserType playwright.BrowserType
+	launchOptions := playwright.BrowserTypeLaunchOptions{
+		Headless: playwright.Bool(true), Timeout: playwright.Float(launchTimeout), Env: captureBrowserEnvironment(),
+	}
+	switch a.engine {
+	case EngineChromium:
+		browserType = pw.Chromium
+		launchOptions.ChromiumSandbox = playwright.Bool(true)
+	case EngineFirefox:
+		browserType = pw.Firefox
+	case EngineWebKit:
+		browserType = pw.WebKit
+	}
+	browser, err := browserType.Launch(launchOptions)
 	if err != nil {
-		return Observation{}, fmt.Errorf("launch installed Chromium: %w", err)
+		return Observation{}, newEngineUnavailable(a.engine, err)
 	}
 	defer func() {
 		if closeErr := browser.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close Chromium: %w", closeErr))
+			err = errors.Join(err, fmt.Errorf("close %s: %w", a.engine, closeErr))
 		}
 	}()
 
@@ -84,90 +104,15 @@ func (a *playwrightAcquirer) Acquire(ctx context.Context, request LiveRequest) (
 	browserContext.SetDefaultNavigationTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	browserContext.SetDefaultTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	guard := newNetworkGuard(request)
-
-	if routeErr := browserContext.Route("**/*", func(route playwright.Route) {
-		browserRequest := route.Request()
-		facts := requestFacts{
-			URL: browserRequest.URL(), Method: browserRequest.Method(), ResourceType: browserRequest.ResourceType(),
-		}
-		if browserRequest.IsNavigationRequest() {
-			if frame := browserRequest.Frame(); frame != nil && frame.ParentFrame() != nil {
-				facts.ChildDocument = true
-			}
-		}
-		if !guard.allowRequest(facts) {
-			if abortErr := route.Abort("blockedbyclient"); abortErr != nil {
-				guard.record("route_abort", "could not abort a blocked request", abortErr)
-			}
-			return
-		}
-		if continueErr := route.Continue(); continueErr != nil {
-			guard.record("route_continue", "could not continue an allowed request", continueErr)
-		}
-	}); routeErr != nil {
-		return Observation{}, fmt.Errorf("install exact-origin route: %w", routeErr)
+	if policyErr := installReadOnlyNetworkPolicy(browserContext, guard); policyErr != nil {
+		return Observation{}, policyErr
 	}
-	if routeErr := browserContext.RouteWebSocket("**/*", func(route playwright.WebSocketRoute) {
-		guard.blockWebSocket()
-		route.Close()
-	}); routeErr != nil {
-		return Observation{}, fmt.Errorf("install WebSocket blocker: %w", routeErr)
-	}
-	browserContext.OnDialog(func(dialog playwright.Dialog) {
-		guard.blockDialog()
-		if dismissErr := dialog.Dismiss(); dismissErr != nil {
-			guard.record("dialog_dismiss", "could not dismiss a browser dialog", dismissErr)
-		}
-	})
-	browserContext.OnDownload(func(download playwright.Download) {
-		guard.blockDownload()
-		if cancelErr := download.Cancel(); cancelErr != nil {
-			guard.record("download_cancel", "could not cancel a download", cancelErr)
-		}
-	})
-	browserContext.OnResponse(func(response playwright.Response) {
-		value, headerErr := response.HeaderValue("content-length")
-		if headerErr != nil {
-			guard.record("response_header", "could not inspect response size", headerErr)
-			return
-		}
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return
-		}
-		length, parseErr := strconv.ParseInt(value, 10, 64)
-		if parseErr != nil {
-			guard.record("response_header", "response has an invalid content length", nil)
-			return
-		}
-		guard.observeResponseContentLength(length)
-	})
-	browserContext.OnRequestFinished(func(browserRequest playwright.Request) {
-		sizes, sizeErr := browserRequest.Sizes()
-		if sizeErr != nil {
-			guard.record("response_size", "could not inspect finished response size", sizeErr)
-			return
-		}
-		if sizes == nil || sizes.ResponseBodySize < 0 || sizes.ResponseHeadersSize < 0 {
-			guard.observeFinishedResponse(-1)
-			return
-		}
-		guard.observeFinishedResponse(int64(sizes.ResponseBodySize) + int64(sizes.ResponseHeadersSize))
-	})
 
 	page, err := browserContext.NewPage()
 	if err != nil {
 		return Observation{}, fmt.Errorf("create capture page: %w", err)
 	}
-	browserContext.OnPage(func(popup playwright.Page) {
-		guard.blockPopup()
-		if closeErr := popup.Close(); closeErr != nil {
-			guard.record("popup_close", "could not close a popup", closeErr)
-		}
-	})
-	page.OnFileChooser(func(playwright.FileChooser) {
-		guard.blockFileChooser()
-	})
+	installReadOnlyPagePolicy(browserContext, page, guard)
 
 	navigationTimeout, err := operationTimeout(ctx, request.NavigationTimeout)
 	if err != nil {

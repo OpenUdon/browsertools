@@ -327,6 +327,7 @@ credential/session storage, or runtime retry/session policy.
 26. Safe headless Chromium live capture into private raw cache (`E03`).
 27. Guided capability authoring and value-free live checks (`P03`).
 28. Headed manual authentication profile observation (`A02`).
+29. Private rich evidence and cross-engine portability evaluation (`E04`).
 
 ## CLI
 
@@ -365,6 +366,14 @@ browsertools auth-assist chromium \
   --approve-origin https://login.example.test \
   --post-budget member_login_push:3=2 \
   --out ./browser-authentication/member.assisted.json
+browsertools rich-capture chromium \
+  --url https://example.test/member --allow-origin https://example.test \
+  --cache-root ./.browsertools-cache --artifact screenshot --artifact trace \
+  --artifact har --retain-for 1h
+browsertools portability check --profile ./profiles/example.yaml \
+  --url https://example.test/member --allow-origin https://example.test \
+  --action read_status --engine chromium --engine firefox --engine webkit \
+  --out ./portability.json
 ```
 
 Every networked command is explicit. Generic capture is headless,
@@ -373,6 +382,13 @@ boundary, and bounded by time/count/byte/depth controls. It writes raw ARIA and
 valid JSON-LD only as a non-publishable private cache entry and emits metadata
 to stdout. Normalized evidence is a later, explicit import after an operator
 reviews and redacts the private fixture. See [Safe live capture](live-capture.md).
+
+Rich capture uses the same read-only context boundary for explicitly selected
+screenshot/trace/HAR material, stores the exact set as one finite-retention
+private ZIP, and exposes exact-ID deletion. Portability checks create fresh
+contexts for Chromium and each selected alternate engine, execute the same
+profile-derived shape probes, and retain only value-free diagnostics. See
+[Private rich evidence and cross-engine portability](advanced-evidence.md).
 
 The live check executes no macro and emits only declared shape facts. The
 headed authentication observer takes an already validated recipe, exact origin

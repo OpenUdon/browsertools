@@ -91,14 +91,22 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCacheList(args[2:], stdout, stderr)
 	case "cache prune":
 		return runCachePrune(args[2:], stdout, stderr)
+	case "cache delete":
+		return runCacheDelete(args[2:], stdout, stderr)
 	case "capture chromium":
 		return runCaptureChromium(args[2:], stdout, stderr)
+	case "rich-capture chromium":
+		return runRichCaptureChromium(args[2:], stdout, stderr)
 	case "guide author":
 		return runGuideAuthor(args[2:], stdin, stdout, stderr)
 	case "live-check chromium":
 		return runLiveCheckChromium(args[2:], stdin, stdout, stderr)
+	case "portability check":
+		return runPortabilityCheck(args[2:], stdin, stdout, stderr)
 	case "playwright doctor":
 		return runPlaywrightDoctor(args[2:], stdout, stderr)
+	case "playwright capabilities":
+		return runPlaywrightCapabilities(args[2:], stdout, stderr)
 	default:
 		usage(stderr)
 		return exitUsageOrIO
@@ -106,7 +114,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|auth-assist chromium|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|capture chromium|guide author|live-check chromium|playwright doctor> [flags]")
+	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|auth-assist chromium|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|cache delete|capture chromium|rich-capture chromium|guide author|live-check chromium|portability check|playwright doctor|playwright capabilities> [flags]")
 }
 
 func runAuthAssistChromium(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -495,6 +503,200 @@ func runCaptureChromiumWith(
 	return exitOK
 }
 
+func runRichCaptureChromium(args []string, stdout, stderr io.Writer) int {
+	return runRichCaptureChromiumWith(args, stdout, stderr, time.Now, capture.NewPlaywrightRichAcquirer)
+}
+
+func runRichCaptureChromiumWith(
+	args []string,
+	stdout, stderr io.Writer,
+	clock func() time.Time,
+	newAcquirer func(string) capture.RichAcquirer,
+) int {
+	fs := flag.NewFlagSet("rich-capture chromium", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	targetURL := fs.String("url", "", "exact HTTPS or loopback HTTP URL")
+	cacheRoot := fs.String("cache-root", "", "explicit private cache root")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	navigationTimeout := fs.Duration("navigation-timeout", capture.DefaultNavigationTimeout, "per-navigation/observation timeout")
+	totalTimeout := fs.Duration("timeout", capture.DefaultTotalTimeout, "total rich-capture deadline")
+	maxRequests := fs.Int("max-requests", capture.DefaultMaxRequests, "maximum routed requests")
+	maxResponseBytes := fs.Int64("max-response-bytes", capture.DefaultMaxResponseBytes, "maximum total response bytes")
+	maxArtifactBytes := fs.Int64("max-artifact-bytes", capture.DefaultMaxRichArtifactBytes, "maximum bytes per private artifact")
+	retainFor := fs.Duration("retain-for", capture.DefaultRichRetention, "private rich-artifact retention duration")
+	var allowedOrigins stringList
+	var artifactNames stringList
+	fs.Var(&allowedOrigins, "allow-origin", "exact allowed origin; repeatable")
+	fs.Var(&artifactNames, "artifact", "screenshot, trace, or har; repeatable and explicit")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "rich-capture chromium: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *targetURL == "" || *cacheRoot == "" || len(allowedOrigins) == 0 || len(artifactNames) == 0 {
+		fmt.Fprintln(stderr, "rich-capture chromium: --url, --cache-root, at least one --allow-origin, and at least one --artifact are required")
+		return exitUsageOrIO
+	}
+	if *retainFor <= 0 || *retainFor > capture.MaxRichRetention {
+		fmt.Fprintf(stderr, "rich-capture chromium: --retain-for must be positive and no more than %s\n", capture.MaxRichRetention)
+		return exitUsageOrIO
+	}
+	kinds := make([]capture.PrivateArtifactKind, 0, len(artifactNames))
+	for _, name := range artifactNames {
+		kind, err := capture.ParsePrivateArtifactKind(name)
+		if err != nil {
+			fmt.Fprintln(stderr, "rich-capture chromium:", err)
+			return exitUsageOrIO
+		}
+		kinds = append(kinds, kind)
+	}
+	if clock == nil || newAcquirer == nil {
+		fmt.Fprintln(stderr, "rich-capture chromium: capture dependencies are unavailable")
+		return exitUsageOrIO
+	}
+	store, err := cache.Open(*cacheRoot)
+	if err != nil {
+		fmt.Fprintln(stderr, "rich-capture chromium:", err)
+		return exitUsageOrIO
+	}
+	observedAt := clock().UTC()
+	result, err := capture.AcquireRich(context.Background(), newAcquirer(*driverDirectory), capture.RichRequest{
+		Capture: capture.LiveRequest{
+			URL: *targetURL, AllowedOrigins: []string(allowedOrigins), ObservedAt: observedAt,
+			NavigationTimeout: *navigationTimeout, TotalTimeout: *totalTimeout,
+			MaxRequests: *maxRequests, MaxResponseBytes: *maxResponseBytes,
+		},
+		Artifacts: kinds, MaxArtifactBytes: *maxArtifactBytes,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "rich-capture chromium:", err)
+		return exitRejected
+	}
+	bundle, manifest, err := capture.MarshalRichBundle(result, capture.EngineChromium, observedAt)
+	if err != nil {
+		fmt.Fprintln(stderr, "rich-capture chromium:", err)
+		return exitRejected
+	}
+	storedArtifacts := make([]string, 0, len(manifest.Artifacts))
+	for _, artifact := range manifest.Artifacts {
+		storedArtifacts = append(storedArtifacts, string(artifact.Kind))
+	}
+	entry, err := store.Put(context.Background(), bytes.NewReader(bundle), cache.PutOptions{
+		Kind: cache.KindPrivateRaw, MediaType: "application/vnd.openudon.browsertools.private-rich+zip",
+		CreatedAt: observedAt, ExpiresAt: observedAt.Add(*retainFor), Source: "playwright-rich",
+		Annotations: map[string]string{
+			"artifacts": strings.Join(storedArtifacts, ","), "engine": string(capture.EngineChromium),
+			"secret_review": "pending", "deletion": "exact_id_required",
+		},
+		PublicationEligible: false,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "rich-capture chromium:", err)
+		return exitRejected
+	}
+	if err := json.NewEncoder(stdout).Encode(entry); err != nil {
+		fmt.Fprintln(stderr, "rich-capture chromium:", err)
+		return exitUsageOrIO
+	}
+	return exitOK
+}
+
+func runPortabilityCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runPortabilityCheckWith(args, stdin, stdout, stderr, time.Now,
+		func(directory string, engine capture.Engine) capture.Acquirer {
+			return capture.NewPlaywrightEngineAcquirer(directory, engine)
+		})
+}
+
+func runPortabilityCheckWith(
+	args []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	clock func() time.Time,
+	newAcquirer func(string, capture.Engine) capture.Acquirer,
+) int {
+	fs := flag.NewFlagSet("portability check", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	profilePath := fs.String("profile", "", "validated browser profile JSON/YAML path or -")
+	targetURL := fs.String("url", "", "explicit current-page HTTPS or loopback HTTP URL")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	navigationTimeout := fs.Duration("navigation-timeout", capture.DefaultNavigationTimeout, "per-navigation/observation timeout")
+	totalTimeout := fs.Duration("timeout", capture.DefaultTotalTimeout, "per-engine live-check deadline")
+	maxRequests := fs.Int("max-requests", capture.DefaultMaxRequests, "maximum routed requests per engine")
+	maxResponseBytes := fs.Int64("max-response-bytes", capture.DefaultMaxResponseBytes, "maximum response bytes per engine")
+	maxEvidenceBytes := fs.Int64("max-evidence-bytes", capture.DefaultMaxEvidenceBytes, "maximum transient observation bytes per engine")
+	ariaDepth := fs.Int("aria-depth", capture.DefaultARIADepth, "maximum transient ARIA snapshot depth")
+	out := fs.String("out", "-", "value-free portability report JSON path or -")
+	force := fs.Bool("force", false, "overwrite an existing output")
+	var allowedOrigins stringList
+	var actions stringList
+	var engineNames stringList
+	fs.Var(&allowedOrigins, "allow-origin", "exact allowed origin; repeatable")
+	fs.Var(&actions, "action", "profile action to check; repeatable, defaults to all")
+	fs.Var(&engineNames, "engine", "chromium, firefox, or webkit; repeatable")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "portability check: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *profilePath == "" || *targetURL == "" || len(allowedOrigins) == 0 || len(engineNames) < 2 {
+		fmt.Fprintln(stderr, "portability check: --profile, --url, at least one --allow-origin, Chromium, and at least one alternate --engine are required")
+		return exitUsageOrIO
+	}
+	engines := make([]capture.Engine, 0, len(engineNames))
+	for _, name := range engineNames {
+		engine, err := capture.ParseEngine(name)
+		if err != nil {
+			fmt.Fprintln(stderr, "portability check:", err)
+			return exitUsageOrIO
+		}
+		engines = append(engines, engine)
+	}
+	if clock == nil || newAcquirer == nil {
+		fmt.Fprintln(stderr, "portability check: capture dependencies are unavailable")
+		return exitUsageOrIO
+	}
+	prof, err := loadProfileInput(*profilePath, stdin)
+	if err != nil {
+		fmt.Fprintln(stderr, "portability check:", err)
+		return classifyProfileError(err)
+	}
+	checkedAt := clock().UTC()
+	report, err := capture.ComparePortability(context.Background(), func(engine capture.Engine) capture.Acquirer {
+		return newAcquirer(*driverDirectory, engine)
+	}, engines, capture.LiveCheckRequest{
+		Profile: prof, Actions: []string(actions),
+		Capture: capture.LiveRequest{
+			URL: *targetURL, AllowedOrigins: []string(allowedOrigins), ObservedAt: checkedAt,
+			NavigationTimeout: *navigationTimeout, TotalTimeout: *totalTimeout,
+			MaxRequests: *maxRequests, MaxResponseBytes: *maxResponseBytes,
+			MaxEvidenceBytes: *maxEvidenceBytes, ARIADepth: *ariaDepth,
+		},
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "portability check:", err)
+		return exitRejected
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, "portability check:", err)
+		return exitRejected
+	}
+	data = append(data, '\n')
+	if err := writeOutput(*out, data, *force, stdout); err != nil {
+		fmt.Fprintln(stderr, "portability check:", err)
+		return exitUsageOrIO
+	}
+	if !report.OK {
+		return exitRejected
+	}
+	return exitOK
+}
+
 func runPlaywrightDoctor(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("playwright doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -532,6 +734,38 @@ func runPlaywrightDoctor(args []string, stdout, stderr io.Writer) int {
 	if doctorErr != nil {
 		fmt.Fprintln(stderr, "playwright doctor:", doctorErr)
 		return exitRejected
+	}
+	return exitOK
+}
+
+func runPlaywrightCapabilities(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("playwright capabilities", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	format := fs.String("format", "json", "json or text")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "playwright capabilities: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	capabilities := capture.CapabilityMatrix()
+	pressure := capture.ContractPressure()
+	switch *format {
+	case "json":
+		if err := json.NewEncoder(stdout).Encode(map[string]any{
+			"version": capture.ContractPressureVersion, "capabilities": capabilities, "contractPressure": pressure,
+		}); err != nil {
+			fmt.Fprintln(stderr, err)
+			return exitUsageOrIO
+		}
+	case "text":
+		for _, item := range pressure {
+			fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", item.Capability, item.Disposition, item.Browser15, item.NextStep)
+		}
+	default:
+		fmt.Fprintln(stderr, "playwright capabilities: --format must be json or text")
+		return exitUsageOrIO
 	}
 	return exitOK
 }
@@ -1064,6 +1298,40 @@ func runCachePrune(args []string, stdout, stderr io.Writer) int {
 		return exitRejected
 	}
 	return renderCacheEntries(entries, *format, stdout, stderr)
+}
+
+func runCacheDelete(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cache delete", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	root := fs.String("root", "", "explicit private cache root")
+	id := fs.String("id", "", "exact private_raw sha256 cache id")
+	confirmID := fs.String("confirm-id", "", "repeat the exact cache id to authorize deletion")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 || *root == "" || *id == "" || *confirmID == "" {
+		fmt.Fprintln(stderr, "cache delete: --root, --id, and --confirm-id are required with no positional arguments")
+		return exitUsageOrIO
+	}
+	if *id != *confirmID {
+		fmt.Fprintln(stderr, "cache delete: --confirm-id must exactly match --id")
+		return exitUsageOrIO
+	}
+	store, err := cache.OpenExisting(*root)
+	if err != nil {
+		fmt.Fprintln(stderr, "cache delete:", err)
+		return exitUsageOrIO
+	}
+	entry, err := store.DeletePrivate(context.Background(), *id)
+	if err != nil {
+		fmt.Fprintln(stderr, "cache delete:", err)
+		return exitRejected
+	}
+	if err := json.NewEncoder(stdout).Encode(entry); err != nil {
+		fmt.Fprintln(stderr, "cache delete:", err)
+		return exitUsageOrIO
+	}
+	return exitOK
 }
 
 func renderCacheEntries(entries []cache.Entry, format string, stdout, stderr io.Writer) int {

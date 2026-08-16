@@ -86,6 +86,24 @@ func Open(root string) (*Store, error) {
 	return &Store{root: root, maxBytes: DefaultMaxBytes, maxItems: DefaultMaxItems}, nil
 }
 
+// OpenExisting validates an already initialized cache without creating or
+// chmodding paths. Destructive operations use this to make a mistyped root a
+// no-op rather than creating a new empty cache.
+func OpenExisting(root string) (*Store, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil, fmt.Errorf("cache root is required")
+	}
+	root = filepath.Clean(root)
+	if err := validatePrivateDir(root); err != nil {
+		return nil, err
+	}
+	if err := validatePrivateDir(filepath.Join(root, "entries")); err != nil {
+		return nil, err
+	}
+	return &Store{root: root, maxBytes: DefaultMaxBytes, maxItems: DefaultMaxItems}, nil
+}
+
 // Root returns the explicit cache root.
 func (s *Store) Root() string {
 	if s == nil {
@@ -301,6 +319,49 @@ func (s *Store) Prune(ctx context.Context, at time.Time) ([]Entry, error) {
 		removed = []Entry{}
 	}
 	return removed, nil
+}
+
+// DeletePrivate removes exactly one verified private_raw entry. Callers must
+// separately obtain an explicit operator confirmation; derived or publishable
+// artifacts cannot be removed through this narrow rich-evidence control.
+func (s *Store) DeletePrivate(ctx context.Context, id string) (Entry, error) {
+	if err := s.validate(); err != nil {
+		return Entry{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return Entry{}, err
+	}
+	entry, _, err := s.load(ctx, id)
+	if err != nil {
+		return Entry{}, err
+	}
+	if entry.Kind != KindPrivateRaw {
+		return Entry{}, fmt.Errorf("cache delete permits only private_raw entries")
+	}
+	entriesDir := filepath.Join(s.root, "entries")
+	unlock, err := acquirePutLock(entriesDir)
+	if err != nil {
+		return Entry{}, err
+	}
+	defer unlock()
+	entry, _, err = s.load(ctx, id)
+	if err != nil {
+		return Entry{}, err
+	}
+	if entry.Kind != KindPrivateRaw {
+		return Entry{}, fmt.Errorf("cache delete permits only private_raw entries")
+	}
+	dir, err := s.entryDir(id)
+	if err != nil {
+		return Entry{}, err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return Entry{}, fmt.Errorf("delete private cache entry %s: %w", id, err)
+	}
+	return entry, nil
 }
 
 // ValidateForPublication rejects raw or unreviewed cache classifications.

@@ -146,6 +146,22 @@ ARIA-depth, evidence-size, and retention limits. Only cache metadata is printed;
 raw ARIA/JSON-LD content is never written to stdout. See
 [Safe live capture](docs/live-capture.md) for the review/redaction handoff.
 
+Explicit private screenshots, traces, and minimal-content HAR can be captured
+as one short-lived, non-publishable ZIP:
+
+```bash
+go run ./cmd/browsertools rich-capture chromium \
+  --url https://example.test/member \
+  --allow-origin https://example.test \
+  --cache-root ./.browsertools-cache \
+  --artifact screenshot --artifact trace --artifact har \
+  --retain-for 1h
+```
+
+The command prints only cache metadata. Export requires a new `0600` file;
+review for secrets is mandatory, and `cache delete` requires the exact digest
+twice. Rich artifacts have no publication or normalized-evidence path.
+
 After normalization, the terminal guide makes every capability and safety
 decision explicit and emits one deterministic envelope containing the accepted
 spec, generated profile, action-bound evidence, ambiguity decisions, and
@@ -177,6 +193,23 @@ ambiguity decisions human-authored. The live check reuses the exact-origin
 ephemeral capture policy, accepts plain CSS outputs but no Playwright selector
 language, and writes only profile-bound match/type facts. See
 [Guided capability authoring and live checks](docs/guided-authoring.md).
+
+The same profile-derived read-only checks can be compared without locator
+rewrites across explicitly installed engines:
+
+```bash
+go run ./cmd/browsertools portability check \
+  --profile ./profile.yaml \
+  --url https://example.test/member \
+  --allow-origin https://example.test \
+  --action read_dashboard \
+  --engine chromium --engine firefox --engine webkit \
+  --out ./portability.json
+```
+
+Chromium is the required baseline. Missing engines and shape differences are
+fixed value-free diagnostics, not silent fallbacks. See
+[Private rich evidence and cross-engine portability](docs/advanced-evidence.md).
 
 Portable sign-in recipes use a separate additive contract and remain local to
 the workflow package:
@@ -235,6 +268,8 @@ go run ./cmd/browsertools cache list \
   --root ./.browsertools-cache --at 2026-08-14T12:00:00Z
 go run ./cmd/browsertools cache prune \
   --root ./.browsertools-cache --at 2026-09-14T00:00:00Z
+go run ./cmd/browsertools cache delete \
+  --root ./.browsertools-cache --id sha256:EXACT_ID --confirm-id sha256:EXACT_ID
 ```
 
 ## What It Owns
@@ -266,6 +301,10 @@ go run ./cmd/browsertools cache prune \
   evidence, decisions, a valid profile, and a promotable review.
 - Value-free Chromium live checks for declared locators, waits, and output
   shapes without macro execution.
+- Explicit short-lived screenshot/trace/HAR bundles with mandatory secret
+  review, no publication path, and exact-ID deletion.
+- Fresh Chromium-baseline Firefox/WebKit comparisons of the same value-free
+  profile probes, plus documented browser.1.6 contract pressure.
 - Headed manual authentication observation with separate ephemeral contexts,
   exact preapproved origins, step-scoped POST ceilings, and local value-free
   draft/review bundles.
@@ -323,6 +362,7 @@ website UI
 - [Static registry and contribution workflow](docs/static-registry.md)
 - [Browser authentication profiles](docs/browser-authentication.md)
 - [Safe live capture](docs/live-capture.md)
+- [Private rich evidence and cross-engine portability](docs/advanced-evidence.md)
 - [Guided capability authoring and live checks](docs/guided-authoring.md)
 - [Examples](examples/README.md)
 
@@ -350,4 +390,12 @@ installed-browser headed smoke test is separately opt-in and loopback-only:
 
 ```bash
 BROWSERTOOLS_AUTH_LIVE_TEST=1 go test ./capture -run PlaywrightAuthHeadedLoopback
+```
+
+Rich evidence and cross-engine smoke tests are independently gated and remain
+loopback-only:
+
+```bash
+BROWSERTOOLS_RICH_LIVE_TEST=1 go test ./capture -run PlaywrightRichCaptureLoopback
+BROWSERTOOLS_PORTABILITY_LIVE_TEST=1 go test ./capture -run PlaywrightPortabilityLoopback
 ```

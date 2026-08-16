@@ -4,6 +4,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -53,13 +54,41 @@ func CapabilityMatrix() []Capability {
 		{Name: "role_locator_and_actionability", Disposition: CapabilityAdopted, Reason: "portable locator validation without action execution"},
 		{Name: "structured_data_discovery", Disposition: CapabilityAdopted, Reason: "bounded output-key and type evidence"},
 		{Name: "screenshot_trace_har", Disposition: CapabilityPrivate, Reason: "debug-only raw evidence with explicit retention"},
-		{Name: "firefox_webkit_capture", Disposition: CapabilityDeferred, Reason: "Chromium-first runtime parity, then portability comparison"},
-		{Name: "popup_iframe_actions", Disposition: CapabilityDeferred, Reason: "browser.1.5 cannot portably address page or frame context"},
+		{Name: "firefox_webkit_read_only_check", Disposition: CapabilityAdopted, Reason: "explicit comparison of the same profile-derived probes without locator rewrites"},
+		{Name: "popup_iframe_actions", Disposition: CapabilityDeferred, Reason: "browser.1.5 cannot portably address page or frame context; browser.1.6 design review required"},
 		{Name: "codegen_and_inspector_output", Disposition: CapabilityExcluded, Reason: "generated scripts are not a stable closed profile contract"},
 		{Name: "cdp_or_existing_browser_attachment", Disposition: CapabilityExcluded, Reason: "lower fidelity and unsafe coupling to operator state"},
 		{Name: "persistent_user_profile", Disposition: CapabilityExcluded, Reason: "credentials and storage state remain runtime-owned"},
 		{Name: "caller_supplied_javascript", Disposition: CapabilityExcluded, Reason: "portable profiles and capture probes remain closed"},
 		{Name: "automatic_upload_download_permission", Disposition: CapabilityExcluded, Reason: "not required for non-side-effect acquisition"},
+	}
+}
+
+const ContractPressureVersion = "browsertools.browser-contract-pressure.v1"
+
+// ContextPressure records how an upstream browser surface presses on the
+// portable browser.1.5 contract. This is Browsertools policy evidence, not an
+// extension to that contract.
+type ContextPressure struct {
+	Capability  string `json:"capability"`
+	Disposition string `json:"disposition"`
+	Browser15   string `json:"browser15"`
+	NextStep    string `json:"nextStep"`
+}
+
+// ContractPressure returns the exact E04 inventory. New browser wire behavior
+// must be proposed in UWS rather than smuggled into Browsertools artifacts.
+func ContractPressure() []ContextPressure {
+	return []ContextPressure{
+		{Capability: "screenshot", Disposition: "supported_private", Browser15: "no portable field", NextStep: "retain only as reviewed private evidence"},
+		{Capability: "trace", Disposition: "supported_private", Browser15: "no portable field", NextStep: "retain only as reviewed private evidence"},
+		{Capability: "har", Disposition: "supported_private", Browser15: "no portable field", NextStep: "retain only as reviewed private evidence"},
+		{Capability: "popup_context", Disposition: "proposal_candidate", Browser15: "no page-context selector", NextStep: "define an explicit page-context reference for browser.1.6 review"},
+		{Capability: "iframe_context", Disposition: "proposal_candidate", Browser15: "no frame-context selector", NextStep: "define an exact-origin frame reference for browser.1.6 review"},
+		{Capability: "download", Disposition: "deferred", Browser15: "no download result contract", NextStep: "keep blocked until lifecycle and artifact semantics are specified"},
+		{Capability: "upload", Disposition: "deferred", Browser15: "no private-input binding", NextStep: "keep blocked until runtime-owned private input semantics are specified"},
+		{Capability: "permission", Disposition: "deferred", Browser15: "no permission grant contract", NextStep: "keep ungranted until origin-scoped runtime policy is specified"},
+		{Capability: "visual_interaction", Disposition: "proposal_candidate", Browser15: "accessibility locators only", NextStep: "define reviewed bounded visual locator evidence for browser.1.6 review"},
 	}
 }
 
@@ -97,6 +126,31 @@ func ParseEngine(value string) (Engine, error) {
 	default:
 		return "", fmt.Errorf("engine must be chromium, firefox, or webkit")
 	}
+}
+
+// EngineUnavailableError reports that an explicitly selected installed
+// engine could not be started. Its public text is deliberately value-free;
+// portability reports never copy driver paths or backend error text.
+type EngineUnavailableError struct {
+	Engine Engine
+	cause  error
+}
+
+func (e *EngineUnavailableError) Error() string {
+	return fmt.Sprintf("installed %s browser is unavailable", e.Engine)
+}
+
+func (e *EngineUnavailableError) Unwrap() error { return e.cause }
+
+func newEngineUnavailable(engine Engine, cause error) error {
+	return &EngineUnavailableError{Engine: engine, cause: cause}
+}
+
+// IsEngineUnavailable identifies a typed installed-engine failure without
+// exposing backend diagnostics in a durable report.
+func IsEngineUnavailable(err error) bool {
+	var target *EngineUnavailableError
+	return errors.As(err, &target)
 }
 
 // Doctor verifies the installed driver and browser executable without

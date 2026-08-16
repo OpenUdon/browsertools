@@ -115,6 +115,11 @@ Validated profiles can use the same acquisition envelope for value-free,
 current-page locator/wait/output checks. Neither path executes a profile macro;
 see [Guided capability authoring and live checks](guided-authoring.md).
 
+Screenshots, traces, HAR, exact-ID deletion, and Firefox/WebKit comparison are
+separate E04 opt-ins. They retain this read-only exact-origin boundary and do
+not change the normalized capture path described here; see
+[Private rich evidence and cross-engine portability](advanced-evidence.md).
+
 ## Tests
 
 Default tests use fakes and synthetic loopback URLs and never install or launch

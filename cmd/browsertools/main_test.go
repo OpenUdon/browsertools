@@ -30,6 +30,38 @@ type cliCaptureAcquirer struct {
 	fail    bool
 }
 
+type cliRichAcquirer struct {
+	request capture.RichBackendRequest
+	calls   int
+	err     error
+}
+
+func (a *cliRichAcquirer) AcquireRich(_ context.Context, request capture.RichBackendRequest) (capture.RichObservation, error) {
+	a.calls++
+	a.request = request
+	if a.err != nil {
+		return capture.RichObservation{}, a.err
+	}
+	artifacts := make([]capture.PrivateArtifact, 0, len(request.Artifacts))
+	for _, kind := range request.Artifacts {
+		artifact := capture.PrivateArtifact{Kind: kind}
+		switch kind {
+		case capture.PrivateArtifactScreenshot:
+			artifact.MediaType, artifact.Bytes = "image/png", []byte("private-screenshot")
+		case capture.PrivateArtifactTrace:
+			artifact.MediaType, artifact.Bytes = "application/zip", []byte("private-trace")
+		case capture.PrivateArtifactHAR:
+			artifact.MediaType, artifact.Bytes = "application/json", []byte(`{"private":"network"}`)
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	return capture.RichObservation{
+		FinalURL:  request.Capture.URL,
+		Network:   playwrightadapter.NetworkSummary{Requests: 1, Responses: 1, ResponseBytes: 128},
+		Artifacts: artifacts,
+	}, nil
+}
+
 type cliAuthBrowser struct {
 	requests []authassist.BrowserRequest
 	sessions []*cliAuthSession
@@ -238,6 +270,87 @@ func TestCaptureChromiumRejectsBadCLIInputsWithoutAcquiring(t *testing.T) {
 	}
 }
 
+func TestRichCaptureStoresOneFinitePrivateBundleAndDeletesByExactID(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "cache")
+	observedAt := time.Date(2026, 8, 16, 4, 5, 6, 7, time.UTC)
+	fake := &cliRichAcquirer{}
+	var stdout, stderr bytes.Buffer
+	code := runRichCaptureChromiumWith([]string{
+		"--url", "https://example.test/member", "--allow-origin", "https://example.test",
+		"--cache-root", root, "--artifact", "har", "--artifact", "screenshot", "--retain-for", "2h",
+	}, &stdout, &stderr, func() time.Time { return observedAt }, func(string) capture.RichAcquirer { return fake })
+	if code != exitOK || fake.calls != 1 || strings.Contains(stdout.String(), "private-screenshot") || strings.Contains(stdout.String(), "private\"") {
+		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, fake.calls, stdout.String(), stderr.String())
+	}
+	if len(fake.request.Artifacts) != 2 || fake.request.Artifacts[0] != capture.PrivateArtifactScreenshot || fake.request.Artifacts[1] != capture.PrivateArtifactHAR {
+		t.Fatalf("artifacts = %#v", fake.request.Artifacts)
+	}
+	var entry cache.Entry
+	if err := json.Unmarshal(stdout.Bytes(), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Kind != cache.KindPrivateRaw || entry.PublicationEligible || entry.MediaType != "application/vnd.openudon.browsertools.private-rich+zip" ||
+		entry.ExpiresAt != "2026-08-16T06:05:06.000000007Z" || entry.Annotations["secret_review"] != "pending" ||
+		entry.Annotations["artifacts"] != "screenshot,har" {
+		t.Fatalf("entry = %#v", entry)
+	}
+	store, err := cache.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := store.Get(context.Background(), entry.ID, observedAt)
+	if err != nil || !bytes.HasPrefix(payload, []byte("PK")) {
+		t.Fatalf("bundle payload err=%v prefix=%q", err, payload[:min(len(payload), 8)])
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"cache", "delete", "--root", root, "--id", entry.ID, "--confirm-id", "sha256:" + strings.Repeat("0", 64)}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitUsageOrIO || stdout.Len() != 0 {
+		t.Fatalf("mismatched confirmation code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, _, err := store.Get(context.Background(), entry.ID, observedAt); err != nil {
+		t.Fatalf("mismatched confirmation deleted entry: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"cache", "delete", "--root", root, "--id", entry.ID, "--confirm-id", entry.ID}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK || !strings.Contains(stdout.String(), entry.ID) {
+		t.Fatalf("delete code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, _, err := store.Get(context.Background(), entry.ID, observedAt); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("entry remains after deletion: %v", err)
+	}
+}
+
+func TestRichCaptureRejectsImplicitOrUnboundedRequestsBeforeBrowser(t *testing.T) {
+	for _, args := range [][]string{
+		{"--url", "https://example.test", "--allow-origin", "https://example.test", "--cache-root", t.TempDir()},
+		{"--url", "https://example.test", "--allow-origin", "https://example.test", "--cache-root", t.TempDir(), "--artifact", "video"},
+		{"--url", "https://example.test", "--allow-origin", "https://example.test", "--cache-root", t.TempDir(), "--artifact", "har", "--retain-for", "25h"},
+	} {
+		fake := &cliRichAcquirer{}
+		var stdout, stderr bytes.Buffer
+		code := runRichCaptureChromiumWith(args, &stdout, &stderr, time.Now, func(string) capture.RichAcquirer { return fake })
+		if code != exitUsageOrIO || fake.calls != 0 || stdout.Len() != 0 {
+			t.Fatalf("args=%v code=%d calls=%d stdout=%q stderr=%q", args, code, fake.calls, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestCacheDeleteDoesNotCreateMistypedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing-cache")
+	id := "sha256:" + strings.Repeat("0", 64)
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"cache", "delete", "--root", root, "--id", id, "--confirm-id", id}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitUsageOrIO || stdout.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cache delete created mistyped root: %v", err)
+	}
+}
+
 func TestGuideAuthorCLIProducesStrictBundleWithoutMixingPrompts(t *testing.T) {
 	tmp := t.TempDir()
 	evidencePath := filepath.Join(tmp, "evidence.json")
@@ -329,6 +442,62 @@ func TestLiveCheckChromiumCLIEmitsOnlyValueFreeReport(t *testing.T) {
 	}, strings.NewReader(""), &stdout, &stderr, func(string) capture.Acquirer { return fake })
 	if code != exitRejected || !strings.Contains(stdout.String(), `"ok": false`) {
 		t.Fatalf("failed check code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestPortabilityCLIUsesProcessClockAndExplicitFreshEngines(t *testing.T) {
+	checkedAt := time.Date(2026, 8, 16, 7, 8, 9, 10, time.UTC)
+	var opened []capture.Engine
+	backends := map[capture.Engine]*cliCaptureAcquirer{}
+	var stdout, stderr bytes.Buffer
+	code := runPortabilityCheckWith([]string{
+		"--profile", "../../profile/testdata/valid_minimal.yaml",
+		"--url", "https://example.test/member", "--allow-origin", "https://example.test",
+		"--action", "read_status", "--engine", "webkit", "--engine", "chromium",
+	}, strings.NewReader(""), &stdout, &stderr, func() time.Time { return checkedAt }, func(_ string, engine capture.Engine) capture.Acquirer {
+		opened = append(opened, engine)
+		backend := &cliCaptureAcquirer{}
+		backends[engine] = backend
+		return backend
+	})
+	if code != exitOK || !strings.Contains(stdout.String(), `"version": "browsertools.portability-check.v1"`) ||
+		!strings.Contains(stdout.String(), `"checkedAt": "2026-08-16T07:08:09.00000001Z"`) || strings.Contains(stdout.String(), `"OK"`) {
+		t.Fatalf("code=%d opened=%v stdout=%q stderr=%q", code, opened, stdout.String(), stderr.String())
+	}
+	if len(opened) != 2 || opened[0] != capture.EngineChromium || opened[1] != capture.EngineWebKit ||
+		backends[capture.EngineChromium] == backends[capture.EngineWebKit] {
+		t.Fatalf("opened=%v backends=%#v", opened, backends)
+	}
+	if !strings.Contains(stdout.String(), `"capability": "popup_context"`) || strings.Contains(stdout.String(), "selector rewrit") {
+		t.Fatalf("contract pressure missing or rewrite leaked: %s", stdout.String())
+	}
+}
+
+func TestPortabilityCLIRejectsIncompleteEngineSelectionBeforeBrowser(t *testing.T) {
+	calls := 0
+	var stdout, stderr bytes.Buffer
+	code := runPortabilityCheckWith([]string{
+		"--profile", "../../profile/testdata/valid_minimal.yaml", "--url", "https://example.test/member",
+		"--allow-origin", "https://example.test", "--engine", "chromium",
+	}, strings.NewReader(""), &stdout, &stderr, time.Now, func(string, capture.Engine) capture.Acquirer {
+		calls++
+		return &cliCaptureAcquirer{}
+	})
+	if code != exitUsageOrIO || calls != 0 || stdout.Len() != 0 {
+		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, calls, stdout.String(), stderr.String())
+	}
+}
+
+func TestPlaywrightCapabilitiesRecordsFullContractPressure(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"playwright", "capabilities"}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK || !strings.Contains(stdout.String(), capture.ContractPressureVersion) {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	for _, capability := range []string{"popup_context", "iframe_context", "download", "upload", "permission", "visual_interaction"} {
+		if !strings.Contains(stdout.String(), `"capability":"`+capability+`"`) {
+			t.Fatalf("missing %s in %s", capability, stdout.String())
+		}
 	}
 }
 
