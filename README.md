@@ -15,6 +15,23 @@ real website UI
   -> UWS operation binds to browser-profile action
 ```
 
+## Where Browsertools Fits
+
+[OpenUdon's iCoT](https://github.com/OpenUdon/openudon#authoring-with-icot) is
+the primary end-user authoring entry point across API, browser, and
+runtime-handoff sources. iCoT retains goal interviewing, LLM/human interaction,
+source selection, and package staging. For UI-only acquisition, it delegates to
+an external Browsertools process.
+
+Browsertools owns Playwright-based acquisition, browser safety policy, profile
+synthesis, and the shared validation library for browser capability and
+authentication profiles. Its CLI is primarily a machine-facing protocol plus
+maintainer and offline tooling, not a parallel end-user authoring product.
+Browsertools is not the production runtime; runtime replay belongs to Udon and
+Browserdriver. See the [canonical OpenUdon integration
+reference](docs/openudon-integration.md) for the two integration paths and full
+ownership split.
+
 ## Quick Start
 
 ```

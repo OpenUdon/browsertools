@@ -1,7 +1,61 @@
 # OpenUdon Integration
 
-This document describes how `github.com/OpenUdon/openudon` consumes browsertools
-review bundles and how UWS workflows bind to reviewed browser-profile actions.
+This is the canonical relationship reference for OpenUdon/iCoT and
+Browsertools. iCoT is the primary end-user authoring entry point across API,
+browser, and runtime-handoff sources. Browsertools is its specialized
+browser-source engine and shared validation library, not a parallel authoring
+product or the production runtime.
+
+## Relationship and ownership
+
+iCoT retains goal interviewing, LLM/human interaction, source selection, and
+package staging. When a reviewed workflow needs UI-only acquisition, iCoT
+either consumes an existing Browsertools artifact offline or delegates live
+acquisition to an external Browsertools process. Browsertools owns
+Playwright-based acquisition, browser safety policy, profile synthesis, and
+the shared validation library for browser capability and authentication
+profiles.
+
+| Component | Ownership |
+|---|---|
+| iCoT / OpenUdon | Primary user-facing authoring flow, API-first source selection, goal and safety interview, LLM/human interaction, independent validation, and atomic package staging |
+| Browsertools | Playwright-based acquisition, live browser safety enforcement, reduced observations, portable profile synthesis, review artifacts, and shared profile validation |
+| UWS | Portable browser profile, authentication, context, and workflow schemas plus semantic validation |
+| Udon | Separate runtime approval, lowering, credential-slot and MFA challenge brokering, and executor lifecycle |
+| Browserdriver | Trusted replay of reviewed browser operations in a new private runtime session |
+
+The Browsertools CLI primarily exposes a machine-facing author-session protocol
+and maintainer/offline acquisition, review, and registry tools. Production
+runtime replay remains with Udon and Browserdriver.
+
+## Integration paths
+
+### Offline reviewed-artifact consumption
+
+Normal iCoT authoring does not launch Browsertools or a browser. It accepts
+explicit reviewed capability profiles, capability bundles, guided-authoring
+results, local authentication profiles, and optional value-free verification
+reports. OpenUdon applies Browsertools' shared validators and its own package
+policy, keeps API sources preferred when they cover the capability, and stages
+only approved canonical profiles plus safe digest and lifecycle metadata. Raw
+captures, private evidence, credentials, cookies, and browser sessions never
+enter the package.
+
+The review artifact and UWS binding sections below describe the core offline
+handoff. The [OpenUdon iCoT operator
+guide](https://github.com/OpenUdon/openudon/blob/main/docs/icot.md) documents
+the accepted explicit inputs and approval flow.
+
+### Live `author-session` orchestration
+
+For authenticated UI-only acquisition, the user explicitly invokes
+`icot browser-author live`. iCoT starts an external
+`browsertools author-session chromium` process and owns the goal, disclosure,
+human-action, completion, and staging gates. Browsertools owns the one headed,
+non-persistent Playwright-Go context, enforces the origin/network/action policy,
+returns only reduced semantic candidates, and writes a private deterministic
+result after teardown. OpenUdon independently validates that result and stages
+only canonical reviewed profiles; no live context is transferred or packaged.
 
 The explicit live iCoT/Browsertools design for human authentication followed
 by same-context goal exploration is specified in
@@ -9,12 +63,17 @@ by same-context goal exploration is specified in
 Its private candidate envelope is independently validated before any canonical
 profile enters the artifact handoff described here.
 
-## The artifact
+The corresponding user-facing procedure and failure posture are in OpenUdon's
+[Authenticated Browser Authoring operator
+guide](https://github.com/OpenUdon/openudon/blob/main/docs/authenticated-browser-authoring.md).
 
-A `review.Bundle` is a JSON-serializable struct produced by `review.Build`. It
-carries everything OpenUdon needs to decide whether a browser-profile is ready
-to use. JSON field names are listed below; Go struct field names are PascalCase
-(e.g. `Bundle.Validation`, `Bundle.SideEffects`).
+## Offline review artifact
+
+A `review.Bundle` is a JSON-serializable Browsertools review artifact produced
+by `review.Build`. It carries the digest-bound evidence needed to decide
+whether its browser profile is ready for offline promotion. JSON field names
+are listed below; Go struct field names are PascalCase (for example,
+`Bundle.Validation` and `Bundle.SideEffects`).
 
 | JSON field | Go type | Purpose |
 |---|---|---|
@@ -88,18 +147,21 @@ See `examples/openudon-binding/binding.uws.yaml`, `evidence.json`, and
 
 ## Cross-repo verification gate
 
-Once `github.com/OpenUdon/openudon` imports a review bundle, run its tests to
-confirm compatibility:
+From sibling checkouts, run both projects' normal Go gates to confirm the
+shared validation and consumer boundary:
 
 ```bash
-(cd ../openudon && go test ./...)
+(cd ../browsertools && go test ./... && go vet ./...)
+(cd ../openudon && go test ./... && go vet ./...)
 ```
-
-This gate should be added to the browsertools CI when the openudon import lands.
 
 ## What OpenUdon does NOT get from browsertools
 
-- Browser session management (credentials, cookies, retries) — those live in the
-  browser runtime, not in the review bundle.
+- Goal interviewing, LLM/human interaction, source selection, or package
+  staging authority — those remain with iCoT/OpenUdon.
+- Production browser sessions, credential resolution, MFA brokering, retries,
+  or runtime side effects — those remain with Udon and Browserdriver.
+- The live Browsertools authoring context, credentials, cookies, or browser
+  handles — none are transferred to OpenUdon or placed in a review bundle.
 - UWS schema ownership — that lives in `github.com/OpenUdon/uws`.
 - API-source or OpenAPI metadata — that lives in `github.com/OpenUdon/apitools`.
