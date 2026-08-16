@@ -13,6 +13,7 @@ import (
 
 	playwrightadapter "github.com/OpenUdon/browsertools/adapter/playwright"
 	"github.com/OpenUdon/browsertools/authassist"
+	"github.com/OpenUdon/browsertools/authorsession"
 	"github.com/OpenUdon/browsertools/authprofile"
 	"github.com/OpenUdon/browsertools/authreview"
 	capabilitybundle "github.com/OpenUdon/browsertools/bundle"
@@ -28,6 +29,42 @@ type cliCaptureAcquirer struct {
 	request capture.LiveRequest
 	calls   int
 	fail    bool
+}
+
+type cliAuthorBrowser struct{}
+
+func (*cliAuthorBrowser) Open(context.Context, authorsession.BrowserRequest) (authorsession.Session, error) {
+	return nil, errors.New("unexpected browser launch")
+}
+
+func TestAuthorSessionChromiumCLIUsesNDJSONAndGenericFailure(t *testing.T) {
+	privateRoot := t.TempDir()
+	if err := os.Chmod(privateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	driverDirectory := ""
+	code := runAuthorSessionChromiumWith(
+		[]string{"--private-root", privateRoot, "--driver-dir", "/installed/driver"},
+		strings.NewReader(`{"protocol":"browsertools.author-session.v1","type":"close"}`+"\n"),
+		&stdout, &stderr, time.Now,
+		func(value string) authorsession.Browser { driverDirectory = value; return &cliAuthorBrowser{} },
+	)
+	if code != exitOK || driverDirectory != "/installed/driver" || stderr.Len() != 0 ||
+		!strings.Contains(stdout.String(), `"type":"hello"`) || !strings.Contains(stdout.String(), `"phase":"closed"`) {
+		t.Fatalf("code=%d driver=%q stdout=%q stderr=%q", code, driverDirectory, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runAuthorSessionChromiumWith(
+		[]string{"--private-root", privateRoot}, strings.NewReader("not-json\n"), &stdout, &stderr,
+		time.Now, func(string) authorsession.Browser { return &cliAuthorBrowser{} },
+	)
+	if code != exitRejected || stderr.String() != "author-session chromium: session failed closed\n" ||
+		!strings.Contains(stdout.String(), `"code":"malformed_message"`) {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
 }
 
 type cliRichAcquirer struct {

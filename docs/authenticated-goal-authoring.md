@@ -104,7 +104,7 @@ capability result rather than relying on the authentication success check.
 Browsertools exposes:
 
 ```bash
-browsertools author-session chromium
+browsertools author-session chromium --private-root /private/operator/member-authoring
 ```
 
 The command uses newline-delimited JSON on stdin/stdout. Stdout is protocol
@@ -115,7 +115,7 @@ Unknown message types or fields fail closed.
 
 Client input types are:
 
-- `start`: one absolute initial URL, approved exact origins, clean optional
+- `start`: one absolute initial URL, approved exact origins, clean required
   dashboard URL, typed goal predicate, and finite session limits.
 - `observe`: request a reduced observation for a Browsertools context.
 - `focus_human_input`: focus one Browsertools-issued credential/OTP candidate;
@@ -129,7 +129,7 @@ Client input types are:
 
 Server output types are:
 
-- `hello`: fixed protocol/capability/limit negotiation.
+- `hello`: fixed protocol/capability negotiation.
 - `state`: a closed author-session phase and current context ID.
 - `observation`: reduced semantic candidates only.
 - `approval_required`: one exact origin, action, or POST decision.
@@ -287,4 +287,3 @@ injection, deterministic output, rollback, and sentinel credential
 environments. Installed-Chromium tests are separate opt-in loopback fixtures
 for redirect login, phone-push checkpoints, popup SSO, iframe login, origin
 and POST approval, goal completion, and teardown.
-

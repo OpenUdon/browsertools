@@ -23,6 +23,7 @@ import (
 	playwrightadapter "github.com/OpenUdon/browsertools/adapter/playwright"
 	"github.com/OpenUdon/browsertools/authassist"
 	"github.com/OpenUdon/browsertools/authdraft"
+	"github.com/OpenUdon/browsertools/authorsession"
 	"github.com/OpenUdon/browsertools/authprofile"
 	"github.com/OpenUdon/browsertools/authreview"
 	capabilitybundle "github.com/OpenUdon/browsertools/bundle"
@@ -63,6 +64,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runAuthReviewBundle(args[2:], stdin, stdout, stderr)
 	case "auth-assist chromium":
 		return runAuthAssistChromium(args[2:], stdin, stdout, stderr)
+	case "author-session chromium":
+		return runAuthorSessionChromium(args[2:], stdin, stdout, stderr)
 	case "evidence import":
 		return runEvidenceImport(args[2:], stdin, stdout, stderr)
 	case "draft build":
@@ -114,7 +117,43 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|auth-assist chromium|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|cache delete|capture chromium|rich-capture chromium|guide author|live-check chromium|portability check|playwright doctor|playwright capabilities> [flags]")
+	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|auth-assist chromium|author-session chromium|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|cache delete|capture chromium|rich-capture chromium|guide author|live-check chromium|portability check|playwright doctor|playwright capabilities> [flags]")
+}
+
+func runAuthorSessionChromium(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runAuthorSessionChromiumWith(args, stdin, stdout, stderr, time.Now, capture.NewPlaywrightAuthorBrowser)
+}
+
+func runAuthorSessionChromiumWith(
+	args []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	clock func() time.Time,
+	newBrowser func(string) authorsession.Browser,
+) int {
+	fs := flag.NewFlagSet("author-session chromium", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	privateRoot := fs.String("private-root", "", "existing mode-0700 directory for the private result envelope")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "author-session chromium: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *privateRoot == "" || clock == nil || newBrowser == nil {
+		fmt.Fprintln(stderr, "author-session chromium: --private-root and browser dependencies are required")
+		return exitUsageOrIO
+	}
+	if err := authorsession.Serve(context.Background(), stdin, stdout, newBrowser(*driverDirectory), authorsession.ServeOptions{
+		PrivateRoot: *privateRoot,
+		Clock:       clock,
+	}); err != nil {
+		fmt.Fprintln(stderr, "author-session chromium: session failed closed")
+		return exitRejected
+	}
+	return exitOK
 }
 
 func runAuthAssistChromium(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
