@@ -123,7 +123,8 @@ go run ./cmd/browsertools playwright doctor --engine chromium
 
 `playwright doctor` starts and stops only the installed Playwright driver. It
 does not install software, contact a site, or launch a browser. The other CLI
-commands remain file-first unless explicitly named as capture commands.
+commands remain file-first unless they are explicitly named live acquisition,
+check, or assisted-authentication commands.
 
 Safe live capture is Chromium-only, headless, non-interactive, and private. It
 requires every exact origin and writes page material only to a finite-retention
@@ -193,10 +194,34 @@ go run ./cmd/browsertools auth-review bundle \
   --out ./browser-authentication/member.review.json
 ```
 
-Authentication recipes are intentionally excluded from static registry
-publication in this release. They contain only symbolic credential bindings;
-actual credentials, MFA responses, cookies, and sessions stay in the private
-runtime.
+An explicit headed authoring command can then observe the exact recipe while
+the operator enters credentials and completes MFA directly in the browser:
+
+```bash
+go run ./cmd/browsertools auth-assist chromium \
+  --profile ./browser-authentication/member.yaml \
+  --flow member_login_push \
+  --approve-origin https://members.example.test \
+  --approve-origin https://login.example.test \
+  --post-budget member_login_push:3=2 \
+  --out ./browser-authentication/member.assisted.json
+```
+
+The profile supplies every locator, challenge alternative, submit step, and
+success condition; Browsertools does not infer them. Each selected flow runs in
+a separate visible ephemeral context. Browsertools navigates declared URLs and
+counts declared accessibility locators, but the operator performs every
+credential, click, and challenge step and signals completion with an empty
+terminal line. A POST is blocked unless its exact zero-based flow step has an
+explicit bounded `--post-budget`; all other mutating methods are blocked.
+
+The `0600` output is created only after every context has closed and contains a
+selected `uws.browser-authentication.1.0` profile, its digest-bound review, and
+value-free origin/count/request evidence. It cannot use stdin for a profile,
+stdout for the artifact, or overwrite a path. Authentication recipes are also
+excluded from static registry publication. Actual credentials, MFA responses,
+OAuth state, cookies, storage, and sessions stay in the browser or downstream
+private runtime. See [Browser authentication profiles](docs/browser-authentication.md).
 
 Caller-supplied raw captures and derived artifacts can be kept in an explicit
 private local cache. Raw entries can never be publication eligible:
@@ -241,6 +266,9 @@ go run ./cmd/browsertools cache prune \
   evidence, decisions, a valid profile, and a promotable review.
 - Value-free Chromium live checks for declared locators, waits, and output
   shapes without macro execution.
+- Headed manual authentication observation with separate ephemeral contexts,
+  exact preapproved origins, step-scoped POST ceilings, and local value-free
+  draft/review bundles.
 
 ## What It Does Not Own
 
@@ -314,4 +342,12 @@ An installed-browser loopback integration test is opt-in:
 
 ```bash
 BROWSERTOOLS_LIVE_TEST=1 go test ./capture -run PlaywrightLiveCaptureLoopback
+```
+
+Headed authentication behavior is covered by browser-free policy/state-machine
+tests by default. A real site is never contacted by the test suite. An
+installed-browser headed smoke test is separately opt-in and loopback-only:
+
+```bash
+BROWSERTOOLS_AUTH_LIVE_TEST=1 go test ./capture -run PlaywrightAuthHeadedLoopback
 ```

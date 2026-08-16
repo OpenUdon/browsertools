@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	playwrightadapter "github.com/OpenUdon/browsertools/adapter/playwright"
+	"github.com/OpenUdon/browsertools/authassist"
 	"github.com/OpenUdon/browsertools/authprofile"
 	"github.com/OpenUdon/browsertools/authreview"
 	capabilitybundle "github.com/OpenUdon/browsertools/bundle"
@@ -19,6 +21,7 @@ import (
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/browsertools/review"
+	"github.com/OpenUdon/uws/browserauthentication"
 )
 
 type cliCaptureAcquirer struct {
@@ -26,6 +29,49 @@ type cliCaptureAcquirer struct {
 	calls   int
 	fail    bool
 }
+
+type cliAuthBrowser struct {
+	requests []authassist.BrowserRequest
+	sessions []*cliAuthSession
+}
+
+func (b *cliAuthBrowser) Open(_ context.Context, request authassist.BrowserRequest) (authassist.Session, error) {
+	b.requests = append(b.requests, request)
+	session := &cliAuthSession{origin: "https://members.example.test"}
+	b.sessions = append(b.sessions, session)
+	return session, nil
+}
+
+type cliAuthSession struct {
+	origin   string
+	active   bool
+	closed   bool
+	budgets  []int
+	endCalls int
+}
+
+func (s *cliAuthSession) Navigate(_ context.Context, _ string) error { return nil }
+func (s *cliAuthSession) Observe(_ context.Context, locator *browserauthentication.Locator) (authassist.PageObservation, error) {
+	result := authassist.PageObservation{Origin: s.origin}
+	if locator != nil {
+		result.Matches = 1
+	}
+	return result, nil
+}
+func (s *cliAuthSession) BeginAuthenticationInteraction(budget int) error {
+	s.active = true
+	s.budgets = append(s.budgets, budget)
+	return nil
+}
+func (s *cliAuthSession) EndAuthenticationInteraction() (int, error) {
+	s.active = false
+	s.endCalls++
+	if s.budgets[len(s.budgets)-1] > 0 {
+		return 1, nil
+	}
+	return 0, nil
+}
+func (s *cliAuthSession) Close() error { s.closed = true; return nil }
 
 func (a *cliCaptureAcquirer) Acquire(_ context.Context, request capture.LiveRequest) (capture.Observation, error) {
 	a.calls++
@@ -354,6 +400,140 @@ func TestAuthenticationProfileDraftReviewCLI(t *testing.T) {
 	code = run([]string{"auth-profile", "validate", "--input", profilePath, "--at", "2026-09-14T00:00:00Z", "--format", "json"}, strings.NewReader(""), &stdout, &stderr)
 	if code != exitRejected || !strings.Contains(stdout.String(), `"valid":false`) {
 		t.Fatalf("stale code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestAssistedAuthenticationCLIWritesOnlyClosedLocalBundle(t *testing.T) {
+	t.Setenv("MEMBER_PASSWORD", "actual-password-must-not-cross")
+	tmp := t.TempDir()
+	profilePath := filepath.Join(tmp, "member.yaml")
+	outPath := filepath.Join(tmp, "member.assisted.json")
+	fixture, err := os.ReadFile("../../authprofile/testdata/valid-push.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath, fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	browser := &cliAuthBrowser{}
+	var stdout, stderr bytes.Buffer
+	code := runAuthAssistChromiumWith([]string{
+		"--profile", profilePath, "--flow", "member_login_push",
+		"--approve-origin", "https://members.example.test", "--approve-origin", "https://login.example.test",
+		"--post-budget", "member_login_push:3=2", "--out", outPath,
+	}, strings.NewReader("\n\n\n\n"), &stdout, &stderr, func() time.Time {
+		return mustTime(t, "2026-08-16T12:00:00Z")
+	}, func(driverDirectory string) authassist.Browser {
+		if driverDirectory != "" {
+			t.Fatalf("driver directory = %q", driverDirectory)
+		}
+		return browser
+	})
+	if code != exitOK || stdout.Len() != 0 || len(browser.sessions) != 1 || !browser.sessions[0].closed || browser.sessions[0].active || browser.sessions[0].endCalls != 4 {
+		t.Fatalf("code=%d stdout=%q stderr=%q browser=%#v", code, stdout.String(), stderr.String(), browser)
+	}
+	if len(browser.requests) != 1 || strings.Join(browser.requests[0].ApprovedOrigins, ",") != "https://login.example.test,https://members.example.test" {
+		t.Fatalf("browser request = %#v", browser.requests)
+	}
+	info, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("output mode = %o", info.Mode().Perm())
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("actual-password-must-not-cross")) || !bytes.Contains(data, []byte(`"version": "browsertools.assisted-authentication.v1"`)) {
+		t.Fatalf("bundle = %s", data)
+	}
+	var bundle authassist.Bundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if err := authassist.Verify(&bundle); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "type no credentials here") {
+		t.Fatalf("missing terminal boundary prompt: %q", stderr.String())
+	}
+}
+
+func TestAssistedAuthenticationCLIRejectsBeforeOrDuringSessionWithoutArtifact(t *testing.T) {
+	tmp := t.TempDir()
+	profilePath := filepath.Join(tmp, "member.yaml")
+	fixture, err := os.ReadFile("../../authprofile/testdata/valid-push.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath, fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := []string{
+		"--profile", profilePath, "--flow", "member_login_push",
+		"--approve-origin", "https://members.example.test", "--approve-origin", "https://login.example.test",
+	}
+	for name, configure := range map[string]func() ([]string, string, *cliAuthBrowser){
+		"existing output": func() ([]string, string, *cliAuthBrowser) {
+			out := filepath.Join(tmp, "existing.json")
+			if err := os.WriteFile(out, []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return append(append([]string{}, base...), "--out", out), "\n", &cliAuthBrowser{}
+		},
+		"bad budget": func() ([]string, string, *cliAuthBrowser) {
+			out := filepath.Join(tmp, "bad-budget.json")
+			return append(append([]string{}, base...), "--post-budget", "member_login_push:3=0", "--out", out), "\n", &cliAuthBrowser{}
+		},
+		"credential terminal input": func() ([]string, string, *cliAuthBrowser) {
+			out := filepath.Join(tmp, "terminal-reject.json")
+			return append(append([]string{}, base...), "--out", out), "actual-password\n", &cliAuthBrowser{}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			args, input, browser := configure()
+			var stdout, stderr bytes.Buffer
+			code := runAuthAssistChromiumWith(args, strings.NewReader(input), &stdout, &stderr, func() time.Time {
+				return mustTime(t, "2026-08-16T12:00:00Z")
+			}, func(string) authassist.Browser { return browser })
+			if code == exitOK || stdout.Len() != 0 {
+				t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if name == "credential terminal input" {
+				if len(browser.sessions) != 1 || !browser.sessions[0].closed || browser.sessions[0].active {
+					t.Fatalf("session = %#v", browser.sessions)
+				}
+				if _, err := os.Stat(filepath.Join(tmp, "terminal-reject.json")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("failed run wrote artifact: %v", err)
+				}
+			} else if len(browser.requests) != 0 {
+				t.Fatalf("browser opened before input validation: %#v", browser.requests)
+			}
+		})
+	}
+}
+
+func TestPrivateAssistedOutputIsAtomicAndNeverOverwrites(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "result.json")
+	if err := writeNewPrivateOutput(path, []byte("complete\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNewPrivateOutput(path, []byte("replacement\n")); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("overwrite error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "complete\n" {
+		t.Fatalf("output = %q", data)
+	}
+	matches, err := filepath.Glob(filepath.Join(directory, ".browsertools-auth-*"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("temporary files = %v err=%v", matches, err)
 	}
 }
 

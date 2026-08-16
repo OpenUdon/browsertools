@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/OpenUdon/browsertools/adapter/firecrawl"
 	"github.com/OpenUdon/browsertools/adapter/llmscraper"
 	playwrightadapter "github.com/OpenUdon/browsertools/adapter/playwright"
+	"github.com/OpenUdon/browsertools/authassist"
 	"github.com/OpenUdon/browsertools/authdraft"
 	"github.com/OpenUdon/browsertools/authprofile"
 	"github.com/OpenUdon/browsertools/authreview"
@@ -59,6 +61,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runAuthDraftBuild(args[2:], stdin, stdout, stderr)
 	case "auth-review bundle":
 		return runAuthReviewBundle(args[2:], stdin, stdout, stderr)
+	case "auth-assist chromium":
+		return runAuthAssistChromium(args[2:], stdin, stdout, stderr)
 	case "evidence import":
 		return runEvidenceImport(args[2:], stdin, stdout, stderr)
 	case "draft build":
@@ -102,7 +106,184 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|capture chromium|guide author|live-check chromium|playwright doctor> [flags]")
+	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|auth-assist chromium|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|capture chromium|guide author|live-check chromium|playwright doctor> [flags]")
+}
+
+func runAuthAssistChromium(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runAuthAssistChromiumWith(args, stdin, stdout, stderr, time.Now, capture.NewPlaywrightAuthBrowser)
+}
+
+func runAuthAssistChromiumWith(
+	args []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	clock func() time.Time,
+	newBrowser func(string) authassist.Browser,
+) int {
+	fs := flag.NewFlagSet("auth-assist chromium", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	profilePath := fs.String("profile", "", "explicit authentication profile JSON/YAML path (stdin is reserved for empty-line operator signals)")
+	out := fs.String("out", "", "new local assisted-authentication bundle JSON path (written mode 0600)")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	navigationTimeout := fs.Duration("navigation-timeout", authassist.DefaultNavigationTimeout, "per-navigation and locator-check timeout")
+	totalTimeout := fs.Duration("timeout", authassist.DefaultTotalTimeout, "total headed authentication deadline")
+	maxRequests := fs.Int("max-requests", authassist.DefaultMaxRequests, "maximum requests across each ephemeral flow context")
+	maxResponseBytes := fs.Int64("max-response-bytes", authassist.DefaultMaxResponseBytes, "maximum response bytes across each ephemeral flow context")
+	var flows stringList
+	var approvedOrigins stringList
+	var postBudgetFlags stringList
+	fs.Var(&flows, "flow", "authentication profile flow to observe; repeatable and explicit")
+	fs.Var(&approvedOrigins, "approve-origin", "exact application/authentication origin approved before launch; repeatable")
+	fs.Var(&postBudgetFlags, "post-budget", "bounded auth POST authority FLOW:ZERO_BASED_STEP=COUNT; repeatable")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "auth-assist chromium: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *profilePath == "" || *profilePath == "-" || *out == "" || *out == "-" || len(flows) == 0 || len(approvedOrigins) == 0 {
+		fmt.Fprintln(stderr, "auth-assist chromium: --profile (not stdin), --out (not stdout), at least one --flow, and all --approve-origin values are required")
+		return exitUsageOrIO
+	}
+	if strings.ToLower(filepath.Ext(*out)) != ".json" {
+		fmt.Fprintln(stderr, "auth-assist chromium: --out must end in .json")
+		return exitUsageOrIO
+	}
+	profileAbsolute, profileErr := filepath.Abs(*profilePath)
+	outputAbsolute, outputErr := filepath.Abs(*out)
+	if profileErr != nil || outputErr != nil || filepath.Clean(profileAbsolute) == filepath.Clean(outputAbsolute) {
+		fmt.Fprintln(stderr, "auth-assist chromium: input profile and output bundle must be different explicit paths")
+		return exitUsageOrIO
+	}
+	if err := validateNewPrivateOutputPath(*out); err != nil {
+		fmt.Fprintln(stderr, "auth-assist chromium:", err)
+		return exitUsageOrIO
+	}
+	postBudgets, err := parseAuthPOSTBudgets(postBudgetFlags)
+	if err != nil {
+		fmt.Fprintln(stderr, "auth-assist chromium:", err)
+		return exitUsageOrIO
+	}
+	prof, err := authprofile.LoadFile(*profilePath)
+	if err != nil {
+		fmt.Fprintln(stderr, "auth-assist chromium:", err)
+		return exitRejected
+	}
+	if clock == nil || newBrowser == nil {
+		fmt.Fprintln(stderr, "auth-assist chromium: headed browser dependency is unavailable")
+		return exitUsageOrIO
+	}
+	observedAt := clock().UTC()
+	if observedAt.IsZero() {
+		fmt.Fprintln(stderr, "auth-assist chromium: observation clock is unavailable")
+		return exitUsageOrIO
+	}
+	bundle, err := authassist.Run(context.Background(), newBrowser(*driverDirectory), authassist.NewLineOperator(stdin, stderr), authassist.Request{
+		Profile: prof, Flows: []string(flows), ApprovedOrigins: []string(approvedOrigins),
+		POSTBudgets: postBudgets, ObservedAt: observedAt,
+		NavigationTimeout: *navigationTimeout, TotalTimeout: *totalTimeout,
+		MaxRequests: *maxRequests, MaxResponseBytes: *maxResponseBytes,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "auth-assist chromium:", err)
+		return exitRejected
+	}
+	data, err := authassist.MarshalJSONIndent(bundle)
+	if err != nil {
+		fmt.Fprintln(stderr, "auth-assist chromium:", err)
+		return exitRejected
+	}
+	if err := writeNewPrivateOutput(*out, data); err != nil {
+		fmt.Fprintln(stderr, "auth-assist chromium:", err)
+		return exitUsageOrIO
+	}
+	return exitOK
+}
+
+func validateNewPrivateOutputPath(path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("refusing to overwrite %s", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	directory := filepath.Dir(path)
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return fmt.Errorf("inspect output directory: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("output directory must be an existing non-symlink directory")
+	}
+	return nil
+}
+
+func writeNewPrivateOutput(path string, data []byte) (err error) {
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, ".browsertools-auth-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	closed := false
+	linked := false
+	defer func() {
+		if !closed {
+			closeErr := temporary.Close()
+			if closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
+		if removeErr := os.Remove(temporaryPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil && !linked {
+			err = removeErr
+		}
+	}()
+	if err := temporary.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	closed = true
+	if err := os.Link(temporaryPath, path); errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("refusing to overwrite %s", path)
+	} else if err != nil {
+		return err
+	}
+	linked = true
+	return nil
+}
+
+func parseAuthPOSTBudgets(values []string) (map[string]int, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	result := make(map[string]int, len(values))
+	for _, raw := range values {
+		flow, remainder, ok := strings.Cut(strings.TrimSpace(raw), ":")
+		stepText, countText, countOK := strings.Cut(remainder, "=")
+		flow, stepText, countText = strings.TrimSpace(flow), strings.TrimSpace(stepText), strings.TrimSpace(countText)
+		if !ok || !countOK || flow == "" || stepText == "" || countText == "" {
+			return nil, fmt.Errorf("POST budget %q must use FLOW:ZERO_BASED_STEP=COUNT", raw)
+		}
+		step, stepErr := strconv.Atoi(stepText)
+		count, countErr := strconv.Atoi(countText)
+		if stepErr != nil || step < 0 || step > 255 || countErr != nil || count < 1 || count > authassist.MaxPOSTRequestsPerStep {
+			return nil, fmt.Errorf("POST budget %q has an invalid step or count", raw)
+		}
+		path := fmt.Sprintf("flows.%s.sequence[%d]", flow, step)
+		if _, duplicate := result[path]; duplicate {
+			return nil, fmt.Errorf("POST budget for %q is duplicated", path)
+		}
+		result[path] = count
+	}
+	return result, nil
 }
 
 func runGuideAuthor(args []string, stdin io.Reader, stdout, stderr io.Writer) int {

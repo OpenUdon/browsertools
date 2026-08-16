@@ -42,6 +42,14 @@ func TestParseRejectsSecretAndPIIShapedValues(t *testing.T) {
 	}
 }
 
+func TestParseRejectsPIIShapedIdentifierKeys(t *testing.T) {
+	valid := string(readFixture(t))
+	unsafe := strings.ReplaceAll(valid, "username", "account_12125550199")
+	if _, err := Parse([]byte(unsafe)); err == nil || !strings.Contains(err.Error(), "PII-shaped key") {
+		t.Fatalf("unsafe identifier key error = %v", err)
+	}
+}
+
 func TestParseRejectsTrailingYAML(t *testing.T) {
 	if _, err := Parse(append(readFixture(t), []byte("\n---\n{}\n")...)); err == nil {
 		t.Fatal("trailing YAML document unexpectedly parsed")

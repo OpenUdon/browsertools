@@ -221,6 +221,9 @@ func rejectSensitiveValues(value any, path string) error {
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
+			if redact.String(key) != key || emailValuePattern.MatchString(key) || phoneValuePattern.MatchString(key) {
+				return fmt.Errorf("authentication profile contains a secret- or PII-shaped key at %s", path)
+			}
 			if err := rejectSensitiveValues(typed[key], path+"."+key); err != nil {
 				return err
 			}

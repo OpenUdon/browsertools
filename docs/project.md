@@ -325,6 +325,8 @@ credential/session storage, or runtime retry/session policy.
 24. Local-only browser authentication profile tooling (`A01`).
 25. Playwright-Go acquisition foundation and installation doctor (`M20`).
 26. Safe headless Chromium live capture into private raw cache (`E03`).
+27. Guided capability authoring and value-free live checks (`P03`).
+28. Headed manual authentication profile observation (`A02`).
 
 ## CLI
 
@@ -351,15 +353,34 @@ browsertools playwright doctor --engine chromium
 browsertools capture chromium --url https://example.test/member \
   --allow-origin https://example.test \
   --cache-root ./.browsertools-cache --retain-for 24h
+browsertools guide author --evidence ./evidence.json \
+  --at 2026-08-16T12:00:00Z --out ./guided-authoring.json
+browsertools live-check chromium --profile ./profiles/example.yaml \
+  --url https://example.test/member --allow-origin https://example.test \
+  --action read_status --at 2026-08-16T12:00:00Z --out ./live-check.json
+browsertools auth-assist chromium \
+  --profile ./browser-authentication/member.yaml \
+  --flow member_login_push \
+  --approve-origin https://members.example.test \
+  --approve-origin https://login.example.test \
+  --post-budget member_login_push:3=2 \
+  --out ./browser-authentication/member.assisted.json
 ```
 
-Live capture is the one networked command in this milestone. It is explicit,
-headless, non-interactive, exact-origin, ephemeral, read-only at the routed
-request boundary, and bounded by time/count/byte/depth controls. It writes raw
-ARIA and valid JSON-LD only as a non-publishable private cache entry and emits
-metadata to stdout. Normalized evidence is a later, explicit import after an
-operator reviews and redacts the private fixture. See
-[Safe live capture](live-capture.md).
+Every networked command is explicit. Generic capture is headless,
+non-interactive, exact-origin, ephemeral, read-only at the routed request
+boundary, and bounded by time/count/byte/depth controls. It writes raw ARIA and
+valid JSON-LD only as a non-publishable private cache entry and emits metadata
+to stdout. Normalized evidence is a later, explicit import after an operator
+reviews and redacts the private fixture. See [Safe live capture](live-capture.md).
+
+The live check executes no macro and emits only declared shape facts. The
+headed authentication observer takes an already validated recipe, exact origin
+approvals, selected alternatives, and per-step POST ceilings. The human types,
+clicks, and completes MFA in a new context for each flow; only after all
+contexts close does Browsertools atomically write a local value-free
+profile/review bundle. See [Guided capability authoring](guided-authoring.md)
+and [Browser authentication profiles](browser-authentication.md).
 
 ## Fixture Policy
 
