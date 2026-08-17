@@ -251,9 +251,14 @@ func TestCaptureBrowserEnvironmentExcludesCredentialVariables(t *testing.T) {
 	t.Setenv("BROWSERTOOLS_TEST_SECRET", "must-not-pass")
 	t.Setenv("OPENAI_API_KEY", "must-not-pass")
 	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("DISPLAY", ":99")
+	t.Setenv("XAUTHORITY", "/tmp/browsertools-test-xauthority")
 	environment := captureBrowserEnvironment()
 	if environment["LANG"] != "en_US.UTF-8" {
 		t.Fatalf("LANG = %q", environment["LANG"])
+	}
+	if environment["DISPLAY"] != ":99" || environment["XAUTHORITY"] != "/tmp/browsertools-test-xauthority" {
+		t.Fatalf("headed browser display environment was not inherited: %#v", environment)
 	}
 	if _, ok := environment["BROWSERTOOLS_TEST_SECRET"]; ok {
 		t.Fatal("secret-shaped environment variable was inherited")

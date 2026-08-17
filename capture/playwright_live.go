@@ -424,7 +424,8 @@ func operationTimeout(ctx context.Context, maximum time.Duration) (float64, erro
 
 func captureBrowserEnvironment() map[string]string {
 	allowed := []string{
-		"HOME", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "TMPDIR", "TZ", "XDG_RUNTIME_DIR",
+		"DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "TMPDIR", "TZ",
+		"WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR",
 	}
 	result := make(map[string]string, len(allowed))
 	for _, name := range allowed {

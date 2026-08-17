@@ -341,9 +341,9 @@ func (s *playwrightAuthorSession) Execute(ctx context.Context, action authorsess
 			return authorsession.Execution{}, err
 		}
 		s.mu.Lock()
-		before := make(map[playwright.Page]struct{}, len(s.pageIDs))
+		before := make(map[playwright.Page]string, len(s.pageIDs))
 		for page := range s.pageIDs {
-			before[page] = struct{}{}
+			before[page] = page.URL()
 		}
 		s.expectingPopup = true
 		s.popupEvents = nil
@@ -352,11 +352,22 @@ func (s *playwrightAuthorSession) Execute(ctx context.Context, action authorsess
 			s.setExpectingPopup(false)
 			return authorsession.Execution{}, err
 		}
-		clickErr := locator.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(float64(s.request.NavigationTimeout.Milliseconds()))})
+		click := func() error {
+			return locator.Click(playwright.LocatorClickOptions{Timeout: playwright.Float(float64(s.request.NavigationTimeout.Milliseconds()))})
+		}
+		var clickErr error
+		if authorOpensPopup(locator) {
+			_, clickErr = s.browserContext.ExpectPage(click, playwright.BrowserContextExpectPageOptions{
+				Timeout: playwright.Float(float64(s.request.NavigationTimeout.Milliseconds())),
+			})
+		} else {
+			clickErr = click()
+		}
+		settleErr := s.settleApprovedClick(ctx, before)
 		popupEvents := s.endPopupWindow()
 		postObserved, postErr := s.guard.endPOST()
-		if clickErr != nil || postErr != nil {
-			return authorsession.Execution{}, errors.Join(fmt.Errorf("approved click failed"), postErr)
+		if clickErr != nil || settleErr != nil || postErr != nil {
+			return authorsession.Execution{}, errors.Join(fmt.Errorf("approved click failed"), settleErr, postErr)
 		}
 		newPages := []playwright.Page{}
 		for _, page := range s.browserContext.Pages() {
@@ -383,6 +394,41 @@ func (s *playwrightAuthorSession) Execute(ctx context.Context, action authorsess
 	default:
 		return authorsession.Execution{}, fmt.Errorf("unsupported author action")
 	}
+}
+
+func (s *playwrightAuthorSession) settleApprovedClick(ctx context.Context, before map[playwright.Page]string) error {
+	timeout, err := operationTimeout(ctx, s.request.NavigationTimeout)
+	if err != nil {
+		return err
+	}
+	pages := s.browserContext.Pages()
+	for _, page := range pages {
+		previous, existed := before[page]
+		if !existed {
+			if err := page.WaitForURL(regexp.MustCompile(`^https?://`), playwright.PageWaitForURLOptions{
+				Timeout: playwright.Float(timeout), WaitUntil: playwright.WaitUntilStateLoad,
+			}); err != nil {
+				return fmt.Errorf("wait for approved popup navigation")
+			}
+		} else if current := page.URL(); current != previous {
+			if err := page.WaitForURL(current, playwright.PageWaitForURLOptions{
+				Timeout: playwright.Float(timeout), WaitUntil: playwright.WaitUntilStateLoad,
+			}); err != nil {
+				return fmt.Errorf("wait for approved page navigation")
+			}
+		}
+	}
+	for _, page := range pages {
+		if page.IsClosed() {
+			return fmt.Errorf("approved click closed a page")
+		}
+		if err := page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+			State: playwright.LoadStateLoad, Timeout: playwright.Float(timeout),
+		}); err != nil {
+			return fmt.Errorf("wait for approved page load")
+		}
+	}
+	return s.health(ctx)
 }
 
 func (s *playwrightAuthorSession) AddOrigin(origin string) error {
@@ -896,6 +942,17 @@ func authorTargetOrigin(locator playwright.Locator, currentURL string) string {
 		return ""
 	}
 	return origin
+}
+
+func authorOpensPopup(locator playwright.Locator) bool {
+	for _, attribute := range []string{"target", "formtarget"} {
+		value, err := locator.GetAttribute(attribute)
+		value = strings.ToLower(strings.TrimSpace(value))
+		if err == nil && value != "" && value != "_self" && value != "_top" && value != "_parent" {
+			return true
+		}
+	}
+	return false
 }
 
 const authorSemanticSelector = "button,a,input,select,textarea,h1,h2,h3,h4,h5,h6,[role]"

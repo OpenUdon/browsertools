@@ -29,7 +29,7 @@ func TestPlaywrightAuthorHasNoCredentialReadOrSessionExportAPI(t *testing.T) {
 	if !strings.Contains(source, "OnRequestFinished") || !strings.Contains(source, "request.Sizes()") || strings.Contains(source, `HeaderValue("content-length")`) {
 		t.Fatal("response accounting must use actual completed transfer sizes, including chunked responses")
 	}
-	for _, required := range []string{"resolveCandidate(action", "candidate is missing, changed, or ambiguous", "frame.IsDetached()", "frame context identity changed", "popup context origin changed"} {
+	for _, required := range []string{"resolveCandidate(action", "settleApprovedClick", "authorOpensPopup", "candidate is missing, changed, or ambiguous", "frame.IsDetached()", "frame context identity changed", "popup context origin changed"} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("action-time/context freshness policy is missing %q", required)
 		}
