@@ -166,17 +166,28 @@ One observation contains only:
 - each candidate's accessibility role and redacted accessible label;
 - bounded match counts and closed diagnostic codes.
 
-Accessible labels are normalized, bounded, screened for secret/PII shapes and
-prompt-injection text, and replaced with fixed redaction markers when unsafe.
-Candidate IDs are derived deterministically within one observation generation
-from the context, role, redacted label, and ordinal, but reveal none of the
-original page content. A subsequent observation expires every earlier
-candidate in that context. Immediately before focus or click, the Playwright
-adapter re-enumerates current accessible semantics and requires the approved
-role, raw accessible label, input kind, exact target origin, and unique match
-count to remain identical; it never caches a locator as authority. Explicitly
-opened popup IDs and their parent topology appear in the next state and
-observation, so the client never has to guess a portable context name.
+`authorsession.ReduceAccessibilityLabel` owns the canonical label policy. It
+collapses Unicode whitespace and controls, replaces values over 256 bytes and
+secret/PII-shaped values with `[redacted]`, and replaces prompt-injection
+phrases with `[untrusted-label]`. The two markers, empty labels, ordinary
+headings, and safe hostnames remain stable under repeated reduction. Its closed
+reason vocabulary is `unchanged`, `normalized`, `too_long`, `sensitive`, and
+`prompt_injection`; rejected raw values never belong in diagnostics.
+
+Browsertools applies that reducer before candidate IDs are derived. An
+independent consumer verifies that reducing each incoming label again produces
+the exact incoming value before it displays or discloses an observation. This
+canonicality check detects substituted or noncanonical producer output without
+duplicating the browser-specific phrase or credential policy. Candidate IDs
+are derived deterministically within one observation generation from the
+context, role, canonical label, and ordinal, but reveal none of the original
+page content. A subsequent observation expires every earlier candidate in that
+context. Immediately before focus or click, the Playwright adapter
+re-enumerates current accessible semantics and requires the approved role, raw
+accessible label, input kind, exact target origin, and unique match count to
+remain identical; it never caches a locator as authority. Explicitly opened
+popup IDs and their parent topology appear in the next state and observation,
+so the client never has to guess a portable context name.
 
 The protocol never exposes DOM, ARIA snapshots, page text, screenshots, input
 values, cookies, local/session storage, request or response bodies, headers,

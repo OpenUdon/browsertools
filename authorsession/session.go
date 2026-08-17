@@ -20,7 +20,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/OpenUdon/browsertools/authorresult"
 )
@@ -691,7 +690,7 @@ func (s *server) reduceObservation(raw RawObservation, requestedContext string) 
 		if rawCandidate.InputKind != "" && rawCandidate.InputKind != "identifier" && rawCandidate.InputKind != "password" && rawCandidate.InputKind != "otp" && rawCandidate.InputKind != "mfa" {
 			return Observation{}, nil, fmt.Errorf("backend input kind is invalid")
 		}
-		label, _ := reduceLabel(rawCandidate.Label)
+		label := ReduceAccessibilityLabel(rawCandidate.Label).Value
 		id := candidateID(s.observations, contextID, rawCandidate.Role, label, index)
 		candidate := Candidate{ID: id, Role: rawCandidate.Role, Label: label, Matches: rawCandidate.Matches}
 		result.Candidates = append(result.Candidates, candidate)
@@ -982,26 +981,6 @@ func normalizedContext(value string) string {
 	return value
 }
 
-func reduceLabel(raw string) (string, bool) {
-	raw = strings.Join(strings.FieldsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
-	if raw == "" {
-		return "", true
-	}
-	if len(raw) > 256 {
-		return "[redacted]", false
-	}
-	lower := strings.ToLower(raw)
-	for _, phrase := range []string{"ignore previous", "ignore all instructions", "system prompt", "developer message", "tool call", "reveal secrets"} {
-		if strings.Contains(lower, phrase) {
-			return "[untrusted-label]", false
-		}
-	}
-	if emailPattern.MatchString(raw) || phonePattern.MatchString(raw) || secretPattern.MatchString(raw) {
-		return "[redacted]", false
-	}
-	return raw, true
-}
-
 func candidateID(generation int, contextID, role, label string, ordinal int) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s\x00%s\x00%d", generation, contextID, role, label, ordinal)))
 	return "candidate-" + hex.EncodeToString(sum[:8])
@@ -1176,9 +1155,6 @@ func dataDigest(data []byte) string {
 var (
 	identifierPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
 	diagnosticPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-	emailPattern      = regexp.MustCompile(`(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`)
-	phonePattern      = regexp.MustCompile(`(?:^|[^A-Za-z0-9])\+?[0-9][0-9 ()-]{8,}[0-9](?:$|[^A-Za-z0-9])`)
-	secretPattern     = regexp.MustCompile(`(?i)(?:bearer\s+[a-z0-9._-]{12,}|(?:token|secret|password)\s*[:=]\s*\S+|sk-[a-z0-9]{12,})`)
 	portableRoles     = map[string]bool{
 		"button": true, "link": true, "textbox": true, "checkbox": true, "radio": true,
 		"dialog": true, "status": true, "alert": true, "heading": true, "img": true,
