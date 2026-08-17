@@ -46,7 +46,7 @@ func TestAuthorSessionChromiumCLIUsesNDJSONAndGenericFailure(t *testing.T) {
 	driverDirectory := ""
 	code := runAuthorSessionChromiumWith(
 		[]string{"--private-root", privateRoot, "--driver-dir", "/installed/driver"},
-		strings.NewReader(`{"protocol":"browsertools.author-session.v1","type":"close"}`+"\n"),
+		strings.NewReader(`{"protocol":"browsertools.author-session.v2","type":"close"}`+"\n"),
 		&stdout, &stderr, time.Now,
 		func(value string) authorsession.Browser { driverDirectory = value; return &cliAuthorBrowser{} },
 	)

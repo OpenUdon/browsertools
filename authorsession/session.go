@@ -22,9 +22,10 @@ import (
 	"time"
 
 	"github.com/OpenUdon/browsertools/authorresult"
+	"github.com/OpenUdon/evidence/redact"
 )
 
-const Protocol = "browsertools.author-session.v1"
+const Protocol = "browsertools.author-session.v2"
 
 const (
 	DefaultNavigationTimeout = 20 * time.Second
@@ -33,6 +34,9 @@ const (
 	DefaultMaxResponseBytes  = int64(32 << 20)
 	DefaultMaxObservations   = 64
 	DefaultMaxCandidates     = 128
+	DefaultMaxOutputs        = 16
+	AbsoluteMaxOutputs       = 32
+	maxSelectedOutputs       = 16
 	maxProtocolLineBytes     = 64 << 10
 )
 
@@ -123,7 +127,17 @@ type ClientMessage struct {
 	Action        string                      `json:"action,omitempty"`
 	POSTBudget    int                         `json:"postBudget,omitempty"`
 	ApprovalID    string                      `json:"approvalId,omitempty"`
+	ChallengeKind string                      `json:"challengeKind,omitempty"`
+	Outputs       *[]OutputRequest            `json:"outputs,omitempty"`
 	Confirmed     bool                        `json:"confirmed,omitempty"`
+}
+
+// OutputRequest is one human-reviewed accessibility output declaration.
+type OutputRequest struct {
+	CandidateID string `json:"candidateId"`
+	Key         string `json:"key"`
+	Type        string `json:"type"`
+	LocatorMode string `json:"locatorMode"`
 }
 
 // Candidate is the reduced protocol candidate.
@@ -169,8 +183,9 @@ type Approval struct {
 }
 
 type Checkpoint struct {
-	Kind        string `json:"kind"`
-	CandidateID string `json:"candidateId,omitempty"`
+	Kind           string   `json:"kind"`
+	CandidateID    string   `json:"candidateId,omitempty"`
+	ChallengeKinds []string `json:"challengeKinds,omitempty"`
 }
 
 type Diagnostic struct {
@@ -202,30 +217,39 @@ type pendingApproval struct {
 	origin  string
 }
 
+type pendingHumanInput struct {
+	candidateID string
+	record      candidateRecord
+	phase       string
+	kinds       []string
+}
+
 type server struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	browser         Browser
-	session         Session
-	output          io.Writer
-	options         ServeOptions
-	started         bool
-	closed          bool
-	phase           string
-	start           ClientMessage
-	bounds          authorresult.Bounds
-	origins         map[string]struct{}
-	contexts        map[string]authorresult.Context
-	candidates      map[string]candidateRecord
-	trace           []authorresult.TraceStep
-	diagnostics     []string
-	observations    int
-	approvalCounter int
-	pending         *pendingApproval
-	goalProof       *authorresult.GoalProof
-	authProof       *authorresult.GoalProof
-	humanConfirmed  bool
-	observedAt      time.Time
+	ctx              context.Context
+	cancel           context.CancelFunc
+	browser          Browser
+	session          Session
+	output           io.Writer
+	options          ServeOptions
+	started          bool
+	closed           bool
+	phase            string
+	start            ClientMessage
+	bounds           authorresult.Bounds
+	origins          map[string]struct{}
+	contexts         map[string]authorresult.Context
+	candidates       map[string]candidateRecord
+	trace            []authorresult.TraceStep
+	diagnostics      []string
+	observations     int
+	approvalCounter  int
+	pending          *pendingApproval
+	pendingInput     *pendingHumanInput
+	goalProof        *authorresult.GoalProof
+	authProof        *authorresult.GoalProof
+	humanConfirmed   bool
+	outputSelections []authorresult.OutputSelection
+	observedAt       time.Time
 }
 
 // Serve processes one author session until finish, close, or fail-closed
@@ -249,7 +273,7 @@ func Serve(ctx context.Context, input io.Reader, output io.Writer, browser Brows
 		candidates: make(map[string]candidateRecord), phase: "awaiting_start",
 	}
 	if err := s.write(ServerMessage{
-		Type: "hello", Capabilities: []string{"chromium", "human_credentials", "human_mfa", "reduced_observation", "popup", "frame", "typed_goal"},
+		Type: "hello", Capabilities: []string{"chromium", "human_credentials", "reviewed_mfa_kind", "reviewed_outputs", "reduced_observation", "popup", "frame", "typed_goal"},
 	}); err != nil {
 		return err
 	}
@@ -301,6 +325,8 @@ func (s *server) handle(message ClientMessage) (bool, error) {
 		return false, s.observe(message.Context)
 	case "focus_human_input":
 		return false, s.focus(message.CandidateID)
+	case "human_input_complete":
+		return false, s.completeHumanInput(message.CandidateID, message.ChallengeKind)
 	case "execute":
 		return false, s.requestExecute(message)
 	case "approve":
@@ -308,7 +334,7 @@ func (s *server) handle(message ClientMessage) (bool, error) {
 	case "deny":
 		return false, s.deny(message.ApprovalID)
 	case "human_complete":
-		return false, s.complete(message.Confirmed)
+		return false, s.complete(message.Confirmed, message.Outputs)
 	case "finish":
 		return true, s.finish()
 	case "close":
@@ -434,18 +460,43 @@ func (s *server) focus(candidateID string) error {
 			return s.fail("browser_failure", err)
 		}
 	}
-	s.trace = append(s.trace, authorresult.TraceStep{
-		Kind: "focus_human_input", Phase: s.phase, CandidateID: candidateID,
-		Context: record.context, Role: record.protocol.Role, Label: record.label,
-		InputKind: record.raw.InputKind,
-	})
 	checkpoint := record.raw.InputKind
+	var challengeKinds []string
 	if checkpoint == "identifier" || checkpoint == "password" {
 		checkpoint = "credential"
+	} else if checkpoint == "otp" {
+		checkpoint = "mfa"
+		challengeKinds = []string{"totp", "sms_otp", "email_otp", "voice_otp"}
 	} else {
 		checkpoint = "mfa"
+		challengeKinds = []string{"push", "push_number_match", "passkey", "security_key"}
 	}
-	return s.write(ServerMessage{Type: "human_checkpoint", Checkpoint: &Checkpoint{Kind: checkpoint, CandidateID: candidateID}})
+	s.pendingInput = &pendingHumanInput{candidateID: candidateID, record: record, phase: s.phase, kinds: challengeKinds}
+	s.phase = "human_input"
+	return s.write(ServerMessage{Type: "human_checkpoint", Checkpoint: &Checkpoint{Kind: checkpoint, CandidateID: candidateID, ChallengeKinds: challengeKinds}})
+}
+
+func (s *server) completeHumanInput(candidateID, challengeKind string) error {
+	pending := s.pendingInput
+	if pending == nil || candidateID == "" || candidateID != pending.candidateID {
+		return s.fail("human_input_mismatch", fmt.Errorf("human input candidate does not match"))
+	}
+	if len(pending.kinds) == 0 {
+		if challengeKind != "" {
+			return s.fail("challenge_kind_invalid", fmt.Errorf("credential input does not accept a challenge kind"))
+		}
+	} else if !containsString(pending.kinds, challengeKind) {
+		return s.fail("challenge_kind_invalid", fmt.Errorf("reviewed challenge kind is missing or incompatible"))
+	}
+	record := pending.record
+	s.trace = append(s.trace, authorresult.TraceStep{
+		Kind: "focus_human_input", Phase: pending.phase, CandidateID: candidateID,
+		Context: record.context, Role: record.protocol.Role, Label: record.label,
+		InputKind: record.raw.InputKind, ChallengeKind: challengeKind,
+	})
+	s.pendingInput = nil
+	s.phase = pending.phase
+	return s.write(ServerMessage{Type: "state", Phase: s.phase, Context: normalizedContext(record.context)})
 }
 
 func (s *server) requestExecute(message ClientMessage) error {
@@ -576,10 +627,15 @@ func (s *server) execute(message ClientMessage) error {
 	return s.write(ServerMessage{Type: "state", Phase: s.phase, Context: normalizedContext(stateContext)})
 }
 
-func (s *server) complete(confirmed bool) error {
-	if s.phase != "exploration" || !confirmed || s.goalProof == nil {
+func (s *server) complete(confirmed bool, outputs *[]OutputRequest) error {
+	if s.phase != "exploration" || !confirmed || s.goalProof == nil || outputs == nil {
 		return s.fail("completion_denied", fmt.Errorf("typed goal and human confirmation are required"))
 	}
+	selections, err := s.reviewOutputs(*outputs)
+	if err != nil {
+		return s.fail("output_selection_invalid", err)
+	}
+	s.outputSelections = selections
 	s.humanConfirmed, s.phase = true, "completed"
 	return s.write(ServerMessage{Type: "state", Phase: s.phase, Context: s.goalProof.Context})
 }
@@ -596,6 +652,7 @@ func (s *server) finish() error {
 		InitialURL: s.start.URL, DashboardURL: s.start.DashboardURL,
 		Origins: sortedKeys(s.origins), Contexts: s.contexts, Bounds: s.bounds,
 		Trace: s.trace, GoalPredicate: *s.start.GoalPredicate, GoalProof: *s.goalProof,
+		OutputSelections:    s.outputSelections,
 		AuthenticationProof: *s.authProof,
 		HumanConfirmed:      true, Diagnostics: s.diagnostics,
 	})
@@ -614,6 +671,73 @@ func (s *server) finish() error {
 	}
 	s.closed = true
 	return s.write(ServerMessage{Type: "result", Result: &Result{ArtifactPath: path, Digest: digest}})
+}
+
+func (s *server) reviewOutputs(requests []OutputRequest) ([]authorresult.OutputSelection, error) {
+	limit := s.bounds.MaxOutputs
+	if limit > maxSelectedOutputs {
+		limit = maxSelectedOutputs
+	}
+	if len(requests) > limit {
+		return nil, fmt.Errorf("output selection bound exceeded")
+	}
+	if len(requests) == 0 {
+		return []authorresult.OutputSelection{}, nil
+	}
+	seenKeys, seenCandidates := map[string]bool{}, map[string]bool{}
+	for _, request := range requests {
+		if !identifierPattern.MatchString(request.Key) || request.Key == "goal_present" || redact.SensitiveKey(strings.ToLower(request.Key)) ||
+			seenKeys[request.Key] || seenCandidates[request.CandidateID] || !outputTypes[request.Type] || !outputLocatorModes[request.LocatorMode] {
+			return nil, fmt.Errorf("output request is invalid")
+		}
+		record, ok := s.candidates[request.CandidateID]
+		if !ok || record.context != normalizedContext(s.goalProof.Context) || record.protocol.Matches != 1 || record.raw.InputKind != "" || outputControlRoles[record.protocol.Role] || !promotableLabel(record.label) {
+			return nil, fmt.Errorf("output candidate is stale, ambiguous, or unsafe")
+		}
+		seenKeys[request.Key], seenCandidates[request.CandidateID] = true, true
+	}
+	contextID := normalizedContext(s.goalProof.Context)
+	raw, err := s.session.Observe(s.ctx, contextID)
+	if err != nil {
+		return nil, fmt.Errorf("re-enumerate output candidates")
+	}
+	origin, err := exactOrigin(raw.Origin)
+	if err != nil || origin != s.goalProof.Origin || !cleanPath(raw.Path) || raw.Path != s.goalProof.Path || normalizedContext(raw.Context) != contextID || len(raw.Candidates) > s.bounds.MaxCandidates {
+		return nil, fmt.Errorf("output observation changed")
+	}
+	selections := make([]authorresult.OutputSelection, 0, len(requests))
+	for _, request := range requests {
+		record := s.candidates[request.CandidateID]
+		exactMatches, roleMatches := 0, 0
+		for _, candidate := range raw.Candidates {
+			if candidate.Matches < 1 || candidate.Matches > s.bounds.MaxCandidates {
+				return nil, fmt.Errorf("output match proof is invalid")
+			}
+			if candidate.Role == record.protocol.Role {
+				roleMatches += candidate.Matches
+				if candidate.InputKind == "" && ReduceAccessibilityLabel(candidate.Label).Value == record.label {
+					exactMatches += candidate.Matches
+				}
+			}
+		}
+		if roleMatches > s.bounds.MaxCandidates {
+			return nil, fmt.Errorf("output role match proof exceeds candidate bounds")
+		}
+		if exactMatches != 1 || (request.LocatorMode == "unique_role" && roleMatches != 1) {
+			return nil, fmt.Errorf("output candidate no longer has the reviewed match proof")
+		}
+		selection := authorresult.OutputSelection{
+			CandidateID: request.CandidateID, Key: request.Key, Type: request.Type, LocatorMode: request.LocatorMode,
+			Observation: s.observations, Context: contextID, Role: record.protocol.Role,
+			Matches: exactMatches, RoleMatches: roleMatches,
+		}
+		if request.LocatorMode == "exact_name" {
+			selection.Name = record.label
+		}
+		selections = append(selections, selection)
+	}
+	sort.Slice(selections, func(i, j int) bool { return selections[i].Key < selections[j].Key })
+	return selections, nil
 }
 
 func (s *server) closeWithoutResult() error {
@@ -827,21 +951,23 @@ func decodeClientMessage(line []byte) (ClientMessage, error) {
 }
 
 var clientFields = map[string]map[string]bool{
-	"start":             fields("protocol", "type", "title", "url", "dashboardUrl", "goal", "origins", "goalPredicate", "bounds"),
-	"observe":           fields("protocol", "type", "context"),
-	"focus_human_input": fields("protocol", "type", "candidateId"),
-	"execute":           fields("protocol", "type", "action", "candidateId", "url", "context", "postBudget"),
-	"approve":           fields("protocol", "type", "approvalId"),
-	"deny":              fields("protocol", "type", "approvalId"),
-	"human_complete":    fields("protocol", "type", "confirmed"),
-	"finish":            fields("protocol", "type"),
-	"close":             fields("protocol", "type"),
-	"unknown":           fields("protocol", "type"),
+	"start":                fields("protocol", "type", "title", "url", "dashboardUrl", "goal", "origins", "goalPredicate", "bounds"),
+	"observe":              fields("protocol", "type", "context"),
+	"focus_human_input":    fields("protocol", "type", "candidateId"),
+	"human_input_complete": fields("protocol", "type", "candidateId", "challengeKind"),
+	"execute":              fields("protocol", "type", "action", "candidateId", "url", "context", "postBudget"),
+	"approve":              fields("protocol", "type", "approvalId"),
+	"deny":                 fields("protocol", "type", "approvalId"),
+	"human_complete":       fields("protocol", "type", "confirmed", "outputs"),
+	"finish":               fields("protocol", "type"),
+	"close":                fields("protocol", "type"),
+	"unknown":              fields("protocol", "type"),
 }
 
 var phaseMessages = map[string]map[string]bool{
 	"awaiting_start": fields("start", "close"),
 	"authentication": fields("observe", "focus_human_input", "execute", "approve", "deny", "close"),
+	"human_input":    fields("human_input_complete", "close"),
 	"exploration":    fields("observe", "execute", "approve", "deny", "human_complete", "close"),
 	"completed":      fields("finish", "close"),
 }
@@ -891,7 +1017,8 @@ func validateBounds(value *authorresult.Bounds) error {
 		value.MaxRequests <= 0 || value.MaxRequests > 4096 ||
 		value.MaxResponseBytes <= 0 || value.MaxResponseBytes > 128<<20 ||
 		value.MaxObservations <= 0 || value.MaxObservations > 256 ||
-		value.MaxCandidates <= 0 || value.MaxCandidates > 512 {
+		value.MaxCandidates <= 0 || value.MaxCandidates > 512 ||
+		value.MaxOutputs <= 0 || value.MaxOutputs > AbsoluteMaxOutputs {
 		return fmt.Errorf("author-session bounds are invalid")
 	}
 	return nil
@@ -902,6 +1029,7 @@ func normalizedBounds(value *authorresult.Bounds) authorresult.Bounds {
 		NavigationTimeoutMS: DefaultNavigationTimeout.Milliseconds(), TotalTimeoutMS: DefaultTotalTimeout.Milliseconds(),
 		MaxRequests: DefaultMaxRequests, MaxResponseBytes: DefaultMaxResponseBytes,
 		MaxObservations: DefaultMaxObservations, MaxCandidates: DefaultMaxCandidates,
+		MaxOutputs: DefaultMaxOutputs,
 	}
 	if value != nil {
 		result = *value
@@ -1139,6 +1267,19 @@ func sortedKeys(values map[string]struct{}) []string {
 	return result
 }
 
+func containsString(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func promotableLabel(value string) bool {
+	return value != "" && value != RedactedLabel && value != UntrustedLabel && len(value) <= 256 && ReduceAccessibilityLabel(value).Value == value
+}
+
 func defaultTitle(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1153,9 +1294,12 @@ func dataDigest(data []byte) string {
 }
 
 var (
-	identifierPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
-	diagnosticPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-	portableRoles     = map[string]bool{
+	identifierPattern  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
+	diagnosticPattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	outputTypes        = map[string]bool{"string": true, "integer": true, "number": true, "boolean": true, "presence": true}
+	outputLocatorModes = map[string]bool{"exact_name": true, "unique_role": true}
+	outputControlRoles = map[string]bool{"button": true, "textbox": true, "checkbox": true, "radio": true, "combobox": true, "option": true, "menuitem": true, "tab": true, "switch": true}
+	portableRoles      = map[string]bool{
 		"button": true, "link": true, "textbox": true, "checkbox": true, "radio": true,
 		"dialog": true, "status": true, "alert": true, "heading": true, "img": true,
 		"list": true, "listitem": true, "combobox": true, "option": true, "menu": true,

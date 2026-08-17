@@ -14,9 +14,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/OpenUdon/evidence/redact"
 )
 
-const Schema = "browsertools.authenticated-authoring.v1"
+const Schema = "browsertools.authenticated-authoring.v2"
 
 // Bounds records the finite authority used by the live author session.
 type Bounds struct {
@@ -26,6 +29,7 @@ type Bounds struct {
 	MaxResponseBytes    int64 `json:"maxResponseBytes"`
 	MaxObservations     int   `json:"maxObservations"`
 	MaxCandidates       int   `json:"maxCandidates"`
+	MaxOutputs          int   `json:"maxOutputs"`
 }
 
 // Context is one portable popup/frame relationship discovered and reviewed in
@@ -61,17 +65,33 @@ type GoalProof struct {
 // TraceStep is one executed portable authoring action. Backend selectors and
 // input values are intentionally absent.
 type TraceStep struct {
-	Kind         string `json:"kind"`
-	Phase        string `json:"phase"`
-	CandidateID  string `json:"candidateId,omitempty"`
-	Context      string `json:"context,omitempty"`
-	Role         string `json:"role,omitempty"`
-	Label        string `json:"label,omitempty"`
-	InputKind    string `json:"inputKind,omitempty"`
-	URL          string `json:"url,omitempty"`
-	POSTBudget   int    `json:"postBudget,omitempty"`
-	POSTObserved int    `json:"postObserved,omitempty"`
-	OpensContext string `json:"opensContext,omitempty"`
+	Kind          string `json:"kind"`
+	Phase         string `json:"phase"`
+	CandidateID   string `json:"candidateId,omitempty"`
+	Context       string `json:"context,omitempty"`
+	Role          string `json:"role,omitempty"`
+	Label         string `json:"label,omitempty"`
+	InputKind     string `json:"inputKind,omitempty"`
+	ChallengeKind string `json:"challengeKind,omitempty"`
+	URL           string `json:"url,omitempty"`
+	POSTBudget    int    `json:"postBudget,omitempty"`
+	POSTObserved  int    `json:"postObserved,omitempty"`
+	OpensContext  string `json:"opensContext,omitempty"`
+}
+
+// OutputSelection is one human-reviewed, action-time-revalidated output
+// locator. It proves accessible matching without carrying the page value.
+type OutputSelection struct {
+	CandidateID string `json:"candidateId"`
+	Key         string `json:"key"`
+	Type        string `json:"type"`
+	LocatorMode string `json:"locatorMode"`
+	Observation int    `json:"observation"`
+	Context     string `json:"context"`
+	Role        string `json:"role"`
+	Name        string `json:"name,omitempty"`
+	Matches     int    `json:"matches"`
+	RoleMatches int    `json:"roleMatches"`
 }
 
 // Review binds one exact candidate profile to the completed authoring review.
@@ -95,6 +115,7 @@ type Envelope struct {
 	Contexts              map[string]Context `json:"contexts"`
 	Bounds                Bounds             `json:"bounds"`
 	Trace                 []TraceStep        `json:"trace"`
+	OutputSelections      []OutputSelection  `json:"outputSelections"`
 	AuthenticationProfile json.RawMessage    `json:"authenticationProfile"`
 	AuthenticationReview  Review             `json:"authenticationReview"`
 	CapabilityProfile     json.RawMessage    `json:"capabilityProfile"`
@@ -113,6 +134,7 @@ type BuildRequest struct {
 	Contexts            map[string]Context
 	Bounds              Bounds
 	Trace               []TraceStep
+	OutputSelections    []OutputSelection
 	GoalPredicate       GoalPredicate
 	GoalProof           GoalProof
 	AuthenticationProof GoalProof
@@ -126,18 +148,15 @@ func Build(request BuildRequest) (*Envelope, error) {
 	if request.ObservedAt.IsZero() || strings.TrimSpace(request.Goal) == "" || !request.HumanConfirmed {
 		return nil, fmt.Errorf("observed time, goal, and human completion are required")
 	}
-	// Preserve source compatibility for callers built against the original v1
-	// builder, where authentication success was necessarily the final goal.
-	// Live author sessions always provide the separately captured dashboard
-	// proof; legacy callers retain their former semantics.
-	if request.AuthenticationProof == (GoalProof{}) {
-		request.AuthenticationProof = request.GoalProof
-	}
 	if request.GoalProof.Matches != 1 || request.GoalProof.Origin != request.GoalPredicate.Origin || request.GoalProof.Path != request.GoalPredicate.Path ||
 		request.GoalProof.Role != request.GoalPredicate.Role || normalizedContext(request.GoalProof.Context) != normalizedContext(request.GoalPredicate.Context) ||
 		(request.GoalPredicate.Label != "" && request.GoalProof.Label != request.GoalPredicate.Label) {
 		return nil, fmt.Errorf("typed goal predicate is not satisfied")
 	}
+	selections := make([]OutputSelection, len(request.OutputSelections))
+	copy(selections, request.OutputSelections)
+	sort.Slice(selections, func(i, j int) bool { return selections[i].Key < selections[j].Key })
+	request.OutputSelections = selections
 	origins := canonicalStrings(request.Origins)
 	if err := validateBuildRequest(request, origins); err != nil {
 		return nil, err
@@ -172,6 +191,7 @@ func Build(request BuildRequest) (*Envelope, error) {
 		GoalPredicate: request.GoalPredicate, GoalProof: request.GoalProof, HumanConfirmed: true,
 		Origins: origins, Contexts: contexts, Bounds: request.Bounds,
 		Trace:                 append([]TraceStep(nil), request.Trace...),
+		OutputSelections:      selections,
 		AuthenticationProfile: authBytes,
 		AuthenticationReview: Review{
 			Schema: "browsertools.authenticated-profile-review.v1", Kind: "authentication",
@@ -232,8 +252,40 @@ func validateBuildRequest(request BuildRequest, origins []string) error {
 	if _, ok := allowed[request.GoalPredicate.Origin]; !ok || !cleanPath(request.GoalPredicate.Path) || !identifier.MatchString(request.GoalPredicate.Role) {
 		return fmt.Errorf("result goal predicate is invalid")
 	}
-	if request.Bounds.NavigationTimeoutMS <= 0 || request.Bounds.TotalTimeoutMS < request.Bounds.NavigationTimeoutMS || request.Bounds.MaxRequests <= 0 || request.Bounds.MaxResponseBytes <= 0 || request.Bounds.MaxObservations <= 0 || request.Bounds.MaxCandidates <= 0 {
+	if request.Bounds.NavigationTimeoutMS <= 0 || request.Bounds.TotalTimeoutMS < request.Bounds.NavigationTimeoutMS || request.Bounds.MaxRequests <= 0 || request.Bounds.MaxResponseBytes <= 0 || request.Bounds.MaxObservations <= 0 || request.Bounds.MaxCandidates <= 0 || request.Bounds.MaxOutputs <= 0 || request.Bounds.MaxOutputs > 32 {
 		return fmt.Errorf("result bounds are invalid")
+	}
+	if len(request.OutputSelections) > request.Bounds.MaxOutputs || len(request.OutputSelections) > 16 {
+		return fmt.Errorf("result output selection bound exceeded")
+	}
+	seenKeys, seenCandidates := map[string]bool{}, map[string]bool{}
+	selectionObservation := 0
+	for _, selection := range request.OutputSelections {
+		if !identifier.MatchString(selection.Key) || selection.Key == "goal_present" || redact.SensitiveKey(strings.ToLower(selection.Key)) ||
+			!candidateIdentifier.MatchString(selection.CandidateID) || seenKeys[selection.Key] || seenCandidates[selection.CandidateID] {
+			return fmt.Errorf("result output selection identity is invalid")
+		}
+		seenKeys[selection.Key], seenCandidates[selection.CandidateID] = true, true
+		if selectionObservation == 0 {
+			selectionObservation = selection.Observation
+		}
+		if !outputTypes[selection.Type] || !outputLocatorModes[selection.LocatorMode] || selection.Observation <= 0 || selection.Observation > request.Bounds.MaxObservations || selection.Observation != selectionObservation ||
+			selection.Matches != 1 || selection.RoleMatches < 1 || selection.RoleMatches > request.Bounds.MaxCandidates || !outputRoles[selection.Role] || outputControlRoles[selection.Role] ||
+			normalizedContext(selection.Context) != normalizedContext(request.GoalProof.Context) {
+			return fmt.Errorf("result output selection proof is invalid")
+		}
+		if context := normalizedContext(selection.Context); context != "main" {
+			if _, ok := request.Contexts[context]; !ok {
+				return fmt.Errorf("result output context is missing")
+			}
+		}
+		if selection.LocatorMode == "exact_name" {
+			if !canonicalPromotableName(selection.Name) {
+				return fmt.Errorf("result exact-name output is invalid")
+			}
+		} else if selection.Name != "" || selection.RoleMatches != 1 {
+			return fmt.Errorf("result unique-role output proof is invalid")
+		}
 	}
 	for id, context := range request.Contexts {
 		if !identifier.MatchString(id) || id == "main" || (context.Kind != "popup" && context.Kind != "frame") || !identifier.MatchString(context.Parent) {
@@ -286,6 +338,30 @@ func validateBuildRequest(request BuildRequest, origins []string) error {
 			opened, ok := request.Contexts[step.OpensContext]
 			if !ok || opened.Kind != "popup" || normalizedContext(opened.Parent) != normalizedContext(step.Context) || step.Kind != "click" {
 				return fmt.Errorf("result popup binding is invalid")
+			}
+		}
+		if step.Kind == "focus_human_input" {
+			switch step.InputKind {
+			case "identifier", "password":
+				if step.ChallengeKind != "" {
+					return fmt.Errorf("credential trace carries a challenge kind")
+				}
+				if _, err := portableLocator(step); err != nil {
+					return err
+				}
+			case "otp":
+				if !otpChallengeKinds[step.ChallengeKind] {
+					return fmt.Errorf("OTP trace challenge kind is invalid")
+				}
+				if _, err := portableLocator(step); err != nil {
+					return err
+				}
+			case "mfa":
+				if !nonInputChallengeKinds[step.ChallengeKind] {
+					return fmt.Errorf("non-input MFA trace challenge kind is invalid")
+				}
+			default:
+				return fmt.Errorf("human input trace kind is invalid")
 			}
 		}
 	}
@@ -359,6 +435,7 @@ func buildAuthenticationProfile(request BuildRequest, origins []string) (map[str
 	}
 	sequence := []any{map[string]any{"navigate": initial}}
 	credentialSlots := map[string]any{}
+	credentialCounter := 0
 	hasChallenge := false
 	authContextIDs := []string{request.AuthenticationProof.Context}
 	for _, step := range request.Trace {
@@ -368,8 +445,19 @@ func buildAuthenticationProfile(request BuildRequest, origins []string) (map[str
 		authContextIDs = append(authContextIDs, step.Context, step.OpensContext)
 		switch step.Kind {
 		case "focus_human_input":
-			if step.InputKind == "mfa" {
-				challenge := map[string]any{"kind": "push"}
+			if step.InputKind == "otp" || step.InputKind == "mfa" {
+				challenge := map[string]any{"kind": step.ChallengeKind}
+				if step.InputKind == "otp" {
+					locator, locatorErr := portableLocator(step)
+					if locatorErr != nil {
+						return nil, "", locatorErr
+					}
+					challenge["locator"] = locator
+					if step.ChallengeKind == "totp" {
+						credentialSlots["totp_seed"] = map[string]any{"kind": "totp_seed"}
+						challenge["slot"] = "totp_seed"
+					}
+				}
 				putContext(challenge, step.Context)
 				sequence = append(sequence, map[string]any{"challenge": challenge})
 				hasChallenge = true
@@ -379,14 +467,8 @@ func buildAuthenticationProfile(request BuildRequest, origins []string) (map[str
 			if err != nil {
 				return nil, "", err
 			}
-			if step.InputKind == "otp" {
-				challenge := map[string]any{"kind": "sms_otp", "locator": locator}
-				putContext(challenge, step.Context)
-				sequence = append(sequence, map[string]any{"challenge": challenge})
-				hasChallenge = true
-				continue
-			}
-			slot := fmt.Sprintf("credential_%d", len(credentialSlots)+1)
+			credentialCounter++
+			slot := fmt.Sprintf("credential_%d", credentialCounter)
 			kind := step.InputKind
 			if kind != "password" {
 				kind = "identifier"
@@ -452,6 +534,7 @@ func buildCapabilityProfile(request BuildRequest, origins []string) (map[string]
 	}
 	goalUsesContext := normalizedContext(request.GoalPredicate.Context) != "main"
 	use16 := goalUsesContext
+	use17 := false
 	capabilityContextIDs := []string{request.GoalPredicate.Context}
 	sequence := make([]any, 0, len(request.Trace)+1)
 	for _, step := range request.Trace {
@@ -503,8 +586,33 @@ func buildCapabilityProfile(request BuildRequest, origins []string) (map[string]
 	if len(origins) > 1 {
 		originValue = origins
 	}
+	outputs := map[string]any{"goal_present": output}
+	selections := append([]OutputSelection(nil), request.OutputSelections...)
+	sort.Slice(selections, func(i, j int) bool { return selections[i].Key < selections[j].Key })
+	for _, selection := range selections {
+		selectedLocator := map[string]any{"role": selection.Role}
+		if selection.LocatorMode == "exact_name" {
+			selectedLocator["name"] = selection.Name
+		}
+		selectedOutput := map[string]any{"source": "a11y", "locator": selectedLocator}
+		if selection.Type == "presence" {
+			selectedOutput["type"], selectedOutput["presence"] = "boolean", true
+		} else {
+			selectedOutput["type"] = selection.Type
+			if selection.Type == "integer" || selection.Type == "number" || selection.Type == "boolean" {
+				use17 = true
+			}
+		}
+		if normalizedContext(selection.Context) != "main" {
+			selectedOutput["context"] = selection.Context
+			use16 = true
+		}
+		outputs[selection.Key] = selectedOutput
+	}
 	profileName, versionDecision := "uws.browser.1.5", "uws.browser.1.5"
-	if use16 {
+	if use17 {
+		profileName, versionDecision = "uws.browser.1.7", "uws.browser.1.7"
+	} else if use16 {
 		profileName, versionDecision = "uws.browser.1.6", "uws.browser.1.6"
 	}
 	profile := map[string]any{
@@ -517,7 +625,7 @@ func buildCapabilityProfile(request BuildRequest, origins []string) (map[string]
 		"actions": map[string]any{"reach_authenticated_goal": map[string]any{
 			"description": request.Goal,
 			"sequence":    sequence,
-			"outputs":     map[string]any{"goal_present": output},
+			"outputs":     outputs,
 			"sideEffects": []any{"read_only"}, "confirmationPolicy": map[string]any{"required": false},
 		}},
 	}
@@ -525,6 +633,11 @@ func buildCapabilityProfile(request BuildRequest, origins []string) (map[string]
 		profile["contexts"] = contextMap(selectContexts(request.Contexts, capabilityContextIDs...))
 	}
 	return profile, versionDecision, nil
+}
+
+func canonicalPromotableName(value string) bool {
+	canonical := strings.Join(strings.FieldsFunc(value, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " ")
+	return value != "" && value != "[redacted]" && value != "[untrusted-label]" && len(value) <= 256 && canonical == value
 }
 
 func portableLocator(step TraceStep) (map[string]any, error) {
@@ -604,4 +717,13 @@ func digest(data []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-var identifier = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
+var (
+	identifier             = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
+	candidateIdentifier    = regexp.MustCompile(`^candidate-[a-f0-9]{16}$`)
+	outputTypes            = map[string]bool{"string": true, "integer": true, "number": true, "boolean": true, "presence": true}
+	outputLocatorModes     = map[string]bool{"exact_name": true, "unique_role": true}
+	outputControlRoles     = map[string]bool{"button": true, "textbox": true, "checkbox": true, "radio": true, "combobox": true, "option": true, "menuitem": true, "tab": true, "switch": true}
+	outputRoles            = map[string]bool{"link": true, "dialog": true, "status": true, "alert": true, "heading": true, "img": true, "list": true, "listitem": true, "menu": true, "tabpanel": true, "table": true, "row": true, "cell": true, "region": true, "navigation": true, "article": true, "form": true, "search": true, "group": true}
+	otpChallengeKinds      = map[string]bool{"totp": true, "sms_otp": true, "email_otp": true, "voice_otp": true}
+	nonInputChallengeKinds = map[string]bool{"push": true, "push_number_match": true, "passkey": true, "security_key": true}
+)

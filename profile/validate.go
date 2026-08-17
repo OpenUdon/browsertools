@@ -82,7 +82,7 @@ func compileSchema() (*jsonschema.Schema, error) {
 // Validate checks a JSON-compatible browser-profile value against both the
 // embedded schema and Browsertools' engine-neutral semantic safety rules.
 func Validate(value any) error {
-	if root, ok := value.(map[string]any); ok && root["profile"] == "uws.browser.1.6" {
+	if root, ok := value.(map[string]any); ok && (root["profile"] == "uws.browser.1.6" || root["profile"] == "uws.browser.1.7") {
 		data, err := json.Marshal(value)
 		if err != nil {
 			return err

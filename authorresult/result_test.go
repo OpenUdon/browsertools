@@ -73,7 +73,7 @@ func TestBuildContextAndPushChallengeRequireNewProfiles(t *testing.T) {
 		Kind: "click", Phase: "authentication", Context: "main", CandidateID: "candidate-sso", Role: "button", Label: "Use SSO", OpensContext: "idp_popup",
 	})
 	request.Trace = append(request.Trace, TraceStep{
-		Kind: "focus_human_input", Phase: "authentication", Context: "idp_popup", InputKind: "mfa",
+		Kind: "focus_human_input", Phase: "authentication", Context: "idp_popup", InputKind: "mfa", ChallengeKind: "push",
 	})
 	envelope, err := Build(request)
 	if err != nil {
@@ -182,6 +182,127 @@ func TestBuildRejectsPartialAuthenticationProofInsteadOfApplyingCompatibilityFal
 	}
 }
 
+func TestBuildAuthorsEveryReviewedMFAKindExactly(t *testing.T) {
+	tests := []struct {
+		kind        string
+		inputKind   string
+		wantLocator bool
+		wantSlot    bool
+	}{
+		{kind: "totp", inputKind: "otp", wantLocator: true, wantSlot: true},
+		{kind: "sms_otp", inputKind: "otp", wantLocator: true},
+		{kind: "email_otp", inputKind: "otp", wantLocator: true},
+		{kind: "voice_otp", inputKind: "otp", wantLocator: true},
+		{kind: "push", inputKind: "mfa"},
+		{kind: "push_number_match", inputKind: "mfa"},
+		{kind: "passkey", inputKind: "mfa"},
+		{kind: "security_key", inputKind: "mfa"},
+	}
+	for _, test := range tests {
+		t.Run(test.kind, func(t *testing.T) {
+			request := baseBuildRequest()
+			request.Trace = append(request.Trace, TraceStep{
+				Kind: "focus_human_input", Phase: "authentication", CandidateID: "candidate-0000000000000001",
+				Context: "main", Role: "textbox", Label: "Verification code", InputKind: test.inputKind, ChallengeKind: test.kind,
+			})
+			envelope, err := Build(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := schemas.ValidateBrowserAuthenticationProfile(envelope.AuthenticationProfile); err != nil {
+				t.Fatalf("authentication profile: %v\n%s", err, envelope.AuthenticationProfile)
+			}
+			var authentication map[string]any
+			if err := json.Unmarshal(envelope.AuthenticationProfile, &authentication); err != nil {
+				t.Fatal(err)
+			}
+			sequence := authentication["flows"].(map[string]any)["authenticated_goal"].(map[string]any)["sequence"].([]any)
+			var challenge map[string]any
+			for _, raw := range sequence {
+				if value, ok := raw.(map[string]any)["challenge"].(map[string]any); ok {
+					challenge = value
+				}
+			}
+			if challenge == nil || challenge["kind"] != test.kind || (challenge["locator"] != nil) != test.wantLocator || (challenge["slot"] != nil) != test.wantSlot {
+				t.Fatalf("challenge = %#v", challenge)
+			}
+			if test.wantSlot {
+				slots := authentication["credentialSlots"].(map[string]any)
+				if challenge["slot"] != "totp_seed" || slots["totp_seed"].(map[string]any)["kind"] != "totp_seed" {
+					t.Fatalf("TOTP slot = %#v %#v", challenge, slots)
+				}
+			}
+		})
+	}
+}
+
+func TestBuildSelectsOldestSufficientTypedOutputProfile(t *testing.T) {
+	tests := []struct {
+		name, outputType, context, wantProfile string
+	}{
+		{name: "string main", outputType: "string", wantProfile: "uws.browser.1.5"},
+		{name: "presence main", outputType: "presence", wantProfile: "uws.browser.1.5"},
+		{name: "string context", outputType: "string", context: "report_frame", wantProfile: "uws.browser.1.6"},
+		{name: "integer", outputType: "integer", wantProfile: "uws.browser.1.7"},
+		{name: "number", outputType: "number", wantProfile: "uws.browser.1.7"},
+		{name: "boolean text", outputType: "boolean", wantProfile: "uws.browser.1.7"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := baseBuildRequest()
+			if test.context != "" {
+				request.Contexts = map[string]Context{test.context: {Kind: "frame", Parent: "main", Origin: "https://members.example.test", Name: "Report"}}
+				request.GoalPredicate.Context, request.GoalProof.Context = test.context, test.context
+			}
+			request.OutputSelections = []OutputSelection{{
+				CandidateID: "candidate-0000000000000001", Key: "z_value", Type: test.outputType, LocatorMode: "exact_name",
+				Observation: 3, Context: normalizedContext(test.context), Role: "status", Name: "Current value", Matches: 1, RoleMatches: 2,
+			}}
+			envelope, err := Build(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := schemas.ValidateBrowserSourceProfile(envelope.CapabilityProfile); err != nil {
+				t.Fatalf("capability profile: %v\n%s", err, envelope.CapabilityProfile)
+			}
+			var capability map[string]any
+			if err := json.Unmarshal(envelope.CapabilityProfile, &capability); err != nil {
+				t.Fatal(err)
+			}
+			if capability["profile"] != test.wantProfile {
+				t.Fatalf("profile = %v, want %s", capability["profile"], test.wantProfile)
+			}
+			output := capability["actions"].(map[string]any)["reach_authenticated_goal"].(map[string]any)["outputs"].(map[string]any)["z_value"].(map[string]any)
+			if test.outputType == "presence" {
+				if output["type"] != "boolean" || output["presence"] != true {
+					t.Fatalf("presence output = %#v", output)
+				}
+			} else if output["type"] != test.outputType {
+				t.Fatalf("typed output = %#v", output)
+			}
+		})
+	}
+}
+
+func TestBuildSortsResolvedOutputSelectionsAndRejectsUnsafeProofs(t *testing.T) {
+	request := baseBuildRequest()
+	request.OutputSelections = []OutputSelection{
+		{CandidateID: "candidate-0000000000000002", Key: "zeta", Type: "string", LocatorMode: "exact_name", Observation: 2, Context: "main", Role: "status", Name: "Zeta", Matches: 1, RoleMatches: 2},
+		{CandidateID: "candidate-0000000000000001", Key: "alpha", Type: "presence", LocatorMode: "unique_role", Observation: 2, Context: "main", Role: "heading", Matches: 1, RoleMatches: 1},
+	}
+	envelope, err := Build(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.OutputSelections) != 2 || envelope.OutputSelections[0].Key != "alpha" || envelope.OutputSelections[1].Key != "zeta" {
+		t.Fatalf("output selections = %#v", envelope.OutputSelections)
+	}
+	request.OutputSelections[0].Key = "access_token"
+	if _, err := Build(request); err == nil {
+		t.Fatal("secret-shaped output key was accepted")
+	}
+}
+
 func TestMarshalDeterministicAndDigestBound(t *testing.T) {
 	envelope, err := Build(baseBuildRequest())
 	if err != nil {
@@ -213,7 +334,7 @@ func baseBuildRequest() BuildRequest {
 		InitialURL:   "https://members.example.test/login?next=dashboard",
 		DashboardURL: "https://members.example.test/dashboard",
 		Origins:      []string{"https://members.example.test"},
-		Bounds:       Bounds{NavigationTimeoutMS: 20000, TotalTimeoutMS: 600000, MaxRequests: 512, MaxResponseBytes: 32 << 20, MaxObservations: 64, MaxCandidates: 128},
+		Bounds:       Bounds{NavigationTimeoutMS: 20000, TotalTimeoutMS: 600000, MaxRequests: 512, MaxResponseBytes: 32 << 20, MaxObservations: 64, MaxCandidates: 128, MaxOutputs: 16},
 		Trace: []TraceStep{
 			{Kind: "focus_human_input", Phase: "authentication", CandidateID: "candidate-user", Context: "main", Role: "textbox", Label: "Email", InputKind: "identifier"},
 			{Kind: "focus_human_input", Phase: "authentication", CandidateID: "candidate-password", Context: "main", Role: "textbox", Label: "Password", InputKind: "password"},

@@ -108,10 +108,11 @@ browsertools author-session chromium --private-root /private/operator/member-aut
 ```
 
 The command uses newline-delimited JSON on stdin/stdout. Stdout is protocol
-only. Every object has `protocol: "browsertools.author-session.v1"`, a closed
+only. Every object has `protocol: "browsertools.author-session.v2"`, a closed
 `type`, and only the fields defined for that message. Sizes, collection counts,
 timeouts, identifiers, strings, origins, paths, and action budgets are bounded.
-Unknown message types or fields fail closed.
+Unknown message types or fields fail closed. Protocol v1 input is rejected;
+there is no compatibility or fallback mode.
 
 Client input types are:
 
@@ -120,10 +121,18 @@ Client input types are:
 - `observe`: request a reduced observation for a Browsertools context.
 - `focus_human_input`: focus one Browsertools-issued credential/OTP candidate;
   Browsertools never types or reads its value.
+- `human_input_complete`: leave the distinct human-input state for the exact
+  checkpoint candidate. Identifier/password checkpoints accept no challenge
+  kind. OTP candidates require one exact reviewed `totp`, `sms_otp`,
+  `email_otp`, or `voice_otp` choice; non-input MFA candidates require one
+  exact reviewed `push`, `push_number_match`, `passkey`, or `security_key`
+  choice.
 - `execute`: propose a closed action against a Browsertools candidate ID.
 - `approve` and `deny`: answer the exact pending origin/action/POST request.
 - `human_complete`: record the operator's completion decision after the typed
-  predicate is satisfied.
+  predicate is satisfied and carry the complete reviewed `outputs` array.
+  Each output names one current candidate ID, safe key, scalar/presence type,
+  and `exact_name` or `unique_role` locator mode.
 - `finish`: close the live context and request deterministic candidate output.
 - `close`: destroy the context without producing a promotable result.
 
@@ -134,11 +143,14 @@ Server output types are:
 - `observation`: reduced semantic candidates only.
 - `approval_required`: one exact origin, action, or POST decision.
 - `human_checkpoint`: credential, OTP/MFA, CAPTCHA, or completion attention.
+  MFA checkpoints expose only the `challengeKinds` compatible with the
+  observed input/non-input checkpoint.
 - `diagnostic`: one fixed public code and closed metadata.
 - `result`: the completed private envelope after teardown.
 
 Messages are legal only in their documented phase. The closed phase table is
-`awaiting_start` -> `authentication` -> `exploration` -> `completed`;
+`awaiting_start` -> `authentication` -> `human_input` -> `authentication` ->
+`exploration` -> `completed`;
 authentication success is captured at the first reviewed dashboard
 observation, and only exploration can request completion. Any navigation or
 action invalidates prior goal evidence and human confirmation, and no action is
@@ -147,6 +159,17 @@ carry the matching approval ID and cannot grant future authority. Executor and
 model actions reference Browsertools-issued candidate IDs; CSS, XPath,
 coordinates, JavaScript, raw Playwright objects, DOM paths, and caller-supplied
 locators are rejected.
+
+`bounds.maxOutputs` defaults to 16, is requested as 16 by OpenUdon, and is
+absolutely capped at 32 on the wire. This authoring release accepts no more
+than 16 reviewed selections. Zero outputs is valid because `goal_present` is
+always retained. Output keys must match
+`^[A-Za-z][A-Za-z0-9_-]{0,63}$`; `goal_present`, credential-shaped keys,
+duplicates, stale/ambiguous candidates, form controls, and marker labels fail
+closed. At completion Browsertools re-enumerates the final context without
+reading values. `exact_name` requires one current match for the canonical
+role/name tuple. `unique_role` additionally requires exactly one current
+match for the role alone and omits the name from the portable locator.
 
 Cancellation, EOF, timeout, malformed input, an unknown message, browser/page
 crash, unexpected navigation, unapproved origin, excess POST, CAPTCHA,
@@ -196,7 +219,7 @@ query strings, fragments, browser exception prose, or environment values.
 ## Result and promotion contracts
 
 After successful completion and browser teardown, Browsertools emits a
-deterministic `browsertools.authenticated-authoring.v1` envelope under the
+deterministic `browsertools.authenticated-authoring.v2` envelope under the
 operator's private root. It contains:
 
 - candidate `uws.browser-authentication` and `uws.browser` profiles using the
@@ -206,13 +229,19 @@ operator's private root. It contains:
   closed actions;
 - the typed goal predicate and evidence plus human confirmation;
 - the exact approved origin/context inventory and finite session bounds;
+- sorted, value-free `outputSelections` containing each reviewed candidate,
+  key/type/locator mode, context, resolved role/name, observation generation,
+  and exact/role match proof;
 - fixed diagnostics and no raw protocol transcript.
 
 The authentication profile proves the first reviewed dashboard boundary. The
 capability profile independently retains every approved exploration navigation
 and click, in order, before a final portable wait/presence assertion for the
-typed goal. This prevents a successful login redirect from being mistaken for
-proof that the post-login capability was learned.
+typed goal. It always retains `goal_present`, then adds reviewed outputs in
+sorted-key order. Accessibility text may be declared as `string`, `integer`,
+`number`, or `boolean`; `presence` remains a Boolean match without a text read.
+This prevents a successful login redirect from being mistaken for proof that
+the post-login capability was learned.
 
 The envelope is `0600`, atomically created, excluded from capability bundles,
 registries, example packages, and normal iCoT transcripts, and never written
@@ -266,6 +295,13 @@ helpers dispatch from the document discriminator, compile each embedded schema
 once, and reject unknown versions, fields, context references, cycles, unsafe
 paths, and context/origin mismatches.
 
+UWS 1.9 additionally publishes immutable `uws.browser.1.7`. Browsertools keeps
+browser 1.5 for main-only string/presence output, uses browser 1.6 when a
+context is the only additive need, and uses browser 1.7 when a reviewed
+accessibility-text output declares integer, number, or Boolean conversion.
+Browser 1.7 retains the browser 1.6 context model, requires authentication 1.1
+and Browserdriver protocol v3, and fails closed on noncanonical scalar text.
+
 ## Trusted runtime replay
 
 Playwright-Go is an authoring implementation detail. It keeps a human-visible
@@ -275,12 +311,13 @@ becomes a trusted runtime and its browser state never becomes a UWS artifact.
 Udon and Browserdriver replay the reviewed profiles later, after a separate
 runtime approval, in a new private session. Browserdriver v2 remains the
 authentication-1.0/main-page compatibility protocol. `udon.browser-driver.v3`
-accepts authentication 1.1 followed by either Browsertools' oldest-sufficient
-browser 1.5 capability or a context-qualified browser 1.6 capability. It
+accepts authentication 1.1 followed by Browsertools' oldest-sufficient browser
+1.5, context-qualified browser 1.6, or typed-output browser 1.7 capability. It
 rejects missing, ambiguous, duplicate, changed, detached, or extra contexts,
 revalidates cached page/frame identities before every use and at flow
 completion, and continues to hide credentials, MFA values, cookies, and
-session material. Udon selects v3 for authentication 1.1 or browser 1.6 and
+session material. Udon selects v3 for authentication 1.1, browser 1.6, or
+browser 1.7 and
 preserves its existing credential-slot resolution, MFA challenge broker,
 origin enforcement, and side-effect approval boundary.
 
@@ -316,6 +353,9 @@ limited to a non-production tenant; only value-free evidence may be retained.
    integration review with generation-scoped authority, exact response-body
    accounting, replayable exploration synthesis, and real producer-to-runtime
    seam tests.
+9. UWS 1.9/browser 1.7, Browserdriver M05, Udon M32, Browsertools A04, and
+   OpenUdon A06 add human-reviewed MFA kinds plus typed dashboard outputs on a
+   strict v2 authoring boundary.
 
 Default tests stay browser-free and network-free. Fake-session suites cover
 every protocol phase, malformed/denied/timeout/crash path, redaction and prompt
@@ -327,7 +367,7 @@ and POST approval, goal completion, and teardown.
 Default qualification constructs a real Browsertools result envelope, consumes
 it through OpenUdon's full validation/staging boundary, and separately decodes
 the same producer's authentication/capability pair through Udon into
-Browserdriver v3. Dependency pins name the exact UWS 1.8-aware commits. Before
+Browserdriver v3. Dependency pins name the exact UWS 1.9-aware commits. Before
 those commits are published, standalone release testing may map the module URLs
 to clean local Git clones of those exact commits; ordinary proxy/direct module
 resolution is required after publication. A component-local schema fixture or

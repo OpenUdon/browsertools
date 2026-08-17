@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -114,7 +116,7 @@ func TestServeFailsClosedForDenialMalformedAndBrowserFailure(t *testing.T) {
 		},
 		{
 			name:    "malformed",
-			input:   protocolLines(startMessage()) + `{"protocol":"browsertools.author-session.v1","type":"observe","dom":"secret"}` + "\n",
+			input:   protocolLines(startMessage()) + `{"protocol":"browsertools.author-session.v2","type":"observe","dom":"secret"}` + "\n",
 			browser: &fakeBrowser{session: &fakeSession{}}, diagnostic: "malformed_message",
 		},
 		{
@@ -208,6 +210,17 @@ func TestValidateStartRejectsPartialBoundsAndUnapprovedGoal(t *testing.T) {
 	message.Bounds = &authorresult.Bounds{NavigationTimeoutMS: 1}
 	if err := validateStart(message); err == nil {
 		t.Fatal("partial bounds were silently defaulted")
+	}
+	message = startMessage()
+	maximum := normalizedBounds(nil)
+	maximum.MaxOutputs = AbsoluteMaxOutputs
+	message.Bounds = &maximum
+	if err := validateStart(message); err != nil {
+		t.Fatalf("absolute output bound was rejected: %v", err)
+	}
+	maximum.MaxOutputs++
+	if err := validateStart(message); err == nil {
+		t.Fatal("output bound above the absolute cap was accepted")
 	}
 	message = startMessage()
 	message.GoalPredicate.Origin = "https://other.example.test"
@@ -333,13 +346,23 @@ func TestOpenedContextIsNamedAndPublishedInNextObservation(t *testing.T) {
 }
 
 func TestActionInvalidatesGoalProofAndCompletedPhaseIsClosed(t *testing.T) {
+	t.Run("v2 completion requires an explicit output list", func(t *testing.T) {
+		session := &fakeSession{observations: []RawObservation{dashboardObservation()}}
+		input := protocolLines(startMessage(), ClientMessage{Protocol: Protocol, Type: "observe"}, ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true})
+		var output bytes.Buffer
+		err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+		if err == nil || !strings.Contains(output.String(), `"code":"completion_denied"`) {
+			t.Fatalf("missing output list completed the run: %v\n%s", err, output.String())
+		}
+	})
+
 	t.Run("action invalidates proof", func(t *testing.T) {
 		session := &fakeSession{observations: []RawObservation{dashboardObservation()}}
 		input := protocolLines(
 			startMessage(),
 			ClientMessage{Protocol: Protocol, Type: "observe"},
 			ClientMessage{Protocol: Protocol, Type: "execute", Action: "navigate_get", URL: "https://members.example.test/dashboard"},
-			ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true},
+			ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true, Outputs: outputRequests()},
 		)
 		var output bytes.Buffer
 		err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
@@ -353,7 +376,7 @@ func TestActionInvalidatesGoalProofAndCompletedPhaseIsClosed(t *testing.T) {
 		input := protocolLines(
 			startMessage(),
 			ClientMessage{Protocol: Protocol, Type: "observe"},
-			ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true},
+			ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true, Outputs: outputRequests()},
 			ClientMessage{Protocol: Protocol, Type: "observe"},
 		)
 		var output bytes.Buffer
@@ -362,6 +385,190 @@ func TestActionInvalidatesGoalProofAndCompletedPhaseIsClosed(t *testing.T) {
 			t.Fatalf("completed phase accepted another authoring action: %v\n%s", err, output.String())
 		}
 	})
+}
+
+func TestHumanInputCompletionRequiresCompatibleHumanReviewedChallengeKind(t *testing.T) {
+	tests := []struct {
+		name, inputKind, challengeKind string
+		wantKinds                      []string
+	}{
+		{name: "identifier", inputKind: "identifier"},
+		{name: "password", inputKind: "password"},
+		{name: "totp", inputKind: "otp", challengeKind: "totp", wantKinds: []string{"totp", "sms_otp", "email_otp", "voice_otp"}},
+		{name: "sms otp", inputKind: "otp", challengeKind: "sms_otp", wantKinds: []string{"totp", "sms_otp", "email_otp", "voice_otp"}},
+		{name: "email otp", inputKind: "otp", challengeKind: "email_otp", wantKinds: []string{"totp", "sms_otp", "email_otp", "voice_otp"}},
+		{name: "voice otp", inputKind: "otp", challengeKind: "voice_otp", wantKinds: []string{"totp", "sms_otp", "email_otp", "voice_otp"}},
+		{name: "push", inputKind: "mfa", challengeKind: "push", wantKinds: []string{"push", "push_number_match", "passkey", "security_key"}},
+		{name: "number match", inputKind: "mfa", challengeKind: "push_number_match", wantKinds: []string{"push", "push_number_match", "passkey", "security_key"}},
+		{name: "passkey", inputKind: "mfa", challengeKind: "passkey", wantKinds: []string{"push", "push_number_match", "passkey", "security_key"}},
+		{name: "security key", inputKind: "mfa", challengeKind: "security_key", wantKinds: []string{"push", "push_number_match", "passkey", "security_key"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			observation := RawObservation{Origin: "https://members.example.test", Path: "/login", Context: "main", Candidates: []RawCandidate{{BackendID: "input", Role: "textbox", Label: "Authentication input", InputKind: test.inputKind, Matches: 1}}}
+			candidate := observationCandidateID(observation, "textbox", "Authentication input")
+			input := protocolLines(
+				startMessage(), ClientMessage{Protocol: Protocol, Type: "observe"},
+				ClientMessage{Protocol: Protocol, Type: "focus_human_input", CandidateID: candidate},
+				ClientMessage{Protocol: Protocol, Type: "human_input_complete", CandidateID: candidate, ChallengeKind: test.challengeKind},
+				ClientMessage{Protocol: Protocol, Type: "close"},
+			)
+			session := &fakeSession{observations: []RawObservation{observation}}
+			var output bytes.Buffer
+			if err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock}); err != nil {
+				t.Fatalf("Serve(): %v\n%s", err, output.String())
+			}
+			messages := decodeServerMessages(t, output.Bytes())
+			var checkpoint *Checkpoint
+			for _, message := range messages {
+				if message.Checkpoint != nil {
+					checkpoint = message.Checkpoint
+				}
+			}
+			if checkpoint == nil || !equalStrings(checkpoint.ChallengeKinds, test.wantKinds) {
+				t.Fatalf("checkpoint = %#v", checkpoint)
+			}
+			if test.inputKind == "mfa" && len(session.focused) != 0 {
+				t.Fatal("non-input MFA checkpoint was focused")
+			}
+			if test.inputKind != "mfa" && len(session.focused) != 1 {
+				t.Fatal("credential/OTP input was not focused")
+			}
+		})
+	}
+
+	invalid := []struct {
+		name, inputKind, challengeKind string
+	}{
+		{name: "missing otp kind", inputKind: "otp"},
+		{name: "incompatible otp kind", inputKind: "otp", challengeKind: "push"},
+		{name: "incompatible mfa kind", inputKind: "mfa", challengeKind: "sms_otp"},
+		{name: "credential kind forbidden", inputKind: "password", challengeKind: "push"},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			observation := RawObservation{Origin: "https://members.example.test", Path: "/login", Context: "main", Candidates: []RawCandidate{{BackendID: "input", Role: "textbox", Label: "Authentication input", InputKind: test.inputKind, Matches: 1}}}
+			candidate := observationCandidateID(observation, "textbox", "Authentication input")
+			input := protocolLines(startMessage(), ClientMessage{Protocol: Protocol, Type: "observe"}, ClientMessage{Protocol: Protocol, Type: "focus_human_input", CandidateID: candidate}, ClientMessage{Protocol: Protocol, Type: "human_input_complete", CandidateID: candidate, ChallengeKind: test.challengeKind})
+			var output bytes.Buffer
+			err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: &fakeSession{observations: []RawObservation{observation}}}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+			if err == nil || !strings.Contains(output.String(), `"code":"challenge_kind_invalid"`) {
+				t.Fatalf("incompatible challenge was accepted: %v\n%s", err, output.String())
+			}
+		})
+	}
+}
+
+func TestHumanInputCheckpointIsADistinctProtocolState(t *testing.T) {
+	observation := RawObservation{Origin: "https://members.example.test", Path: "/login", Context: "main", Candidates: []RawCandidate{{BackendID: "otp", Role: "textbox", Label: "Code", InputKind: "otp", Matches: 1}}}
+	candidate := observationCandidateID(observation, "textbox", "Code")
+	input := protocolLines(startMessage(), ClientMessage{Protocol: Protocol, Type: "observe"}, ClientMessage{Protocol: Protocol, Type: "focus_human_input", CandidateID: candidate}, ClientMessage{Protocol: Protocol, Type: "observe"})
+	var output bytes.Buffer
+	err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: &fakeSession{observations: []RawObservation{observation}}}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+	if err == nil || !strings.Contains(output.String(), `"code":"invalid_state"`) {
+		t.Fatalf("checkpoint state accepted a model action: %v\n%s", err, output.String())
+	}
+}
+
+func TestCompletionAuthorsReviewedOutputsWithActionTimeProofs(t *testing.T) {
+	observation := dashboardWithOutputs(
+		RawCandidate{BackendID: "balance", Role: "status", Label: "Balance", Matches: 1},
+		RawCandidate{BackendID: "plan", Role: "region", Label: "Plan", Matches: 1},
+	)
+	balance := observationCandidateID(observation, "status", "Balance")
+	plan := observationCandidateID(observation, "region", "Plan")
+	requests := []OutputRequest{
+		{CandidateID: balance, Key: "balance", Type: "number", LocatorMode: "exact_name"},
+		{CandidateID: plan, Key: "plan_present", Type: "presence", LocatorMode: "unique_role"},
+	}
+	envelope, _ := runOutputSession(t, observation, observation, requests)
+	if envelope.Schema != "browsertools.authenticated-authoring.v2" || len(envelope.OutputSelections) != 2 {
+		t.Fatalf("result selections = %#v", envelope.OutputSelections)
+	}
+	if envelope.OutputSelections[0].Key != "balance" || envelope.OutputSelections[0].Name != "Balance" || envelope.OutputSelections[1].Key != "plan_present" || envelope.OutputSelections[1].Name != "" || envelope.OutputSelections[1].RoleMatches != 1 {
+		t.Fatalf("resolved output proofs = %#v", envelope.OutputSelections)
+	}
+	var capability map[string]any
+	if err := json.Unmarshal(envelope.CapabilityProfile, &capability); err != nil {
+		t.Fatal(err)
+	}
+	if capability["profile"] != "uws.browser.1.7" {
+		t.Fatalf("typed output profile = %v", capability["profile"])
+	}
+	outputs := capability["actions"].(map[string]any)["reach_authenticated_goal"].(map[string]any)["outputs"].(map[string]any)
+	if outputs["goal_present"] == nil || outputs["balance"].(map[string]any)["type"] != "number" || outputs["plan_present"].(map[string]any)["presence"] != true {
+		t.Fatalf("profile outputs = %#v", outputs)
+	}
+}
+
+func TestCompletionAcceptsZeroAndSixteenOutputsButRejectsSeventeen(t *testing.T) {
+	zero := dashboardWithOutputs()
+	envelope, _ := runOutputSession(t, zero, zero, nil)
+	if envelope.OutputSelections == nil || len(envelope.OutputSelections) != 0 {
+		t.Fatalf("zero selections = %#v", envelope.OutputSelections)
+	}
+
+	candidates := make([]RawCandidate, 0, 17)
+	for i := 0; i < 17; i++ {
+		candidates = append(candidates, RawCandidate{BackendID: "value", Role: "status", Label: fmt.Sprintf("Value %02d", i), Matches: 1})
+	}
+	observation := dashboardWithOutputs(candidates...)
+	requests := make([]OutputRequest, 0, 17)
+	for i := 0; i < 17; i++ {
+		label := fmt.Sprintf("Value %02d", i)
+		requests = append(requests, OutputRequest{CandidateID: observationCandidateID(observation, "status", label), Key: fmt.Sprintf("value_%02d", i), Type: "string", LocatorMode: "exact_name"})
+	}
+	envelope, _ = runOutputSession(t, observation, observation, requests[:16])
+	if len(envelope.OutputSelections) != 16 || envelope.OutputSelections[0].Key != "value_00" || envelope.OutputSelections[15].Key != "value_15" {
+		t.Fatalf("sixteen selections = %#v", envelope.OutputSelections)
+	}
+	_, output, err := tryOutputSession(t, observation, observation, requests)
+	if err == nil || !strings.Contains(output, `"code":"output_selection_invalid"`) {
+		t.Fatalf("seventeen outputs were accepted: %v\n%s", err, output)
+	}
+}
+
+func TestCompletionRejectsUnsafeStaleAmbiguousAndDuplicateOutputs(t *testing.T) {
+	base := dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "status", Label: "Value", Matches: 1})
+	candidate := observationCandidateID(base, "status", "Value")
+	tests := []struct {
+		name     string
+		first    RawObservation
+		second   RawObservation
+		requests []OutputRequest
+	}{
+		{name: "reserved key", first: base, second: base, requests: []OutputRequest{{CandidateID: candidate, Key: "goal_present", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "secret key", first: base, second: base, requests: []OutputRequest{{CandidateID: candidate, Key: "access_token", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "unsafe key", first: base, second: base, requests: []OutputRequest{{CandidateID: candidate, Key: "9bad", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "unknown type", first: base, second: base, requests: []OutputRequest{{CandidateID: candidate, Key: "value", Type: "object", LocatorMode: "exact_name"}}},
+		{name: "stale candidate", first: base, second: base, requests: []OutputRequest{{CandidateID: "candidate-0000000000000000", Key: "value", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "duplicate key", first: base, second: base, requests: []OutputRequest{{CandidateID: candidate, Key: "value", Type: "string", LocatorMode: "exact_name"}, {CandidateID: candidate + "x", Key: "value", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "duplicate candidate", first: base, second: base, requests: []OutputRequest{{CandidateID: candidate, Key: "value", Type: "string", LocatorMode: "exact_name"}, {CandidateID: candidate, Key: "other", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "marker label", first: dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "status", Label: RedactedLabel, Matches: 1}), second: base, requests: []OutputRequest{{CandidateID: observationCandidateID(dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "status", Label: RedactedLabel, Matches: 1}), "status", RedactedLabel), Key: "value", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "form control", first: dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "textbox", Label: "Value", Matches: 1}), second: base, requests: []OutputRequest{{CandidateID: observationCandidateID(dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "textbox", Label: "Value", Matches: 1}), "textbox", "Value"), Key: "value", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "ambiguous selected tuple", first: dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "status", Label: "Value", Matches: 2}), second: base, requests: []OutputRequest{{CandidateID: observationCandidateID(dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "status", Label: "Value", Matches: 2}), "status", "Value"), Key: "value", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "action-time exact ambiguity", first: base, second: dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "status", Label: "Value", Matches: 2}), requests: []OutputRequest{{CandidateID: candidate, Key: "value", Type: "string", LocatorMode: "exact_name"}}},
+		{name: "unique-role ambiguity", first: base, second: dashboardWithOutputs(RawCandidate{BackendID: "value", Role: "status", Label: "Value", Matches: 1}, RawCandidate{BackendID: "other", Role: "status", Label: "Other", Matches: 1}), requests: []OutputRequest{{CandidateID: candidate, Key: "value", Type: "string", LocatorMode: "unique_role"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, output, err := tryOutputSession(t, test.first, test.second, test.requests)
+			if err == nil || !strings.Contains(output, `"code":"output_selection_invalid"`) {
+				t.Fatalf("unsafe output was accepted: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestProtocolV1IsRejectedWithoutLaunchingBrowser(t *testing.T) {
+	start := startMessage()
+	start.Protocol = "browsertools.author-session.v1"
+	browser := &fakeBrowser{session: &fakeSession{}}
+	var output bytes.Buffer
+	err := Serve(context.Background(), strings.NewReader(protocolLines(start)), &output, browser, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+	if err == nil || !strings.Contains(output.String(), `"code":"protocol_mismatch"`) || browser.session.closed != 0 {
+		t.Fatalf("v1 protocol was not rejected before launch: %v\n%s", err, output.String())
+	}
 }
 
 func runHappySession(t *testing.T) ([]byte, []ServerMessage, *fakeSession) {
@@ -375,12 +582,15 @@ func runHappySession(t *testing.T) ([]byte, []ServerMessage, *fakeSession) {
 		startMessage(),
 		ClientMessage{Protocol: Protocol, Type: "observe"},
 		ClientMessage{Protocol: Protocol, Type: "focus_human_input", CandidateID: username},
+		ClientMessage{Protocol: Protocol, Type: "human_input_complete", CandidateID: username},
 		ClientMessage{Protocol: Protocol, Type: "focus_human_input", CandidateID: password},
+		ClientMessage{Protocol: Protocol, Type: "human_input_complete", CandidateID: password},
 		ClientMessage{Protocol: Protocol, Type: "focus_human_input", CandidateID: push},
+		ClientMessage{Protocol: Protocol, Type: "human_input_complete", CandidateID: push, ChallengeKind: "push"},
 		ClientMessage{Protocol: Protocol, Type: "execute", Action: "click", CandidateID: submit, POSTBudget: 1},
 		ClientMessage{Protocol: Protocol, Type: "approve", ApprovalID: "approval-0001"},
 		ClientMessage{Protocol: Protocol, Type: "observe"},
-		ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true},
+		ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true, Outputs: outputRequests()},
 		ClientMessage{Protocol: Protocol, Type: "finish"},
 	)
 	root := privateRoot(t)
@@ -436,6 +646,96 @@ func protocolLines(messages ...ClientMessage) string {
 		result.WriteByte('\n')
 	}
 	return result.String()
+}
+
+func outputRequests(requests ...OutputRequest) *[]OutputRequest {
+	result := make([]OutputRequest, len(requests))
+	copy(result, requests)
+	return &result
+}
+
+func runOutputSession(t *testing.T, first, second RawObservation, requests []OutputRequest) (*authorresult.Envelope, string) {
+	t.Helper()
+	envelope, output, err := tryOutputSession(t, first, second, requests)
+	if err != nil {
+		t.Fatalf("Serve(): %v\n%s", err, output)
+	}
+	return envelope, output
+}
+
+func tryOutputSession(t *testing.T, first, second RawObservation, requests []OutputRequest) (*authorresult.Envelope, string, error) {
+	t.Helper()
+	session := &fakeSession{observations: []RawObservation{first, second}}
+	input := protocolLines(
+		startMessage(),
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true, Outputs: outputRequests(requests...)},
+		ClientMessage{Protocol: Protocol, Type: "finish"},
+	)
+	root := privateRoot(t)
+	var output bytes.Buffer
+	err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: root, Clock: fixedClock})
+	if err != nil {
+		return nil, output.String(), err
+	}
+	messages := decodeServerMessages(t, output.Bytes())
+	var path string
+	for _, message := range messages {
+		if message.Result != nil {
+			path = message.Result.ArtifactPath
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, output.String(), err
+	}
+	var envelope authorresult.Envelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, output.String(), err
+	}
+	return &envelope, output.String(), nil
+}
+
+func dashboardWithOutputs(candidates ...RawCandidate) RawObservation {
+	all := []RawCandidate{{BackendID: "dashboard", Role: "heading", Label: "Dashboard", Matches: 1}}
+	all = append(all, candidates...)
+	return RawObservation{Origin: "https://members.example.test", Path: "/dashboard", Context: "main", Candidates: all}
+}
+
+func observationCandidateID(observation RawObservation, role, label string) string {
+	candidates := append([]RawCandidate(nil), observation.Candidates...)
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Role != candidates[j].Role {
+			return candidates[i].Role < candidates[j].Role
+		}
+		if candidates[i].Label != candidates[j].Label {
+			return candidates[i].Label < candidates[j].Label
+		}
+		return candidates[i].BackendID < candidates[j].BackendID
+	})
+	contextID := observation.Context
+	if contextID == "" {
+		contextID = "main"
+	}
+	for index, candidate := range candidates {
+		reduced := ReduceAccessibilityLabel(candidate.Label).Value
+		if candidate.Role == role && reduced == label {
+			return candidateID(1, contextID, role, reduced, index)
+		}
+	}
+	return ""
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeServerMessages(t *testing.T, data []byte) []ServerMessage {

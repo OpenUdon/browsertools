@@ -57,6 +57,14 @@ returns only reduced semantic candidates, and writes a private deterministic
 result after teardown. OpenUdon independently validates that result and stages
 only canonical reviewed profiles; no live context is transferred or packaged.
 
+The live boundary is strictly `browsertools.author-session.v2` producing
+`browsertools.authenticated-authoring.v2`; v1 is rejected. OpenUdon negotiates
+`maxOutputs: 16`, presents only Browsertools-provided compatible MFA kinds to
+the human, and sends the final reviewed output list only after confirmation.
+Browsertools revalidates exact-name or role-only accessibility matching without
+reading values and returns value-free selection proofs for independent
+consumer validation.
+
 The explicit live iCoT/Browsertools design for human authentication followed
 by same-context goal exploration is specified in
 [Authenticated goal-directed browser authoring](authenticated-goal-authoring.md).

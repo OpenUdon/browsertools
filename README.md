@@ -32,6 +32,13 @@ Browserdriver. See the [canonical OpenUdon integration
 reference](docs/openudon-integration.md) for the two integration paths and full
 ownership split.
 
+Authenticated live authoring uses the strict
+`browsertools.author-session.v2` NDJSON boundary. Human-reviewed MFA kinds and
+up to 16 final accessibility outputs produce one private
+`browsertools.authenticated-authoring.v2` envelope; the protocol carries no
+credential, page value, cookie, or browser state. See [Authenticated
+goal-directed browser authoring](docs/authenticated-goal-authoring.md).
+
 ## Quick Start
 
 ```
