@@ -120,6 +120,37 @@ func TestAuthNetworkGuardBoundsResponsesAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestAuthNetworkGuardDeclaredResponseLength(t *testing.T) {
+	tests := []struct {
+		name   string
+		length int64
+		code   string
+	}{
+		{name: "valid", length: 9},
+		{name: "boundary", length: 10},
+		{name: "negative", length: -1, code: "response_size"},
+		{name: "over limit", length: 11, code: "response_size"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := validAuthBrowserRequest()
+			request.MaxResponseBytes = 10
+			guard := newAuthNetworkGuard(request)
+			guard.observeResponseContentLength(test.length)
+			if code := policyCode(guard.result()); code != test.code {
+				t.Fatalf("code=%q, want %q", code, test.code)
+			}
+		})
+	}
+
+	guard := newAuthNetworkGuard(validAuthBrowserRequest())
+	guard.block("origin", "first violation")
+	guard.observeResponseContentLength(-1)
+	if code := policyCode(guard.result()); code != "origin" {
+		t.Fatalf("declared response check replaced the first violation with %q", code)
+	}
+}
+
 func TestValidateAuthBrowserRequestIsDefensive(t *testing.T) {
 	for name, mutate := range map[string]func(*authassist.BrowserRequest){
 		"no origins": func(r *authassist.BrowserRequest) { r.ApprovedOrigins = nil },

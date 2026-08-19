@@ -87,6 +87,36 @@ func TestAuthorNetworkGuardExactOriginsMethodsAndBounds(t *testing.T) {
 	}
 }
 
+func TestAuthorNetworkGuardAllowedOrigin(t *testing.T) {
+	guard := newAuthorNetworkGuard(authorsession.BrowserRequest{
+		ApprovedOrigins: []string{"https://example.test", "http://localhost:8080"},
+		MaxRequests:     4, MaxResponseBytes: 16,
+	})
+	for _, test := range []struct {
+		name    string
+		origin  string
+		allowed bool
+	}{
+		{name: "valid", origin: "https://example.test", allowed: true},
+		{name: "default port boundary", origin: "https://EXAMPLE.test:443", allowed: true},
+		{name: "explicit loopback port", origin: "http://localhost:8080", allowed: true},
+		{name: "unapproved port", origin: "https://example.test:444", allowed: false},
+		{name: "invalid path", origin: "https://example.test/account", allowed: false},
+		{name: "invalid userinfo", origin: "https://user:pass@example.test", allowed: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if allowed := guard.allowedOrigin(test.origin); allowed != test.allowed {
+				t.Fatalf("allowedOrigin(%q)=%v, want %v", test.origin, allowed, test.allowed)
+			}
+		})
+	}
+
+	guard.block("origin_escape")
+	if guard.allowedOrigin("https://example.test") {
+		t.Fatal("poisoned author guard still allowed an origin")
+	}
+}
+
 func TestAuthorURLFactsAndARIAReduction(t *testing.T) {
 	origin, path, err := authorURLFacts("https://EXAMPLE.test:443/account?token=secret#private", func(origin string) bool { return origin == "https://example.test" })
 	if err != nil || origin != "https://example.test" || path != "/account" {

@@ -753,6 +753,9 @@ func (g *authorNetworkGuard) allowedURLLocked(rawURL string) bool {
 func (g *authorNetworkGuard) allowedOrigin(origin string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.violation != nil {
+		return false
+	}
 	canonical, err := canonicalAuthorOrigin(origin)
 	if err != nil {
 		return false
