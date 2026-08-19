@@ -322,35 +322,26 @@ func (s *playwrightAuthSession) health(ctx context.Context) error {
 }
 
 type authNetworkGuard struct {
-	mu               sync.Mutex
-	allowedOrigins   []string
-	maxRequests      int
-	maxResponseBytes int64
-	requests         int
-	responseBytes    int64
-	active           bool
-	postBudget       int
-	postObserved     int
-	closing          bool
-	violation        error
+	mu             sync.Mutex
+	allowedOrigins []string
+	core           networkGuardCore
+	active         bool
+	postBudget     int
+	postObserved   int
+	closing        bool
 }
 
 func newAuthNetworkGuard(request authassist.BrowserRequest) *authNetworkGuard {
 	return &authNetworkGuard{
 		allowedOrigins: append([]string(nil), request.ApprovedOrigins...),
-		maxRequests:    request.MaxRequests, maxResponseBytes: request.MaxResponseBytes,
+		core:           newNetworkGuardCore(request.MaxRequests, request.MaxResponseBytes),
 	}
 }
 
 func (g *authNetworkGuard) allowRequest(facts requestFacts) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.requests++
-	if g.violation != nil {
-		return false
-	}
-	if g.requests > g.maxRequests {
-		g.violateLocked("request_limit", "authentication request limit exceeded")
+	if !g.core.beginRequest(&policyError{Code: "request_limit", Message: "authentication request limit exceeded"}) {
 		return false
 	}
 	if !authURLAllowed(facts.URL, g.allowedOrigins) {
@@ -388,8 +379,8 @@ func (g *authNetworkGuard) allowRequest(facts requestFacts) bool {
 func (g *authNetworkGuard) beginInteraction(budget int) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.violation != nil {
-		return g.violation
+	if err := g.core.result(); err != nil {
+		return err
 	}
 	if g.active {
 		return fmt.Errorf("another authentication interaction is already armed")
@@ -413,25 +404,19 @@ func (g *authNetworkGuard) endInteraction() (int, error) {
 	g.active = false
 	g.postBudget = 0
 	g.postObserved = 0
-	return observed, g.violation
+	return observed, g.core.result()
 }
 
 func (g *authNetworkGuard) observeResponseContentLength(length int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if length < 0 || length > g.maxResponseBytes {
-		g.violateLocked("response_size", "authentication response exceeds the byte limit")
-	}
+	g.core.observeResponseContentLength(length, &policyError{Code: "response_size", Message: "authentication response exceeds the byte limit"})
 }
 
 func (g *authNetworkGuard) observeFinishedResponse(bytes int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if bytes < 0 || bytes > 0 && g.responseBytes > g.maxResponseBytes-bytes {
-		g.violateLocked("response_size", "authentication responses exceed the byte limit")
-		return
-	}
-	g.responseBytes += bytes
+	g.core.observeFinishedResponse(bytes, &policyError{Code: "response_size", Message: "authentication responses exceed the byte limit"})
 }
 
 func (g *authNetworkGuard) block(code, message string) {
@@ -461,15 +446,13 @@ func (g *authNetworkGuard) beginClose() {
 }
 
 func (g *authNetworkGuard) violateLocked(code, message string) {
-	if g.violation == nil {
-		g.violation = &policyError{Code: code, Message: message}
-	}
+	g.core.violate(&policyError{Code: code, Message: message})
 }
 
 func (g *authNetworkGuard) result() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.violation
+	return g.core.result()
 }
 
 func validateAuthBrowserRequest(request authassist.BrowserRequest) error {

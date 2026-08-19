@@ -654,20 +654,19 @@ func normalizedAuthorContext(value string) string {
 type authorNetworkGuard struct {
 	mu               sync.Mutex
 	origins          map[string]struct{}
-	maxRequests      int
-	maxResponseBytes int64
-	requests         int
-	responseBytes    int64
+	core             networkGuardCore
 	postActive       bool
 	postBudget       int
 	postObserved     int
 	closing          bool
 	navigationActive bool
-	violation        error
 }
 
 func newAuthorNetworkGuard(request authorsession.BrowserRequest) *authorNetworkGuard {
-	g := &authorNetworkGuard{origins: make(map[string]struct{}), maxRequests: request.MaxRequests, maxResponseBytes: request.MaxResponseBytes}
+	g := &authorNetworkGuard{
+		origins: make(map[string]struct{}),
+		core:    newNetworkGuardCore(request.MaxRequests, request.MaxResponseBytes),
+	}
 	for _, origin := range request.ApprovedOrigins {
 		_ = g.addOrigin(origin)
 	}
@@ -704,9 +703,7 @@ func installAuthorNetworkPolicy(browserContext playwright.BrowserContext, guard 
 func (g *authorNetworkGuard) allow(rawURL, method string, navigation ...bool) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.requests++
-	if g.violation != nil || g.requests > g.maxRequests {
-		g.violate("request_limit")
+	if !g.core.beginRequest(authorPolicyError("request_limit")) {
 		return false
 	}
 	if !g.allowedURLLocked(rawURL) {
@@ -753,7 +750,7 @@ func (g *authorNetworkGuard) allowedURLLocked(rawURL string) bool {
 func (g *authorNetworkGuard) allowedOrigin(origin string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.violation != nil {
+	if g.core.result() != nil {
 		return false
 	}
 	canonical, err := canonicalAuthorOrigin(origin)
@@ -770,8 +767,8 @@ func (g *authorNetworkGuard) addOrigin(origin string) error {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.violation != nil {
-		return g.violation
+	if err := g.core.result(); err != nil {
+		return err
 	}
 	g.origins[canonical] = struct{}{}
 	return nil
@@ -779,7 +776,7 @@ func (g *authorNetworkGuard) addOrigin(origin string) error {
 func (g *authorNetworkGuard) beginPOST(budget int) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.violation != nil || g.postActive || g.navigationActive || budget < 0 || budget > 32 {
+	if g.core.result() != nil || g.postActive || g.navigationActive || budget < 0 || budget > 32 {
 		return fmt.Errorf("POST window unavailable")
 	}
 	g.postActive, g.postBudget, g.postObserved, g.navigationActive = true, budget, 0, true
@@ -790,12 +787,12 @@ func (g *authorNetworkGuard) endPOST() (int, error) {
 	defer g.mu.Unlock()
 	observed := g.postObserved
 	g.postActive, g.postBudget, g.postObserved, g.navigationActive = false, 0, 0, false
-	return observed, g.violation
+	return observed, g.core.result()
 }
 func (g *authorNetworkGuard) beginNavigation() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.violation != nil || g.navigationActive {
+	if g.core.result() != nil || g.navigationActive {
 		return fmt.Errorf("navigation window unavailable")
 	}
 	g.navigationActive = true
@@ -809,10 +806,7 @@ func (g *authorNetworkGuard) endNavigation() {
 func (g *authorNetworkGuard) observeBytes(size int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.responseBytes += size
-	if size < 0 || g.responseBytes > g.maxResponseBytes {
-		g.violate("response_limit")
-	}
+	g.core.observeFinishedResponse(size, authorPolicyError("response_limit"))
 }
 func (g *authorNetworkGuard) block(code string) {
 	g.mu.Lock()
@@ -822,11 +816,13 @@ func (g *authorNetworkGuard) block(code string) {
 	}
 }
 func (g *authorNetworkGuard) beginClose()   { g.mu.Lock(); g.closing = true; g.mu.Unlock() }
-func (g *authorNetworkGuard) result() error { g.mu.Lock(); defer g.mu.Unlock(); return g.violation }
+func (g *authorNetworkGuard) result() error { g.mu.Lock(); defer g.mu.Unlock(); return g.core.result() }
 func (g *authorNetworkGuard) violate(code string) {
-	if g.violation == nil {
-		g.violation = fmt.Errorf("author browser policy violation: %s", code)
-	}
+	g.core.violate(authorPolicyError(code))
+}
+
+func authorPolicyError(code string) error {
+	return &policyError{Code: code, Message: fmt.Sprintf("author browser policy violation: %s", code)}
 }
 
 func validateAuthorBrowserRequest(request authorsession.BrowserRequest) error {

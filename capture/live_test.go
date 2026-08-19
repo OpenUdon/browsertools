@@ -230,19 +230,21 @@ func TestNetworkGuardBoundsAndClosedEvents(t *testing.T) {
 	}
 
 	for _, event := range []struct {
-		code string
-		call func(*networkGuard)
+		code  string
+		call  func(*networkGuard)
+		count func(playwrightadapter.NetworkSummary) int
 	}{
-		{code: "websocket", call: (*networkGuard).blockWebSocket},
-		{code: "popup", call: (*networkGuard).blockPopup},
-		{code: "download", call: (*networkGuard).blockDownload},
-		{code: "dialog", call: (*networkGuard).blockDialog},
-		{code: "file_chooser", call: (*networkGuard).blockFileChooser},
+		{code: "websocket", call: (*networkGuard).blockWebSocket, count: func(s playwrightadapter.NetworkSummary) int { return s.BlockedWebSockets }},
+		{code: "popup", call: (*networkGuard).blockPopup, count: func(s playwrightadapter.NetworkSummary) int { return s.BlockedPopups }},
+		{code: "download", call: (*networkGuard).blockDownload, count: func(s playwrightadapter.NetworkSummary) int { return s.BlockedDownloads }},
+		{code: "dialog", call: (*networkGuard).blockDialog, count: func(s playwrightadapter.NetworkSummary) int { return s.BlockedDialogs }},
+		{code: "file_chooser", call: (*networkGuard).blockFileChooser, count: func(s playwrightadapter.NetworkSummary) int { return s.BlockedFileChoosers }},
 	} {
 		guard := newNetworkGuard(request)
 		event.call(guard)
-		if _, err := guard.result(); policyCode(err) != event.code {
-			t.Fatalf("event=%s err=%v", event.code, err)
+		summary, err := guard.result()
+		if policyCode(err) != event.code || event.count(summary) != 1 {
+			t.Fatalf("event=%s summary=%#v err=%v", event.code, summary, err)
 		}
 	}
 }

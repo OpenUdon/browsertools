@@ -381,31 +381,23 @@ type requestFacts struct {
 }
 
 type networkGuard struct {
-	mu               sync.Mutex
-	allowedOrigins   []string
-	maxRequests      int
-	maxResponseBytes int64
-	summary          playwrightadapter.NetworkSummary
-	violation        error
+	mu             sync.Mutex
+	allowedOrigins []string
+	core           networkGuardCore
+	summary        playwrightadapter.NetworkSummary
 }
 
 func newNetworkGuard(request LiveRequest) *networkGuard {
 	return &networkGuard{
 		allowedOrigins: append([]string(nil), request.AllowedOrigins...),
-		maxRequests:    request.MaxRequests, maxResponseBytes: request.MaxResponseBytes,
+		core:           newNetworkGuardCore(request.MaxRequests, request.MaxResponseBytes),
 	}
 }
 
 func (g *networkGuard) allowRequest(facts requestFacts) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.summary.Requests++
-	if g.violation != nil {
-		g.summary.BlockedRequests++
-		return false
-	}
-	if g.summary.Requests > g.maxRequests {
-		g.violateLocked("request_limit", "capture request limit exceeded")
+	if !g.core.beginRequest(&policyError{Code: "request_limit", Message: "capture request limit exceeded"}) {
 		g.summary.BlockedRequests++
 		return false
 	}
@@ -440,23 +432,15 @@ func (g *networkGuard) allowRequest(facts requestFacts) bool {
 func (g *networkGuard) observeResponseContentLength(length int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if length < 0 || length > g.maxResponseBytes {
-		g.violateLocked("response_size", "capture response exceeds the byte limit")
-	}
+	g.core.observeResponseContentLength(length, &policyError{Code: "response_size", Message: "capture response exceeds the byte limit"})
 }
 
 func (g *networkGuard) observeFinishedResponse(bytes int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if bytes < 0 {
-		g.violateLocked("response_size", "capture response reported an invalid size")
+	if !g.core.observeFinishedResponse(bytes, &policyError{Code: "response_size", Message: "capture responses exceed the byte limit"}) {
 		return
 	}
-	if bytes > 0 && g.summary.ResponseBytes > g.maxResponseBytes-bytes {
-		g.violateLocked("response_size", "capture responses exceed the byte limit")
-		return
-	}
-	g.summary.ResponseBytes += bytes
 	g.summary.Responses++
 }
 
@@ -505,15 +489,16 @@ func (g *networkGuard) record(code, message string, err error) {
 }
 
 func (g *networkGuard) violateLocked(code, message string) {
-	if g.violation == nil {
-		g.violation = &policyError{Code: code, Message: message}
-	}
+	g.core.violate(&policyError{Code: code, Message: message})
 }
 
 func (g *networkGuard) result() (playwrightadapter.NetworkSummary, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.summary, g.violation
+	summary := g.summary
+	summary.Requests = g.core.requests
+	summary.ResponseBytes = g.core.responseBytes
+	return summary, g.core.result()
 }
 
 type policyError struct {
