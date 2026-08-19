@@ -20,19 +20,22 @@
 //	  }
 //	}
 //
-// Each property in "schema.properties" becomes a CandidateOutput with
-// source="microdata" as a best-effort guess; the reviewer must confirm the
-// actual source. LLM-produced extracted values are recorded for reference but
-// never become portable profile fields directly.
+// Each property in "schema.properties" becomes an unbound CandidateOutput.
+// LLM-produced fields never fabricate a portable extraction source.
 package llmscraper
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/OpenUdon/browsertools/adapter"
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/internal/adapterdecode"
+)
+
+const (
+	maxFixtureBytes = int64(2 << 20)
+	maxOutputs      = 256
 )
 
 // Fixture is the expected shape of a saved llm-scraper result file.
@@ -63,10 +66,11 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	}
 
 	var fix Fixture
-	if err := json.Unmarshal(raw, &fix); err != nil {
+	if err := adapterdecode.JSON(raw, maxFixtureBytes, &fix); err != nil {
 		return nil, fmt.Errorf("llm-scraper: parse fixture: %w", err)
 	}
-	if err := adapter.ValidateFixtureOrigin("llm-scraper", fix.URL, opts.Origin); err != nil {
+	origin, err := adapter.CanonicalFixtureOrigin("llm-scraper", fix.URL, opts.Origin)
+	if err != nil {
 		return nil, err
 	}
 
@@ -88,6 +92,9 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 
 	var outputs []evidence.CandidateOutput
 	if props, ok := schemaProperties(fix.Schema); ok {
+		if len(props) > maxOutputs {
+			return nil, fmt.Errorf("llm-scraper: schema exceeds %d output candidates", maxOutputs)
+		}
 		for key, rawProp := range props {
 			prop, _ := rawProp.(map[string]any)
 			typ := "string"
@@ -96,11 +103,8 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 					typ = t
 				}
 			}
-			// Use microdata as a best-effort source; reviewer must confirm.
 			outputs = append(outputs, evidence.CandidateOutput{
-				Key:    key,
-				Type:   typ,
-				Source: "microdata",
+				Key: key, Type: typ,
 			})
 		}
 	}
@@ -108,12 +112,12 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 
 	diags := []evidence.Diagnostic{{
 		Level:   "info",
-		Message: "candidate outputs inferred from llm-scraper schema; source and locator must be validated by reviewer",
+		Message: "unbound output hints inferred from llm-scraper schema; an operator must declare a portable source before promotion",
 	}}
 
 	raw2 := &evidence.RawRecord{
 		Record: evidence.Record{
-			Origin:           opts.Origin,
+			Origin:           origin,
 			ObservationKind:  evidence.ObservationDOMText,
 			ObservedAt:       observedAt,
 			ActionHint:       actionHint,

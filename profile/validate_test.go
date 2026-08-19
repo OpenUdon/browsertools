@@ -6,12 +6,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/OpenUdon/uws/schemas"
 )
 
 // TestSchemaCompiles ensures the embedded schema is well-formed and compilable.
 func TestSchemaCompiles(t *testing.T) {
-	if _, err := compileSchema(); err != nil {
-		t.Fatalf("embedded schema failed to compile: %v", err)
+	data, err := schemas.BrowserSourceProfileSchema("uws.browser.1.5")
+	if err != nil || len(data) == 0 {
+		t.Fatalf("pinned UWS schema failed to load: %v", err)
 	}
 }
 
@@ -181,14 +184,29 @@ func TestLiteralOriginSafety(t *testing.T) {
 		t.Fatal("expected literal off-origin navigation rejection")
 	}
 
-	action.Sequence[0].Navigate = "https://{{host}}/status"
+	for _, target := range []string{
+		"https://evil.test/status?q={{term}}",
+		"https://{{host}}/status",
+		"https://example.test/status?q={{term",
+	} {
+		action.Sequence[0].Navigate = target
+		prof.Actions["read_status"] = action
+		value, err = prof.Value()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Validate(value); err == nil {
+			t.Fatalf("templated target %q unexpectedly accepted", target)
+		}
+	}
+	action.Sequence[0].Navigate = "https://example.test/status?q={{term}}"
 	prof.Actions["read_status"] = action
 	value, err = prof.Value()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := Validate(value); err != nil {
-		t.Fatalf("templated target must remain runtime-checked: %v", err)
+		t.Fatalf("same-origin path/query template rejected: %v", err)
 	}
 }
 
@@ -234,6 +252,31 @@ func TestOriginCanonicalization(t *testing.T) {
 	ok, err := allowed.ContainsURL("https://EXAMPLE.test:443/path?q=1")
 	if err != nil || !ok {
 		t.Fatalf("equivalent URL rejected: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestSupportedProfileVersionsUsePinnedSchemasAndFutureVersionFails(t *testing.T) {
+	prof, err := LoadFile(filepath.Join("testdata", "valid_minimal.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"uws.browser.1.5", "uws.browser.1.6", "uws.browser.1.7"} {
+		value, err := prof.Value()
+		if err != nil {
+			t.Fatal(err)
+		}
+		value["profile"] = version
+		if err := Validate(value); err != nil {
+			t.Fatalf("supported version %s rejected: %v", version, err)
+		}
+	}
+	value, err := prof.Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	value["profile"] = "uws.browser.1.8"
+	if err := Validate(value); err == nil || !strings.Contains(err.Error(), "unsupported browser profile discriminator") {
+		t.Fatalf("future version did not fail explicitly: %v", err)
 	}
 }
 

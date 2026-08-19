@@ -12,19 +12,23 @@
 //	  ]
 //	}
 //
-// CSS/XPath selectors from extracted items are recorded as CandidateOutputs
-// with source="css" (fallback evidence only). They MUST NOT become portable
-// action locators. The reviewer must replace them with a11y/microdata sources
-// or add explicit fallbackReason and validation fields.
+// CSS/XPath selectors from extracted items are recorded only as unbound hints.
+// They MUST NOT become portable action locators or ready CSS outputs. An
+// operator must explicitly declare a portable source and fallback rationale.
 package crawl4ai
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/OpenUdon/browsertools/adapter"
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/internal/adapterdecode"
+)
+
+const (
+	maxFixtureBytes = int64(4 << 20)
+	maxOutputs      = 256
 )
 
 // ExtractedItem is one extracted field from a Crawl4AI result.
@@ -63,10 +67,11 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	}
 
 	var fix Fixture
-	if err := json.Unmarshal(raw, &fix); err != nil {
+	if err := adapterdecode.JSON(raw, maxFixtureBytes, &fix); err != nil {
 		return nil, fmt.Errorf("crawl4ai: parse fixture: %w", err)
 	}
-	if err := adapter.ValidateFixtureOrigin("crawl4ai", fix.URL, opts.Origin); err != nil {
+	origin, err := adapter.CanonicalFixtureOrigin("crawl4ai", fix.URL, opts.Origin)
+	if err != nil {
 		return nil, err
 	}
 
@@ -87,18 +92,16 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	}
 
 	var outputs []evidence.CandidateOutput
+	if len(fix.Extracted) > maxOutputs {
+		return nil, fmt.Errorf("crawl4ai: fixture exceeds %d extracted items", maxOutputs)
+	}
 	for _, item := range fix.Extracted {
 		typ := item.Type
 		if typ == "" {
 			typ = "string"
 		}
 		out := evidence.CandidateOutput{
-			Key:      item.Key,
-			Type:     typ,
-			Source:   "css",
-			Selector: item.Selector,
-			// FallbackReason is intentionally omitted here — the reviewer must
-			// supply it based on why a11y/microdata cannot be used.
+			Key: item.Key, Type: typ, Selector: item.Selector,
 		}
 		outputs = append(outputs, out)
 	}
@@ -106,12 +109,12 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 
 	diags := []evidence.Diagnostic{{
 		Level:   "warn",
-		Message: "CSS selectors from crawl4ai are output fallback evidence only; do not use as action locators; reviewer must add fallbackReason and prefer a11y/microdata where available",
+		Message: "crawl4ai extraction fields are unbound hints; selectors are non-promotable evidence until an operator declares a portable source and CSS fallback rationale",
 	}}
 
 	raw2 := &evidence.RawRecord{
 		Record: evidence.Record{
-			Origin:           opts.Origin,
+			Origin:           origin,
 			ObservationKind:  evidence.ObservationDOMText,
 			ObservedAt:       observedAt,
 			ActionHint:       actionHint,

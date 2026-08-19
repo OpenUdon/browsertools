@@ -130,10 +130,11 @@ func networkGuardParityHarnesses() map[string]func() guardParityHarness {
 				ApprovedOrigins: []string{"https://example.test"}, MaxRequests: 1, MaxResponseBytes: 10,
 			})
 			return guardParityHarness{
-				allow:        func() bool { return guard.allow("https://example.test", "GET") },
-				observeBytes: guard.observeBytes,
-				poison:       func() { guard.allow("https://evil.test", "GET") },
-				result:       guard.result, responseCode: "response_limit", poisonCode: "origin_escape",
+				allow:         func() bool { return guard.allow("https://example.test", "GET") },
+				observeLength: guard.observeResponseContentLength,
+				observeBytes:  guard.observeBytes,
+				poison:        func() { guard.allow("https://evil.test", "GET") },
+				result:        guard.result, responseCode: "response_limit", poisonCode: "origin_escape",
 			}
 		},
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/OpenUdon/uws/schemas"
+	"gopkg.in/yaml.v3"
 )
 
 func TestContextQualifiedUnionsRoundTrip(t *testing.T) {
@@ -30,6 +31,62 @@ func TestContextQualifiedUnionsRoundTrip(t *testing.T) {
 	data, err = json.Marshal(wait)
 	if err != nil || !bytes.Contains(data, []byte(`"context":"detail_frame"`)) {
 		t.Fatalf("wait JSON = %s err=%v", data, err)
+	}
+}
+
+func TestStepAndWaitRejectNestedUnknownFieldsJSONAndYAML(t *testing.T) {
+	jsonCases := []string{
+		`{"click":{"locator":{"role":"button","naem":"Save"}}}`,
+		`{"click":{"locator":{"role":"button"},"wait_for":{"role":"status","naem":"Ready"}}}`,
+		`{"navigate":{"url":"/","contex":"main"}}`,
+		`{"wait_for":{"locator":{"role":"status","naem":"Ready"},"context":"main"}}`,
+	}
+	for _, input := range jsonCases {
+		var step Step
+		if err := json.Unmarshal([]byte(input), &step); err == nil {
+			t.Fatalf("unknown nested JSON field accepted: %s", input)
+		}
+	}
+	yamlCases := []string{
+		"click:\n  locator:\n    role: button\n    naem: Save\n",
+		"click:\n  locator: {role: button}\n  wait_for: {role: status, naem: Ready}\n",
+		"navigate: {url: /, contex: main}\n",
+		"wait_for:\n  locator: {role: status, naem: Ready}\n  context: main\n",
+	}
+	for _, input := range yamlCases {
+		var step Step
+		if err := yaml.Unmarshal([]byte(input), &step); err == nil {
+			t.Fatalf("unknown nested YAML field accepted: %s", input)
+		}
+	}
+}
+
+func TestLosslessOutputAndNavigateMarshaling(t *testing.T) {
+	absent, err := json.Marshal(Output{Type: OutputString, Source: OutputJSONLD, Property: "name"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	present, err := json.Marshal(Output{Type: OutputString, Source: OutputJSONLD, Property: "name", Validation: JSONSchema{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(absent, []byte(`"validation"`)) || !bytes.Contains(present, []byte(`"validation":{}`)) {
+		t.Fatalf("validation presence was not preserved: absent=%s present=%s", absent, present)
+	}
+	presentYAML, err := yaml.Marshal(Output{Type: OutputString, Source: OutputJSONLD, Property: "name", Validation: JSONSchema{}})
+	if err != nil || !bytes.Contains(presentYAML, []byte("validation: {}")) {
+		t.Fatalf("empty validation schema was not preserved in YAML: %s err=%v", presentYAML, err)
+	}
+	navigate, err := json.Marshal(Step{Kind: StepNavigate, Navigate: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(navigate, []byte(`{"navigate":""}`)) {
+		t.Fatalf("empty navigate payload = %s", navigate)
+	}
+	click, err := json.Marshal(Step{Kind: StepClick, Navigate: "/wrong", Click: &LocatorStep{Locator: Locator{Role: RoleButton}}})
+	if err != nil || bytes.Contains(click, []byte("wrong")) {
+		t.Fatalf("step kind did not control marshal payload: %s err=%v", click, err)
 	}
 }
 

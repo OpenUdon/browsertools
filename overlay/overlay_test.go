@@ -1,6 +1,7 @@
 package overlay
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"testing"
@@ -37,6 +38,9 @@ func TestSidecarJSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
+	if !json.Valid(data) || !bytes.Contains(data, []byte(`"openAPIOperationId"`)) || bytes.Contains(data, []byte(`"openapiOperationId"`)) {
+		t.Fatalf("exact OpenAPI operation key missing from %s", data)
+	}
 
 	var got Sidecar
 	if err := json.Unmarshal(data, &got); err != nil {
@@ -67,6 +71,9 @@ func TestOverlayJSONExampleRoundTrip(t *testing.T) {
 	data, err := os.ReadFile("../examples/wrapper-service/overlay.json")
 	if err != nil {
 		t.Fatalf("read overlay.json: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"openAPIOperationId"`)) || bytes.Contains(data, []byte(`"openapiOperationId"`)) {
+		t.Fatalf("example uses the wrong raw OpenAPI operation key: %s", data)
 	}
 	var s Sidecar
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -141,10 +148,80 @@ func TestLifecycleConstants(t *testing.T) {
 		{LifecycleStale, "stale"},
 	}
 	for _, c := range cases {
-		data, _ := json.Marshal(c.lc)
+		data, err := json.Marshal(c.lc)
+		if err != nil {
+			t.Fatal(err)
+		}
 		got := string(data)
 		if got != `"`+c.want+`"` {
 			t.Errorf("Lifecycle %v: got JSON %s, want %q", c.lc, got, c.want)
 		}
+	}
+}
+
+func TestSidecarVerifyRejectsMalformedMetadataAndBindings(t *testing.T) {
+	data, err := os.ReadFile("../examples/wrapper-service/overlay.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var base Sidecar
+	if err := json.Unmarshal(data, &base); err != nil {
+		t.Fatal(err)
+	}
+	prof, err := profile.LoadFile("../examples/wrapper-service/browser-profile.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceData, err := os.ReadFile("../examples/wrapper-service/evidence.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []evidence.Record
+	if err := json.Unmarshal(evidenceData, &records); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		mutate func(*Sidecar)
+	}{
+		{name: "version", mutate: func(s *Sidecar) { s.OverlayVersion = "2" }},
+		{name: "id whitespace", mutate: func(s *Sidecar) { s.OverlayID = " overlay " }},
+		{name: "bad reference", mutate: func(s *Sidecar) { s.WrapperOpenAPI = "https://user:pass@example.test/openapi" }},
+		{name: "empty mappings", mutate: func(s *Sidecar) { s.OperationMappings = map[string]OperationMapping{} }},
+		{name: "blank operation", mutate: func(s *Sidecar) {
+			s.OperationMappings = map[string]OperationMapping{" ": {OpenAPIOperationID: " ", ProfileActionName: "get_status"}}
+		}},
+		{name: "mapping mismatch", mutate: func(s *Sidecar) {
+			mapping := s.OperationMappings["getStatus"]
+			mapping.OpenAPIOperationID = "other"
+			s.OperationMappings["getStatus"] = mapping
+		}},
+		{name: "unknown action", mutate: func(s *Sidecar) {
+			mapping := s.OperationMappings["getStatus"]
+			mapping.ProfileActionName = "missing"
+			s.OperationMappings["getStatus"] = mapping
+		}},
+		{name: "invalid lifecycle", mutate: func(s *Sidecar) { s.Lifecycle = "unknown" }},
+		{name: "review binding", mutate: func(s *Sidecar) { s.ReviewBundle.ProfileDigest = "sha256:tampered" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			wire, err := json.Marshal(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var candidate Sidecar
+			if err := json.Unmarshal(wire, &candidate); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&candidate)
+			if err := candidate.Verify(prof, records, now); err == nil {
+				t.Fatal("expected verification failure")
+			}
+		})
+	}
+	if err := base.Verify(prof, records, time.Time{}); err == nil {
+		t.Fatal("expected zero-time failure")
 	}
 }

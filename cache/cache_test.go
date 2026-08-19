@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,7 +37,8 @@ func TestStorePutGetDeduplicateAndList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !entriesEqual(first, second) {
+	equal, err := entriesEqual(first, second)
+	if err != nil || !equal {
 		t.Fatalf("deduplicated entry differs: %#v != %#v", first, second)
 	}
 	if first.CreatedAt != "2026-08-15T00:02:03.000000004Z" || first.MediaType != "application/json" || first.Source != "playwright" {
@@ -88,7 +90,7 @@ func TestStoreExpiryAndPrune(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Get(context.Background(), entry.ID, options.ExpiresAt); err == nil || !strings.Contains(err.Error(), "expired") {
+	if _, _, err := store.Get(context.Background(), entry.ID, options.ExpiresAt); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expired get error = %v", err)
 	}
 	entries, err := store.List(context.Background(), options.ExpiresAt, false)
@@ -102,7 +104,7 @@ func TestStoreExpiryAndPrune(t *testing.T) {
 	if len(removed) != 1 || removed[0].ID != entry.ID {
 		t.Fatalf("removed = %#v", removed)
 	}
-	if _, _, err := store.Get(context.Background(), entry.ID, time.Time{}); !errors.Is(err, os.ErrNotExist) {
+	if _, _, err := store.Get(context.Background(), entry.ID, options.ExpiresAt); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("pruned get error = %v", err)
 	}
 	if _, err := store.Prune(context.Background(), time.Time{}); err == nil {
@@ -126,7 +128,7 @@ func TestDeletePrivateRequiresExactVerifiedRawEntry(t *testing.T) {
 	if err != nil || removed.ID != raw.ID {
 		t.Fatalf("removed=%#v err=%v", removed, err)
 	}
-	if _, _, err := store.Get(context.Background(), raw.ID, time.Time{}); !errors.Is(err, os.ErrNotExist) {
+	if _, _, err := store.Get(context.Background(), raw.ID, options.CreatedAt); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("deleted entry remains: %v", err)
 	}
 	derived, err := store.Put(context.Background(), strings.NewReader("derived"), validPutOptions())
@@ -136,7 +138,7 @@ func TestDeletePrivateRequiresExactVerifiedRawEntry(t *testing.T) {
 	if _, err := store.DeletePrivate(context.Background(), derived.ID); err == nil || !strings.Contains(err.Error(), "only private_raw") {
 		t.Fatalf("derived delete error = %v", err)
 	}
-	if _, _, err := store.Get(context.Background(), derived.ID, time.Time{}); err != nil {
+	if _, _, err := store.Get(context.Background(), derived.ID, options.CreatedAt); err != nil {
 		t.Fatalf("derived entry was removed: %v", err)
 	}
 	if _, err := store.DeletePrivate(context.Background(), "../escape"); err == nil {
@@ -206,7 +208,7 @@ func TestStoreEnforcesItemCapBeforeCommitAndStillReuses(t *testing.T) {
 	if _, err := store.Put(context.Background(), strings.NewReader("second"), validPutOptions()); err == nil || !strings.Contains(err.Error(), "limit is 1") {
 		t.Fatalf("item cap error = %v", err)
 	}
-	entries, err := store.List(context.Background(), time.Time{}, true)
+	entries, err := store.List(context.Background(), validPutOptions().CreatedAt, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,10 +243,10 @@ func TestStoreRejectsUnsafePathsAndTampering(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "payload"), []byte("evil"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Get(context.Background(), entry.ID, time.Time{}); err == nil || !strings.Contains(err.Error(), "mismatch") {
+	if _, _, err := store.Get(context.Background(), entry.ID, validPutOptions().CreatedAt); err == nil || !errors.Is(err, ErrIntegrity) {
 		t.Fatalf("tamper error = %v", err)
 	}
-	if _, _, err := store.Get(context.Background(), "../escape", time.Time{}); err == nil {
+	if _, _, err := store.Get(context.Background(), "../escape", validPutOptions().CreatedAt); err == nil {
 		t.Fatal("unsafe id unexpectedly accepted")
 	}
 }
@@ -263,7 +265,7 @@ func TestStoreRejectsSymlinkAndBroadPermissions(t *testing.T) {
 	if err := os.Chmod(payload, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Get(context.Background(), entry.ID, time.Time{}); err == nil || !strings.Contains(err.Error(), "permissions") {
+	if _, _, err := store.Get(context.Background(), entry.ID, validPutOptions().CreatedAt); err == nil || !strings.Contains(err.Error(), "permissions") {
 		t.Fatalf("broad permission error = %v", err)
 	}
 	if err := os.Chmod(payload, 0o600); err != nil {
@@ -276,7 +278,7 @@ func TestStoreRejectsSymlinkAndBroadPermissions(t *testing.T) {
 	if err := os.Symlink(payload, manifest); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if _, _, err := store.Get(context.Background(), entry.ID, time.Time{}); err == nil || !strings.Contains(err.Error(), "regular non-symlink") {
+	if _, _, err := store.Get(context.Background(), entry.ID, validPutOptions().CreatedAt); err == nil || !strings.Contains(err.Error(), "regular non-symlink") {
 		t.Fatalf("manifest symlink error = %v", err)
 	}
 }
@@ -345,14 +347,124 @@ func TestStoreRejectsMalformedManifestAndUnexpectedFile(t *testing.T) {
 	if err := os.WriteFile(manifestPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Get(context.Background(), entry.ID, time.Time{}); err == nil || !strings.Contains(err.Error(), "unknown") {
+	if _, _, err := store.Get(context.Background(), entry.ID, validPutOptions().CreatedAt); err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Fatalf("unknown manifest field error = %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "extra"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Get(context.Background(), entry.ID, time.Time{}); err == nil || !strings.Contains(err.Error(), "only") {
+	if _, _, err := store.Get(context.Background(), entry.ID, validPutOptions().CreatedAt); err == nil || !strings.Contains(err.Error(), "only") {
 		t.Fatalf("unexpected file error = %v", err)
+	}
+}
+
+func TestGetAndListRequireAssessmentTime(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Get(context.Background(), "sha256:"+strings.Repeat("0", 64), time.Time{}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("zero get time error = %v", err)
+	}
+	if _, err := store.List(context.Background(), time.Time{}, false); !errors.Is(err, ErrValidation) {
+		t.Fatalf("zero list time error = %v", err)
+	}
+}
+
+func TestPutLeaseFreshStaleAndNonceSafeUnlock(t *testing.T) {
+	entriesDir := filepath.Join(t.TempDir(), "entries")
+	if err := os.Mkdir(entriesDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	acquiredAt := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	firstLease, err := acquirePutLease(entriesDir, acquiredAt, time.Minute, bytes.NewReader(bytes.Repeat([]byte{1}, 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acquirePutLease(entriesDir, acquiredAt.Add(time.Minute-time.Nanosecond), time.Minute, bytes.NewReader(bytes.Repeat([]byte{2}, 64))); !errors.Is(err, ErrConflict) {
+		t.Fatalf("fresh lease error = %v", err)
+	}
+	secondLease, err := acquirePutLease(entriesDir, acquiredAt.Add(time.Minute), time.Minute, bytes.NewReader(bytes.Repeat([]byte{3}, 64)))
+	if err != nil {
+		t.Fatalf("exact-expiry recovery: %v", err)
+	}
+	if err := firstLease.release(); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale owner unlock error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(entriesDir, ".put-lock")); err != nil {
+		t.Fatalf("stale unlock removed the current lease: %v", err)
+	}
+	if err := secondLease.release(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(entriesDir, ".put-lock")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("lease remains after owner unlock: %v", err)
+	}
+}
+
+func TestExpiredPutLeaseFencesWriterThatAlreadyCheckedCapacity(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "cache"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.maxItems = 1
+	entriesDir := filepath.Join(store.root, "entries")
+	acquiredAt := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	firstLease, err := acquirePutLease(entriesDir, acquiredAt, time.Minute, bytes.NewReader(bytes.Repeat([]byte{1}, 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstTmp, err := os.MkdirTemp(entriesDir, ".put-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstStaged := firstLease.transactionPath()
+	if err := os.Rename(firstTmp, firstStaged); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstLease.assertOwned(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensurePutCapacity(entriesDir); err != nil {
+		t.Fatal(err)
+	}
+
+	secondLease, err := acquirePutLease(entriesDir, acquiredAt.Add(time.Minute), time.Minute, bytes.NewReader(bytes.Repeat([]byte{2}, 64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondTmp, err := os.MkdirTemp(entriesDir, ".put-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondStaged := secondLease.transactionPath()
+	if err := os.Rename(secondTmp, secondStaged); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondLease.assertOwned(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensurePutCapacity(entriesDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := secondLease.commit(secondStaged, filepath.Join(entriesDir, "second")); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstLease.commit(firstStaged, filepath.Join(entriesDir, "first")); err == nil {
+		t.Fatal("expired writer committed after its lease was recovered")
+	}
+	if err := secondLease.release(); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstLease.release(); !errors.Is(err, ErrConflict) {
+		t.Fatalf("recovered writer release error = %v", err)
+	}
+	items, err := os.ReadDir(entriesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Name() != "second" {
+		t.Fatalf("fenced cache contents = %#v", items)
 	}
 }
 

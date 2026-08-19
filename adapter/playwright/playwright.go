@@ -32,6 +32,7 @@ import (
 
 	"github.com/OpenUdon/browsertools/adapter"
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/internal/adapterdecode"
 	"github.com/OpenUdon/evidence/redact"
 	"gopkg.in/yaml.v3"
 )
@@ -108,20 +109,8 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 		return nil, fmt.Errorf("playwright: opts.RedactionStatus is required; set evidence.RedactionNotRequired for synthetic fixtures")
 	}
 
-	if len(raw) > maxFixtureBytes {
-		return nil, fmt.Errorf("playwright: fixture exceeds %d bytes", maxFixtureBytes)
-	}
 	var fix Fixture
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&fix); err != nil {
-		return nil, fmt.Errorf("playwright: parse fixture: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			err = fmt.Errorf("multiple JSON values are not supported")
-		}
+	if err := adapterdecode.JSON(raw, maxFixtureBytes, &fix); err != nil {
 		return nil, fmt.Errorf("playwright: parse fixture: %w", err)
 	}
 	if fix.Version != "" && fix.Version != FixtureVersion {
@@ -130,8 +119,9 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	if fix.Snapshot != nil && fix.ARIASnapshot != "" {
 		return nil, fmt.Errorf("playwright: fixture must contain only one snapshot representation")
 	}
-	if err := adapter.ValidateFixtureOrigin("playwright", fix.URL, opts.Origin); err != nil {
-		return nil, err
+	origin, originErr := adapter.CanonicalFixtureOrigin("playwright", fix.URL, opts.Origin)
+	if originErr != nil {
+		return nil, originErr
 	}
 
 	observedAt := fix.ObservedAt
@@ -170,7 +160,7 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 
 	raw2 := &evidence.RawRecord{
 		Record: evidence.Record{
-			Origin:            opts.Origin,
+			Origin:            origin,
 			ObservationKind:   evidence.ObservationA11ySnapshot,
 			ObservedAt:        observedAt,
 			ActionHint:        actionHint,

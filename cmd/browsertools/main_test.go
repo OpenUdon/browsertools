@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +24,7 @@ import (
 	"github.com/OpenUdon/browsertools/capture"
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/registry"
 	"github.com/OpenUdon/browsertools/review"
 	"github.com/OpenUdon/uws/browserauthentication"
 )
@@ -209,6 +213,18 @@ func TestPlaywrightDoctorRejectsInvalidArgumentsBeforeRuntime(t *testing.T) {
 		if code := run(args, strings.NewReader(""), &stdout, &stderr); code != exitUsageOrIO || stderr.Len() == 0 {
 			t.Fatalf("args=%v code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
 		}
+	}
+}
+
+func TestPlaywrightDoctorInvalidFormatDoesNotCreateRuntime(t *testing.T) {
+	var calls int
+	var stdout, stderr bytes.Buffer
+	code := runPlaywrightDoctorWith([]string{"--format", "yaml"}, &stdout, &stderr, func(string) capture.Runtime {
+		calls++
+		return nil
+	})
+	if code != exitUsageOrIO || calls != 0 || stdout.Len() != 0 {
+		t.Fatalf("code=%d calls=%d stdout=%q stderr=%q", code, calls, stdout.String(), stderr.String())
 	}
 }
 
@@ -1076,6 +1092,72 @@ func TestRegistryCLIRequiresExplicitNetworkApprovalAndValidCoordinates(t *testin
 	}, strings.NewReader(""), &stdout, &stderr)
 	if code != exitUsageOrIO || !strings.Contains(stderr.String(), "ID@RELEASE") {
 		t.Fatalf("coordinate code=%d stderr=%q", code, stderr.String())
+	}
+}
+
+func TestCommandRegistryAndHelp(t *testing.T) {
+	seen := map[string]struct{}{}
+	for _, spec := range commandRegistry {
+		key := spec.group + " " + spec.name
+		if _, duplicate := seen[key]; duplicate {
+			t.Fatalf("duplicate command %q", key)
+		}
+		seen[key] = struct{}{}
+		if spec.summary == "" || spec.run == nil {
+			t.Fatalf("incomplete command registration: %#v", spec)
+		}
+	}
+	for _, test := range []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"--help"}, want: "command groups:"},
+		{args: []string{"help", "registry"}, want: "registry <command>"},
+		{args: []string{"registry", "--help"}, want: "registry <command>"},
+		{args: []string{"registry", "search", "--help"}, want: "-location"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(test.args, strings.NewReader(""), &stdout, &stderr); code != exitOK || !strings.Contains(stdout.String(), test.want) {
+			t.Fatalf("args=%v code=%d stdout=%q stderr=%q", test.args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestInvalidFormatsAndEnumsPerformNoIOOrNetwork(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	for _, args := range [][]string{
+		{"profile", "validate", "--input", missing, "--format", "yaml"},
+		{"profile", "validate", "--input", missing, "--format", " json "},
+		{"draft", "build", "--evidence", missing, "--spec", missing, "--format", "toml"},
+		{"evidence", "import", "--adapter", "unknown", "--input", missing, "--origin", "https://example.test", "--redaction-status", "not_required"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, strings.NewReader("unread"), &stdout, &stderr); code != exitUsageOrIO || stdout.Len() != 0 {
+			t.Fatalf("args=%v code=%d stdout=%q stderr=%q", args, code, stdout.String(), stderr.String())
+		}
+	}
+
+	cacheRoot := filepath.Join(t.TempDir(), "must-not-exist")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"cache", "prune", "--root", cacheRoot, "--at", "2026-08-16T00:00:00Z", "--format", " json "}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitUsageOrIO {
+		t.Fatalf("cache prune code=%d stderr=%q", code, stderr.String())
+	}
+	if _, err := os.Stat(cacheRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid format touched cache root: %v", err)
+	}
+
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }))
+	defer server.Close()
+	client := &registry.Client{HTTPClient: server.Client()}
+	stdout.Reset()
+	stderr.Reset()
+	code = runRegistrySearchWith([]string{
+		"--location", server.URL, "--at", "2026-08-16T00:00:00Z", "--network", "allow", "--allow-loopback", "--format", "xml",
+	}, &stdout, &stderr, client)
+	if code != exitUsageOrIO || requests.Load() != 0 {
+		t.Fatalf("registry search code=%d requests=%d stderr=%q", code, requests.Load(), stderr.String())
 	}
 }
 

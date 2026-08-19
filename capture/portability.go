@@ -191,7 +191,11 @@ func validatePortabilityRequest(request LiveCheckRequest) (string, string, []str
 	if err != nil {
 		return "", "", nil, fmt.Errorf("%s", strings.NewReplacer("live check:", "portability check:").Replace(err.Error()))
 	}
-	if len(buildCheckRequirements(request.Profile, actions)) == 0 {
+	requirements, err := buildCheckRequirements(request.Profile, actions)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("%s", strings.NewReplacer("live check:", "portability check:").Replace(err.Error()))
+	}
+	if len(requirements) == 0 {
 		return "", "", nil, fmt.Errorf("portability check: selected actions contain no read-only observations")
 	}
 	digest, err := profileDigest(request.Profile)

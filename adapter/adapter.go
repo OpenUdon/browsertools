@@ -10,10 +10,9 @@ package adapter
 
 import (
 	"fmt"
-	"net/url"
-	"strings"
 
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/profile"
 )
 
 // Adapter is implemented by each tool-specific evidence importer.
@@ -28,8 +27,8 @@ type Adapter interface {
 
 // Options controls how an adapter normalizes raw input.
 type Options struct {
-	// Origin is the browser origin (scheme+host) to record on all produced records.
-	// Required.
+	// Origin is the allowed browser origin (scheme+host) for all produced records.
+	// Importers emit its canonical spelling. Required.
 	Origin string
 	// ActionHint is the action name to record on all produced records.
 	// Optional; leave empty if the fixture covers multiple actions.
@@ -44,25 +43,31 @@ type Options struct {
 	RedactedFields []string
 }
 
+// CanonicalFixtureOrigin verifies that a saved adapter fixture declares a URL
+// whose canonical origin exactly matches the caller-provided allowlist origin,
+// then returns that canonical origin for use in emitted evidence.
+func CanonicalFixtureOrigin(adapterName, fixtureURL, expectedOrigin string) (string, error) {
+	if fixtureURL == "" {
+		return "", fmt.Errorf("%s: fixture url is required", adapterName)
+	}
+	origin, err := profile.OriginOfURL(fixtureURL)
+	if err != nil {
+		return "", fmt.Errorf("%s: fixture url %q is malformed: %w", adapterName, fixtureURL, err)
+	}
+	expected, err := profile.ParseOrigin(expectedOrigin)
+	if err != nil {
+		return "", fmt.Errorf("%s: opts.Origin %q is invalid: %w", adapterName, expectedOrigin, err)
+	}
+	if origin != expected {
+		return "", fmt.Errorf("%s: fixture origin %q from url %q does not match opts.Origin %q", adapterName, origin, fixtureURL, expectedOrigin)
+	}
+	return origin, nil
+}
+
 // ValidateFixtureOrigin verifies that a saved adapter fixture declares a URL
 // whose canonical origin exactly matches the caller-provided allowlist origin.
+// CanonicalFixtureOrigin should be used by importers that emit evidence.
 func ValidateFixtureOrigin(adapterName, fixtureURL, expectedOrigin string) error {
-	if fixtureURL == "" {
-		return fmt.Errorf("%s: fixture url is required", adapterName)
-	}
-	u, err := url.Parse(fixtureURL)
-	if err != nil {
-		return fmt.Errorf("%s: fixture url %q is malformed: %w", adapterName, fixtureURL, err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("%s: fixture url %q has unsupported scheme %q; expected http or https", adapterName, fixtureURL, u.Scheme)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("%s: fixture url %q is malformed: missing host", adapterName, fixtureURL)
-	}
-	origin := strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
-	if origin != expectedOrigin {
-		return fmt.Errorf("%s: fixture origin %q from url %q does not match opts.Origin %q", adapterName, origin, fixtureURL, expectedOrigin)
-	}
-	return nil
+	_, err := CanonicalFixtureOrigin(adapterName, fixtureURL, expectedOrigin)
+	return err
 }

@@ -40,6 +40,11 @@ func TestImportFromFixture(t *testing.T) {
 	if len(rec.CandidateOutputs) == 0 {
 		t.Error("expected candidate outputs from extract field")
 	}
+	for _, output := range rec.CandidateOutputs {
+		if output.Source != "" {
+			t.Fatalf("Firecrawl hint fabricated portable source %q", output.Source)
+		}
+	}
 }
 
 // TestImportScrapeIDExcluded confirms scrapeId and jobId are not in the

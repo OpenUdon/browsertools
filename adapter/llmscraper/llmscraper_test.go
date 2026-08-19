@@ -39,6 +39,11 @@ func TestImportFromFixture(t *testing.T) {
 	if len(rec.CandidateOutputs) == 0 {
 		t.Error("expected candidate outputs, got none")
 	}
+	for _, output := range rec.CandidateOutputs {
+		if output.Source != "" {
+			t.Fatalf("LLM hint fabricated portable source %q", output.Source)
+		}
+	}
 	// Outputs should be sorted by key
 	keys := make([]string, len(rec.CandidateOutputs))
 	for i, o := range rec.CandidateOutputs {

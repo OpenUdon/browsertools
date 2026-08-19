@@ -71,7 +71,7 @@
   },
   "operationMappings": {
     "getStatus": {
-      "openapiOperationId": "getStatus",
+      "openAPIOperationId": "getStatus",
       "profileActionName": "get_status",
       "confidenceNote": "direct path mapping; stable as of 2026-06-01"
     }

@@ -126,7 +126,10 @@ func Check(ctx context.Context, acquirer Acquirer, request LiveCheckRequest) (Li
 	if err != nil {
 		return LiveCheckResult{}, err
 	}
-	requirements := buildCheckRequirements(request.Profile, actions)
+	requirements, err := buildCheckRequirements(request.Profile, actions)
+	if err != nil {
+		return LiveCheckResult{}, err
+	}
 	if len(requirements) == 0 {
 		return LiveCheckResult{}, fmt.Errorf("live check: selected actions contain no read-only locator, wait, or output observations")
 	}
@@ -192,14 +195,19 @@ func selectedActions(prof *profile.Profile, requested []string) ([]string, error
 	return result, nil
 }
 
-func buildCheckRequirements(prof *profile.Profile, actions []string) []checkRequirement {
+func buildCheckRequirements(prof *profile.Profile, actions []string) ([]checkRequirement, error) {
 	var requirements []checkRequirement
-	add := func(kind ProbeKind, path string, locator *profile.Locator, navigation *profile.NavigationWait, outputKey string, output *profile.Output) {
+	add := func(kind ProbeKind, path string, locator *profile.Locator, navigation *profile.NavigationWait, outputKey string, output *profile.Output) error {
 		id := fmt.Sprintf("P%03d", len(requirements)+1)
+		clonedOutput, err := cloneOutput(output)
+		if err != nil {
+			return fmt.Errorf("live check: clone probe output at %s: %w", path, err)
+		}
 		requirements = append(requirements, checkRequirement{
-			probe: Probe{ID: id, Kind: kind, Locator: cloneLocator(locator), Navigation: cloneNavigation(navigation), OutputKey: outputKey, Output: cloneOutput(output)},
+			probe: Probe{ID: id, Kind: kind, Locator: cloneLocator(locator), Navigation: cloneNavigation(navigation), OutputKey: outputKey, Output: clonedOutput},
 			path:  path,
 		})
+		return nil
 	}
 	for _, actionName := range actions {
 		action := prof.Actions[actionName]
@@ -207,20 +215,30 @@ func buildCheckRequirements(prof *profile.Profile, actions []string) []checkRequ
 			base := fmt.Sprintf("actions.%s.sequence[%d]", actionName, index)
 			if step.Kind == profile.StepWaitFor {
 				if step.WaitFor != nil && step.WaitFor.Locator != nil {
-					add(ProbeLocator, base+".wait_for", step.WaitFor.Locator, nil, "", nil)
+					if err := add(ProbeLocator, base+".wait_for", step.WaitFor.Locator, nil, "", nil); err != nil {
+						return nil, err
+					}
 				} else if step.WaitFor != nil {
-					add(ProbeNavigationWait, base+".wait_for.navigation", nil, step.WaitFor.Navigation, "", nil)
+					if err := add(ProbeNavigationWait, base+".wait_for.navigation", nil, step.WaitFor.Navigation, "", nil); err != nil {
+						return nil, err
+					}
 				}
 				continue
 			}
 			if locator := step.Locator(); locator != nil {
-				add(ProbeLocator, base+".locator", locator, nil, "", nil)
+				if err := add(ProbeLocator, base+".locator", locator, nil, "", nil); err != nil {
+					return nil, err
+				}
 			}
 			if wait := step.PostWait(); wait != nil {
 				if wait.Locator != nil {
-					add(ProbeLocator, base+".wait_for", wait.Locator, nil, "", nil)
+					if err := add(ProbeLocator, base+".wait_for", wait.Locator, nil, "", nil); err != nil {
+						return nil, err
+					}
 				} else {
-					add(ProbeNavigationWait, base+".wait_for.navigation", nil, wait.Navigation, "", nil)
+					if err := add(ProbeNavigationWait, base+".wait_for.navigation", nil, wait.Navigation, "", nil); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -231,10 +249,12 @@ func buildCheckRequirements(prof *profile.Profile, actions []string) []checkRequ
 		sort.Strings(outputNames)
 		for _, name := range outputNames {
 			output := action.Outputs[name]
-			add(ProbeOutput, fmt.Sprintf("actions.%s.outputs.%s", actionName, name), nil, nil, name, &output)
+			if err := add(ProbeOutput, fmt.Sprintf("actions.%s.outputs.%s", actionName, name), nil, nil, name, &output); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return requirements
+	return requirements, nil
 }
 
 func assessProbe(requirement checkRequirement, result ProbeResult) LiveCheckItem {
@@ -476,12 +496,10 @@ func cloneNavigation(value *profile.NavigationWait) *profile.NavigationWait {
 	return &cloned
 }
 
-func cloneOutput(value *profile.Output) *profile.Output {
+func cloneOutput(value *profile.Output) (*profile.Output, error) {
 	if value == nil {
-		return nil
+		return nil, nil
 	}
-	data, _ := json.Marshal(value)
-	var cloned profile.Output
-	_ = json.Unmarshal(data, &cloned)
-	return &cloned
+	cloned, err := profile.CloneOutput(*value)
+	return &cloned, err
 }

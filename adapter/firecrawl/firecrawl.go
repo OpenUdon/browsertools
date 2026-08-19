@@ -18,17 +18,23 @@
 //
 // Firecrawl-specific identifiers (scrapeId, jobId, crawlId) stay
 // adapter-private and are never included in the emitted evidence record.
-// Extract fields become CandidateOutputs with source="microdata" as a
-// best-effort guess; the reviewer must confirm the actual source.
+// Extract fields become unbound CandidateOutputs; the adapter never guesses a
+// portable source from a hosted extraction result.
 package firecrawl
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/OpenUdon/browsertools/adapter"
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/internal/adapterdecode"
+)
+
+const (
+	maxFixtureBytes = int64(4 << 20)
+	maxOutputs      = 256
+	maxLinks        = 4096
 )
 
 // Fixture is the expected shape of a saved Firecrawl API response file.
@@ -65,10 +71,11 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	}
 
 	var fix Fixture
-	if err := json.Unmarshal(raw, &fix); err != nil {
+	if err := adapterdecode.JSON(raw, maxFixtureBytes, &fix); err != nil {
 		return nil, fmt.Errorf("firecrawl: parse fixture: %w", err)
 	}
-	if err := adapter.ValidateFixtureOrigin("firecrawl", fix.URL, opts.Origin); err != nil {
+	origin, err := adapter.CanonicalFixtureOrigin("firecrawl", fix.URL, opts.Origin)
+	if err != nil {
 		return nil, err
 	}
 
@@ -89,12 +96,13 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	}
 
 	var outputs []evidence.CandidateOutput
+	if len(fix.Extract) > maxOutputs || len(fix.Links) > maxLinks {
+		return nil, fmt.Errorf("firecrawl: fixture exceeds output/link cardinality limits")
+	}
 	for key, val := range fix.Extract {
 		typ := inferType(val)
 		outputs = append(outputs, evidence.CandidateOutput{
-			Key:    key,
-			Type:   typ,
-			Source: "microdata", // best-effort; reviewer must confirm
+			Key: key, Type: typ,
 		})
 	}
 	evidence.SortOutputs(outputs)
@@ -108,13 +116,13 @@ func (a *Adapter) Import(raw []byte, opts adapter.Options) ([]evidence.Record, e
 	}
 	diags = append(diags, evidence.Diagnostic{
 		Level:   "info",
-		Message: "candidate outputs inferred from firecrawl extract; source and locator must be validated by reviewer",
+		Message: "unbound output hints inferred from firecrawl extract; an operator must declare a portable source before promotion",
 	})
 	evidence.SortDiagnostics(diags)
 
 	raw2 := &evidence.RawRecord{
 		Record: evidence.Record{
-			Origin:           opts.Origin,
+			Origin:           origin,
 			ObservationKind:  evidence.ObservationDOMText,
 			ObservedAt:       observedAt,
 			ActionHint:       actionHint,

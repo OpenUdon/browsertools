@@ -689,6 +689,23 @@ func installAuthorNetworkPolicy(browserContext playwright.BrowserContext, guard 
 	if err := browserContext.RouteWebSocket("**/*", func(route playwright.WebSocketRoute) { guard.block("websocket"); route.Close() }); err != nil {
 		return fmt.Errorf("install author WebSocket blocker")
 	}
+	browserContext.OnResponse(func(response playwright.Response) {
+		value, err := response.HeaderValue("content-length")
+		if err != nil {
+			guard.block("response_header")
+			return
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		length, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			guard.block("response_header")
+			return
+		}
+		guard.observeResponseContentLength(length)
+	})
 	browserContext.OnRequestFinished(func(request playwright.Request) {
 		sizes, err := request.Sizes()
 		if err != nil || sizes == nil || sizes.ResponseBodySize < 0 {
@@ -807,6 +824,11 @@ func (g *authorNetworkGuard) observeBytes(size int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.core.observeFinishedResponse(size, authorPolicyError("response_limit"))
+}
+func (g *authorNetworkGuard) observeResponseContentLength(size int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.core.observeResponseContentLength(size, authorPolicyError("response_limit"))
 }
 func (g *authorNetworkGuard) block(code string) {
 	g.mu.Lock()

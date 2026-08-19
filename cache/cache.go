@@ -5,6 +5,7 @@ package cache
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,9 +21,10 @@ import (
 )
 
 const (
-	ManifestVersion = "browsertools.capture-cache.v1"
-	DefaultMaxBytes = int64(20 << 20)
-	DefaultMaxItems = 10_000
+	ManifestVersion  = "browsertools.capture-cache.v1"
+	DefaultMaxBytes  = int64(20 << 20)
+	DefaultMaxItems  = 10_000
+	putLeaseDuration = 5 * time.Minute
 )
 
 // Kind classifies cached bytes at the publication boundary.
@@ -114,7 +116,7 @@ func (s *Store) Root() string {
 
 // Put stores at most 20 MiB of immutable content. Identical content with
 // identical metadata reuses the existing entry; conflicting metadata fails.
-func (s *Store) Put(ctx context.Context, reader io.Reader, options PutOptions) (Entry, error) {
+func (s *Store) Put(ctx context.Context, reader io.Reader, options PutOptions) (result Entry, resultErr error) {
 	if err := s.validate(); err != nil {
 		return Entry{}, err
 	}
@@ -130,7 +132,7 @@ func (s *Store) Put(ctx context.Context, reader io.Reader, options PutOptions) (
 	}
 	entry, err := newEntry(payload, options)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, fmt.Errorf("%w: %w", ErrValidation, err)
 	}
 	dir, err := s.entryDir(entry.ID)
 	if err != nil {
@@ -171,11 +173,23 @@ func (s *Store) Put(ctx context.Context, reader io.Reader, options PutOptions) (
 	if err := ctx.Err(); err != nil {
 		return Entry{}, err
 	}
-	unlock, err := acquirePutLock(entriesDir)
+	lease, err := acquirePutLock(entriesDir)
 	if err != nil {
 		return Entry{}, err
 	}
-	defer unlock()
+	defer func() {
+		if releaseErr := lease.release(); releaseErr != nil {
+			resultErr = errors.Join(resultErr, releaseErr)
+		}
+	}()
+	staged := lease.transactionPath()
+	if err := os.Rename(tmp, staged); err != nil {
+		return Entry{}, fmt.Errorf("stage cache entry under put lease: %w", err)
+	}
+	tmp = staged
+	if err := lease.assertOwned(); err != nil {
+		return Entry{}, err
+	}
 	if _, err := os.Lstat(dir); err == nil {
 		return s.reuseExisting(ctx, entry)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -184,7 +198,7 @@ func (s *Store) Put(ctx context.Context, reader io.Reader, options PutOptions) (
 	if err := s.ensurePutCapacity(entriesDir); err != nil {
 		return Entry{}, err
 	}
-	if err := os.Rename(tmp, dir); err != nil {
+	if err := lease.commit(tmp, dir); err != nil {
 		if _, statErr := os.Lstat(dir); statErr == nil {
 			return s.reuseExisting(ctx, entry)
 		}
@@ -194,8 +208,12 @@ func (s *Store) Put(ctx context.Context, reader io.Reader, options PutOptions) (
 	return entry, nil
 }
 
-// Get reads and verifies an entry. When at is non-zero, expired entries fail.
+// Get reads and verifies an entry at the required caller-supplied assessment
+// time. Expired entries fail.
 func (s *Store) Get(ctx context.Context, id string, at time.Time) (Entry, []byte, error) {
+	if at.IsZero() {
+		return Entry{}, nil, fmt.Errorf("%w: cache get assessment time is required", ErrValidation)
+	}
 	if err := s.validate(); err != nil {
 		return Entry{}, nil, err
 	}
@@ -204,7 +222,7 @@ func (s *Store) Get(ctx context.Context, id string, at time.Time) (Entry, []byte
 		return Entry{}, nil, err
 	}
 	if expired(entry, at) {
-		return Entry{}, nil, fmt.Errorf("cache entry %s is expired", entry.ID)
+		return Entry{}, nil, fmt.Errorf("%w: cache entry %s is expired", ErrExpired, entry.ID)
 	}
 	return entry, payload, nil
 }
@@ -212,6 +230,9 @@ func (s *Store) Get(ctx context.Context, id string, at time.Time) (Entry, []byte
 // List returns verified manifests in deterministic digest order. Expired
 // entries are omitted unless includeExpired is true.
 func (s *Store) List(ctx context.Context, at time.Time, includeExpired bool) ([]Entry, error) {
+	if at.IsZero() {
+		return nil, fmt.Errorf("%w: cache list assessment time is required", ErrValidation)
+	}
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
@@ -226,7 +247,7 @@ func (s *Store) List(ctx context.Context, at time.Time, includeExpired bool) ([]
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if strings.HasPrefix(item.Name(), ".put-") {
+		if isCacheInternalDirectory(item.Name()) {
 			if item.Type()&os.ModeSymlink != 0 || !item.IsDir() {
 				return nil, fmt.Errorf("cache transaction entry must be a regular directory: %s", item.Name())
 			}
@@ -237,7 +258,7 @@ func (s *Store) List(ctx context.Context, at time.Time, includeExpired bool) ([]
 		}
 		entryCount++
 		if entryCount > s.maxItems {
-			return nil, fmt.Errorf("cache contains more than %d entries; prune or narrow the cache", s.maxItems)
+			return nil, fmt.Errorf("%w: cache contains more than %d entries; prune or narrow the cache", ErrLimit, s.maxItems)
 		}
 		id := "sha256:" + item.Name()
 		entry, _, err := s.load(ctx, id)
@@ -253,15 +274,191 @@ func (s *Store) List(ctx context.Context, at time.Time, includeExpired bool) ([]
 	return entries, nil
 }
 
-func acquirePutLock(entriesDir string) (func(), error) {
-	lockPath := filepath.Join(entriesDir, ".put-lock")
-	if err := os.Mkdir(lockPath, 0o700); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("another cache put is in progress")
-		}
-		return nil, fmt.Errorf("acquire cache put lock: %w", err)
+type putLeaseOwner struct {
+	Nonce      string `json:"nonce"`
+	AcquiredAt string `json:"acquired_at"`
+}
+
+type putLease struct {
+	lockPath string
+	nonce    string
+}
+
+func acquirePutLock(entriesDir string) (*putLease, error) {
+	return acquirePutLease(entriesDir, time.Now().UTC(), putLeaseDuration, cryptorand.Reader)
+}
+
+func acquirePutLease(entriesDir string, at time.Time, duration time.Duration, random io.Reader) (*putLease, error) {
+	if at.IsZero() || duration <= 0 || random == nil {
+		return nil, fmt.Errorf("%w: cache lease dependencies are invalid", ErrValidation)
 	}
-	return func() { _ = os.Remove(lockPath) }, nil
+	lockPath := filepath.Join(entriesDir, ".put-lock")
+	for attempts := 0; attempts < 4; attempts++ {
+		nonce, err := leaseNonce(random)
+		if err != nil {
+			return nil, fmt.Errorf("acquire cache put lease nonce: %w", err)
+		}
+		if err := os.Mkdir(lockPath, 0o700); err == nil {
+			owner := putLeaseOwner{Nonce: nonce, AcquiredAt: at.UTC().Round(0).Format(time.RFC3339Nano)}
+			data, marshalErr := json.Marshal(owner)
+			if marshalErr != nil {
+				_ = os.Remove(lockPath)
+				return nil, fmt.Errorf("marshal cache put lease: %w", marshalErr)
+			}
+			if writeErr := writeExclusive(filepath.Join(lockPath, "owner.json"), append(data, '\n'), 0o600); writeErr != nil {
+				_ = os.RemoveAll(lockPath)
+				return nil, fmt.Errorf("write cache put lease: %w", writeErr)
+			}
+			return &putLease{lockPath: lockPath, nonce: nonce}, nil
+		} else if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("acquire cache put lease: %w", err)
+		}
+
+		owner, err := readPutLease(lockPath)
+		if err != nil {
+			return nil, fmt.Errorf("%w: inspect existing cache put lease: %v", ErrConflict, err)
+		}
+		acquiredAt, err := time.Parse(time.RFC3339Nano, owner.AcquiredAt)
+		if err != nil || at.Before(acquiredAt.Add(duration)) {
+			return nil, fmt.Errorf("%w: another cache put is in progress", ErrConflict)
+		}
+		recoveryPath := filepath.Join(entriesDir, ".put-lock.recovery-"+nonce)
+		if err := os.Rename(lockPath, recoveryPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("recover expired cache put lease: %w", err)
+		}
+		movedOwner, movedErr := readPutLease(recoveryPath)
+		movedAt, timeErr := time.Parse(time.RFC3339Nano, movedOwner.AcquiredAt)
+		if movedErr != nil || timeErr != nil || movedOwner.Nonce != owner.Nonce || at.Before(movedAt.Add(duration)) {
+			if restoreErr := os.Rename(recoveryPath, lockPath); restoreErr != nil {
+				return nil, fmt.Errorf("%w: cache put lease changed during stale recovery and could not be restored: %v", ErrConflict, restoreErr)
+			}
+			return nil, fmt.Errorf("%w: cache put lease changed during stale recovery", ErrConflict)
+		}
+		if err := os.RemoveAll(recoveryPath); err != nil {
+			return nil, fmt.Errorf("remove expired cache put lease: %w", err)
+		}
+	}
+	return nil, fmt.Errorf("%w: cache put lease acquisition raced repeatedly", ErrConflict)
+}
+
+func (l *putLease) transactionPath() string {
+	if l == nil {
+		return ""
+	}
+	return filepath.Join(l.lockPath, ".entry-"+l.nonce)
+}
+
+func (l *putLease) assertOwned() error {
+	if l == nil || l.lockPath == "" || l.nonce == "" {
+		return fmt.Errorf("%w: cache put lease is not initialized", ErrConflict)
+	}
+	owner, err := readPutLease(l.lockPath)
+	if err != nil {
+		return fmt.Errorf("%w: inspect cache put lease ownership: %v", ErrConflict, err)
+	}
+	if owner.Nonce != l.nonce {
+		return fmt.Errorf("%w: cache put lease owner changed", ErrConflict)
+	}
+	return nil
+}
+
+// commit renames only from inside the owned lease directory. Atomic stale
+// recovery moves that directory first, so a fenced writer can no longer reach
+// its prepared transaction even if it resumes after checking capacity.
+func (l *putLease) commit(staged, destination string) error {
+	if staged != l.transactionPath() {
+		return fmt.Errorf("%w: cache put transaction is not bound to its lease", ErrConflict)
+	}
+	if err := l.assertOwned(); err != nil {
+		return err
+	}
+	if err := os.Rename(staged, destination); err != nil {
+		return fmt.Errorf("commit fenced cache entry: %w", err)
+	}
+	return nil
+}
+
+func (l *putLease) release() error {
+	if l == nil {
+		return nil
+	}
+	return releasePutLease(l.lockPath, l.nonce)
+}
+
+func leaseNonce(random io.Reader) (string, error) {
+	value := make([]byte, 16)
+	if _, err := io.ReadFull(random, value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
+}
+
+func readPutLease(path string) (putLeaseOwner, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return putLeaseOwner{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return putLeaseOwner{}, fmt.Errorf("lease is not a directory")
+	}
+	data, err := readRegularFile(context.Background(), filepath.Join(path, "owner.json"), 4096)
+	if err != nil {
+		return putLeaseOwner{}, err
+	}
+	var owner putLeaseOwner
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&owner); err != nil {
+		return putLeaseOwner{}, err
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return putLeaseOwner{}, err
+	}
+	if len(owner.Nonce) != 32 || owner.Nonce != strings.ToLower(owner.Nonce) {
+		return putLeaseOwner{}, fmt.Errorf("lease nonce is invalid")
+	}
+	if _, err := hex.DecodeString(owner.Nonce); err != nil {
+		return putLeaseOwner{}, fmt.Errorf("lease nonce is invalid")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, owner.AcquiredAt); err != nil {
+		return putLeaseOwner{}, fmt.Errorf("lease acquisition time is invalid")
+	}
+	return owner, nil
+}
+
+func releasePutLease(lockPath, nonce string) error {
+	owner, err := readPutLease(lockPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: cache put lease no longer exists", ErrConflict)
+	}
+	if err != nil {
+		return fmt.Errorf("release cache put lease: %w", err)
+	}
+	if owner.Nonce != nonce {
+		return fmt.Errorf("%w: cache put lease owner changed", ErrConflict)
+	}
+	releasePath := lockPath + ".release-" + nonce
+	if err := os.Rename(lockPath, releasePath); err != nil {
+		return fmt.Errorf("release cache put lease: %w", err)
+	}
+	movedOwner, err := readPutLease(releasePath)
+	if err != nil || movedOwner.Nonce != nonce {
+		if _, statErr := os.Lstat(lockPath); errors.Is(statErr, os.ErrNotExist) {
+			_ = os.Rename(releasePath, lockPath)
+		}
+		return fmt.Errorf("%w: cache put lease owner changed during release", ErrConflict)
+	}
+	if err := os.RemoveAll(releasePath); err != nil {
+		return fmt.Errorf("release cache put lease: %w", err)
+	}
+	return nil
+}
+
+func isCacheInternalDirectory(name string) bool {
+	return strings.HasPrefix(name, ".put-")
 }
 
 func (s *Store) ensurePutCapacity(entriesDir string) error {
@@ -271,7 +468,7 @@ func (s *Store) ensurePutCapacity(entriesDir string) error {
 	}
 	count := 0
 	for _, item := range items {
-		if strings.HasPrefix(item.Name(), ".put-") {
+		if isCacheInternalDirectory(item.Name()) {
 			if item.Type()&os.ModeSymlink != 0 || !item.IsDir() {
 				return fmt.Errorf("cache transaction entry must be a regular directory: %s", item.Name())
 			}
@@ -283,7 +480,7 @@ func (s *Store) ensurePutCapacity(entriesDir string) error {
 		count++
 	}
 	if count >= s.maxItems {
-		return fmt.Errorf("cache contains %d entries, limit is %d; prune before adding another entry", count, s.maxItems)
+		return fmt.Errorf("%w: cache contains %d entries, limit is %d; prune before adding another entry", ErrLimit, count, s.maxItems)
 	}
 	return nil
 }
@@ -324,7 +521,7 @@ func (s *Store) Prune(ctx context.Context, at time.Time) ([]Entry, error) {
 // DeletePrivate removes exactly one verified private_raw entry. Callers must
 // separately obtain an explicit operator confirmation; derived or publishable
 // artifacts cannot be removed through this narrow rich-evidence control.
-func (s *Store) DeletePrivate(ctx context.Context, id string) (Entry, error) {
+func (s *Store) DeletePrivate(ctx context.Context, id string) (result Entry, resultErr error) {
 	if err := s.validate(); err != nil {
 		return Entry{}, err
 	}
@@ -339,23 +536,30 @@ func (s *Store) DeletePrivate(ctx context.Context, id string) (Entry, error) {
 		return Entry{}, err
 	}
 	if entry.Kind != KindPrivateRaw {
-		return Entry{}, fmt.Errorf("cache delete permits only private_raw entries")
+		return Entry{}, fmt.Errorf("%w: cache delete permits only private_raw entries", ErrPolicy)
 	}
 	entriesDir := filepath.Join(s.root, "entries")
-	unlock, err := acquirePutLock(entriesDir)
+	lease, err := acquirePutLock(entriesDir)
 	if err != nil {
 		return Entry{}, err
 	}
-	defer unlock()
+	defer func() {
+		if releaseErr := lease.release(); releaseErr != nil {
+			resultErr = errors.Join(resultErr, releaseErr)
+		}
+	}()
 	entry, _, err = s.load(ctx, id)
 	if err != nil {
 		return Entry{}, err
 	}
 	if entry.Kind != KindPrivateRaw {
-		return Entry{}, fmt.Errorf("cache delete permits only private_raw entries")
+		return Entry{}, fmt.Errorf("%w: cache delete permits only private_raw entries", ErrPolicy)
 	}
 	dir, err := s.entryDir(id)
 	if err != nil {
+		return Entry{}, err
+	}
+	if err := lease.assertOwned(); err != nil {
 		return Entry{}, err
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -368,13 +572,13 @@ func (s *Store) DeletePrivate(ctx context.Context, id string) (Entry, error) {
 // Publication packages must still independently validate exact artifact bytes.
 func ValidateForPublication(entry Entry) error {
 	if err := validateEntry(entry); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrValidation, err)
 	}
 	if entry.Kind == KindPrivateRaw {
-		return fmt.Errorf("private raw cache entries cannot be published")
+		return fmt.Errorf("%w: private raw cache entries cannot be published", ErrPolicy)
 	}
 	if !entry.PublicationEligible {
-		return fmt.Errorf("cache entry %s is not marked publication eligible", entry.ID)
+		return fmt.Errorf("%w: cache entry %s is not marked publication eligible", ErrPolicy, entry.ID)
 	}
 	return nil
 }
@@ -384,8 +588,12 @@ func (s *Store) reuseExisting(ctx context.Context, expected Entry) (Entry, error
 	if err != nil {
 		return Entry{}, err
 	}
-	if !entriesEqual(actual, expected) {
-		return Entry{}, fmt.Errorf("cache digest %s already exists with conflicting metadata", expected.ID)
+	equal, equalErr := entriesEqual(actual, expected)
+	if equalErr != nil {
+		return Entry{}, fmt.Errorf("compare cache entry metadata: %w", equalErr)
+	}
+	if !equal {
+		return Entry{}, fmt.Errorf("%w: cache digest %s already exists with conflicting metadata", ErrConflict, expected.ID)
 	}
 	return actual, nil
 }
@@ -393,7 +601,7 @@ func (s *Store) reuseExisting(ctx context.Context, expected Entry) (Entry, error
 func (s *Store) load(ctx context.Context, id string) (Entry, []byte, error) {
 	dir, err := s.entryDir(id)
 	if err != nil {
-		return Entry{}, nil, err
+		return Entry{}, nil, fmt.Errorf("%w: %w", ErrValidation, err)
 	}
 	if err := validateEntryDirectory(dir); err != nil {
 		return Entry{}, nil, err
@@ -406,23 +614,23 @@ func (s *Store) load(ctx context.Context, id string) (Entry, []byte, error) {
 	decoder := json.NewDecoder(bytes.NewReader(manifest))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&entry); err != nil {
-		return Entry{}, nil, fmt.Errorf("decode cache manifest: %w", err)
+		return Entry{}, nil, fmt.Errorf("%w: decode cache manifest: %w", ErrIntegrity, err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
-		return Entry{}, nil, fmt.Errorf("decode cache manifest: %w", err)
+		return Entry{}, nil, fmt.Errorf("%w: decode cache manifest: %w", ErrIntegrity, err)
 	}
 	if entry.ID != id {
-		return Entry{}, nil, fmt.Errorf("cache manifest id %q does not match path %q", entry.ID, id)
+		return Entry{}, nil, fmt.Errorf("%w: cache manifest id %q does not match path %q", ErrIntegrity, entry.ID, id)
 	}
 	if err := validateEntry(entry); err != nil {
-		return Entry{}, nil, err
+		return Entry{}, nil, fmt.Errorf("%w: invalid cache manifest: %w", ErrIntegrity, err)
 	}
 	payload, err := readRegularFile(ctx, filepath.Join(dir, "payload"), s.maxBytes)
 	if err != nil {
 		return Entry{}, nil, err
 	}
 	if int64(len(payload)) != entry.SizeBytes || digestBytes(payload) != entry.Digest {
-		return Entry{}, nil, fmt.Errorf("cache entry %s payload digest or size mismatch", id)
+		return Entry{}, nil, fmt.Errorf("%w: cache entry %s payload digest or size mismatch", ErrIntegrity, id)
 	}
 	return entry, payload, nil
 }
@@ -473,7 +681,7 @@ func validateEntry(entry Entry) error {
 		return fmt.Errorf("cache media type %q is invalid", entry.MediaType)
 	}
 	if entry.SizeBytes < 0 || entry.SizeBytes > DefaultMaxBytes {
-		return fmt.Errorf("cache size %d is outside 0..%d", entry.SizeBytes, DefaultMaxBytes)
+		return fmt.Errorf("%w: cache size %d is outside 0..%d", ErrLimit, entry.SizeBytes, DefaultMaxBytes)
 	}
 	created, err := time.Parse(time.RFC3339Nano, entry.CreatedAt)
 	if err != nil {
@@ -619,7 +827,7 @@ func readBounded(ctx context.Context, reader io.Reader, max int64) ([]byte, erro
 		}
 		remaining := max + 1 - int64(buffer.Len())
 		if remaining <= 0 {
-			return nil, fmt.Errorf("cache input exceeds %d bytes", max)
+			return nil, fmt.Errorf("%w: cache input exceeds %d bytes", ErrLimit, max)
 		}
 		readSize := len(chunk)
 		if int64(readSize) > remaining {
@@ -629,7 +837,7 @@ func readBounded(ctx context.Context, reader io.Reader, max int64) ([]byte, erro
 		if n > 0 {
 			_, _ = buffer.Write(chunk[:n])
 			if int64(buffer.Len()) > max {
-				return nil, fmt.Errorf("cache input exceeds %d bytes", max)
+				return nil, fmt.Errorf("%w: cache input exceeds %d bytes", ErrLimit, max)
 			}
 		}
 		if err == io.EOF {
@@ -652,12 +860,18 @@ func expired(entry Entry, at time.Time) bool {
 	return err == nil && !at.Before(expires)
 }
 
-func entriesEqual(a, b Entry) bool {
+func entriesEqual(a, b Entry) (bool, error) {
 	a.Annotations = normalizeAnnotations(a.Annotations)
 	b.Annotations = normalizeAnnotations(b.Annotations)
-	aJSON, _ := json.Marshal(a)
-	bJSON, _ := json.Marshal(b)
-	return bytes.Equal(aJSON, bJSON)
+	aJSON, err := json.Marshal(a)
+	if err != nil {
+		return false, err
+	}
+	bJSON, err := json.Marshal(b)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(aJSON, bJSON), nil
 }
 
 func digestBytes(data []byte) string {

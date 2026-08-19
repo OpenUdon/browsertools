@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/OpenUdon/browsertools/evidence"
@@ -49,13 +50,26 @@ func CheckAt(prof *profile.Profile, records []evidence.Record, decisions []evide
 	if now.IsZero() {
 		return Result{}, fmt.Errorf("revalidate: assessment time is required")
 	}
-	var failures []Failure
+	validationErr := profile.ValidateTyped(prof)
+	return checkAt(prof, records, decisions, now, validationErr)
+}
 
-	value, err := prof.Value()
-	if err != nil {
-		failures = append(failures, Failure{Kind: CheckInvalidProfile, Field: "$", Message: err.Error()})
-	} else if err := profile.Validate(value); err != nil {
-		failures = append(failures, Failure{Kind: CheckInvalidProfile, Field: "$", Message: err.Error()})
+// CheckValidatedAt runs fixture and lifecycle checks for a profile already
+// schema-validated by the enclosing top-level operation.
+func CheckValidatedAt(prof *profile.Profile, records []evidence.Record, decisions []evidence.LocatorDecision, now time.Time) (Result, error) {
+	if prof == nil {
+		return Result{}, fmt.Errorf("revalidate: profile is required")
+	}
+	if now.IsZero() {
+		return Result{}, fmt.Errorf("revalidate: assessment time is required")
+	}
+	return checkAt(prof, records, decisions, now, nil)
+}
+
+func checkAt(prof *profile.Profile, records []evidence.Record, decisions []evidence.LocatorDecision, now time.Time, validationErr error) (Result, error) {
+	var failures []Failure
+	if validationErr != nil {
+		failures = append(failures, Failure{Kind: CheckInvalidProfile, Field: "$", Message: validationErr.Error()})
 	}
 
 	failures = append(failures, checkOrigins(prof, records)...)
@@ -100,6 +114,18 @@ func checkRecordValidity(records []evidence.Record) []Failure {
 
 func checkOrigins(prof *profile.Profile, records []evidence.Record) []Failure {
 	var failures []Failure
+	allowedOrigins := map[string]struct{}{}
+	for _, candidate := range prof.Info.Origin {
+		canonical, err := profile.ParseOrigin(candidate)
+		if err != nil {
+			failures = append(failures, Failure{
+				Kind: CheckOriginMismatch, Field: "info.origin",
+				Message: fmt.Sprintf("profile origin %q is invalid: %v", candidate, err),
+			})
+			continue
+		}
+		allowedOrigins[canonical] = struct{}{}
+	}
 	seen := map[string]bool{}
 	for _, rec := range records {
 		if seen[rec.Origin] {
@@ -114,14 +140,7 @@ func checkOrigins(prof *profile.Profile, records []evidence.Record) []Failure {
 			})
 			continue
 		}
-		allowed := false
-		for _, candidate := range prof.Info.Origin {
-			if candidate == canonical {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
+		if _, allowed := allowedOrigins[canonical]; !allowed {
 			failures = append(failures, Failure{
 				Kind: CheckOriginMismatch, Field: "info.origin",
 				Message: fmt.Sprintf("evidence origin %q is not in the profile origin allowlist", canonical),
@@ -226,7 +245,7 @@ func matchingCandidates(loc profile.Locator, records []evidence.Record) []eviden
 func hasDecision(actionName string, loc profile.Locator, decisions []evidence.LocatorDecision) bool {
 	candidate := evidence.CandidateLocator{Role: string(loc.Role), Name: loc.Name, Text: loc.Text, Value: loc.Value}
 	for _, decision := range decisions {
-		if decision.Rationale != "" && decision.Matches(actionName, candidate) {
+		if strings.TrimSpace(decision.Rationale) != "" && decision.Matches(actionName, candidate) {
 			return true
 		}
 	}
@@ -283,10 +302,5 @@ func checkSafeWaits(prof *profile.Profile) []Failure {
 }
 
 func hasWriteSideEffect(action profile.Action) bool {
-	for _, effect := range action.SideEffects {
-		if effect != profile.SideEffectReadOnly {
-			return true
-		}
-	}
-	return false
+	return profile.HasWriteSideEffects(action)
 }

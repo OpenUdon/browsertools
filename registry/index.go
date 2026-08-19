@@ -86,6 +86,13 @@ func Normalize(value Index) Index {
 // Validate rejects malformed, duplicate, non-canonical, or dangling lifecycle
 // records. Non-active entries remain valid index history.
 func Validate(value Index) error {
+	if err := validateIndex(value); err != nil {
+		return fmt.Errorf("%w: %w", ErrValidation, err)
+	}
+	return nil
+}
+
+func validateIndex(value Index) error {
 	if value.Version != IndexVersion {
 		return fmt.Errorf("registry index version must be %q", IndexVersion)
 	}
@@ -134,7 +141,7 @@ func Validate(value Index) error {
 func CanonicalJSON(value Index) ([]byte, error) {
 	value = Normalize(value)
 	if len(value.Entries) > DefaultMaxEntries {
-		return nil, fmt.Errorf("registry index exceeds %d entries", DefaultMaxEntries)
+		return nil, fmt.Errorf("%w: registry index exceeds %d entries", ErrLimit, DefaultMaxEntries)
 	}
 	if err := Validate(value); err != nil {
 		return nil, err
@@ -144,7 +151,7 @@ func CanonicalJSON(value Index) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(data)) > bundle.MaxBundleBytes {
-		return nil, fmt.Errorf("registry index exceeds %d bytes", bundle.MaxBundleBytes)
+		return nil, fmt.Errorf("%w: registry index exceeds %d bytes", ErrLimit, bundle.MaxBundleBytes)
 	}
 	return data, nil
 }
@@ -152,19 +159,19 @@ func CanonicalJSON(value Index) ([]byte, error) {
 // ParseIndex decodes one strict bounded index document.
 func ParseIndex(data []byte) (Index, error) {
 	if int64(len(data)) > bundle.MaxBundleBytes {
-		return Index{}, fmt.Errorf("registry index exceeds %d bytes", bundle.MaxBundleBytes)
+		return Index{}, fmt.Errorf("%w: registry index exceeds %d bytes", ErrLimit, bundle.MaxBundleBytes)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var value Index
 	if err := decoder.Decode(&value); err != nil {
-		return Index{}, fmt.Errorf("decode registry index: %w", err)
+		return Index{}, fmt.Errorf("%w: decode registry index: %w", ErrValidation, err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
-		return Index{}, fmt.Errorf("decode registry index: %w", err)
+		return Index{}, fmt.Errorf("%w: decode registry index: %w", ErrValidation, err)
 	}
 	if len(value.Entries) > DefaultMaxEntries {
-		return Index{}, fmt.Errorf("registry index exceeds %d entries", DefaultMaxEntries)
+		return Index{}, fmt.Errorf("%w: registry index exceeds %d entries", ErrLimit, DefaultMaxEntries)
 	}
 	if err := Validate(value); err != nil {
 		return Index{}, err
@@ -209,7 +216,11 @@ func validateEntry(entry Entry) error {
 	if err := eartifact.ValidateAssessment(entry.Lifecycle); err != nil {
 		return fmt.Errorf("lifecycle: %w", err)
 	}
-	if !descriptorEqual(entry.Bundle, entry.Lifecycle.Subject) {
+	equal, err := descriptorsEqual(entry.Bundle, entry.Lifecycle.Subject)
+	if err != nil {
+		return fmt.Errorf("compare lifecycle subject: %w", err)
+	}
+	if !equal {
 		return fmt.Errorf("lifecycle subject does not match bundle descriptor")
 	}
 	if entry.Lifecycle.AssessedAt.Before(entry.PublishedAt) {
@@ -228,10 +239,16 @@ func compareEntries(a, b Entry) int {
 	return strings.Compare(a.Bundle.Digest.String(), b.Bundle.Digest.String())
 }
 
-func descriptorEqual(a, b eartifact.Descriptor) bool {
+func descriptorsEqual(a, b eartifact.Descriptor) (bool, error) {
 	left, leftErr := eartifact.CanonicalDescriptorJSON(a)
+	if leftErr != nil {
+		return false, leftErr
+	}
 	right, rightErr := eartifact.CanonicalDescriptorJSON(b)
-	return leftErr == nil && rightErr == nil && bytes.Equal(left, right)
+	if rightErr != nil {
+		return false, rightErr
+	}
+	return bytes.Equal(left, right), nil
 }
 
 func normalizeStrings(values []string) []string {

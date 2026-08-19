@@ -26,8 +26,8 @@ func TestPlaywrightAuthorHasNoCredentialReadOrSessionExportAPI(t *testing.T) {
 	if !strings.Contains(source, "Headless: playwright.Bool(false)") || !strings.Contains(source, "ServiceWorkerPolicyBlock") {
 		t.Fatal("headed non-persistent launch policy is not explicit")
 	}
-	if !strings.Contains(source, "OnRequestFinished") || !strings.Contains(source, "request.Sizes()") || strings.Contains(source, `HeaderValue("content-length")`) {
-		t.Fatal("response accounting must use actual completed transfer sizes, including chunked responses")
+	if !strings.Contains(source, "OnResponse") || !strings.Contains(source, `HeaderValue("content-length")`) || !strings.Contains(source, "OnRequestFinished") || !strings.Contains(source, "request.Sizes()") {
+		t.Fatal("response accounting must precheck declared sizes and retain actual completed transfer sizes")
 	}
 	for _, required := range []string{"resolveCandidate(action", "settleApprovedClick", "authorOpensPopup", "candidate is missing, changed, or ambiguous", "frame.IsDetached()", "frame context identity changed", "popup context origin changed"} {
 		if !strings.Contains(source, required) {
@@ -84,6 +84,20 @@ func TestAuthorNetworkGuardExactOriginsMethodsAndBounds(t *testing.T) {
 	guard.observeBytes(8)
 	if err := guard.result(); err == nil || !strings.Contains(err.Error(), "response_limit") {
 		t.Fatalf("completed response sizes did not enforce the cumulative byte bound: %v", err)
+	}
+}
+
+func TestAuthorNetworkGuardDeclaredResponseBound(t *testing.T) {
+	guard := newAuthorNetworkGuard(authorsession.BrowserRequest{
+		ApprovedOrigins: []string{"https://example.test"}, MaxRequests: 4, MaxResponseBytes: 16,
+	})
+	guard.observeResponseContentLength(16)
+	if err := guard.result(); err != nil {
+		t.Fatalf("exact declared boundary failed: %v", err)
+	}
+	guard.observeResponseContentLength(17)
+	if err := guard.result(); err == nil || !strings.Contains(err.Error(), "response_limit") {
+		t.Fatalf("declared response bound was not enforced: %v", err)
 	}
 }
 

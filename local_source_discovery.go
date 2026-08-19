@@ -161,7 +161,7 @@ func (state *discoveryState) walkRoot(root string) error {
 		}
 		state.report.Visited++
 		if state.report.Visited > state.options.MaxVisited {
-			state.truncate(path, "visited_limit", fmt.Sprintf("visited-entry limit %d reached; narrow --source-root", state.options.MaxVisited))
+			state.truncate(path, "visited_limit", fmt.Sprintf("visited-entry limit %d reached; narrow LocalSourceDiscoveryOptions.Roots", state.options.MaxVisited))
 			return errDiscoveryBound
 		}
 		info, err := entry.Info()
@@ -245,7 +245,7 @@ func (state *discoveryState) visitFile(path string, info os.FileInfo) error {
 		return nil
 	}
 	if len(state.report.Candidates) >= state.options.MaxCandidates {
-		state.truncate(path, "candidate_limit", fmt.Sprintf("accepted-candidate limit %d reached; narrow --source-root", state.options.MaxCandidates))
+		state.truncate(path, "candidate_limit", fmt.Sprintf("accepted-candidate limit %d reached; narrow LocalSourceDiscoveryOptions.Roots", state.options.MaxCandidates))
 		return errDiscoveryBound
 	}
 	state.byDigest[candidate.Digest] = len(state.report.Candidates)

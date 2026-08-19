@@ -88,7 +88,7 @@ func PublishLocal(ctx context.Context, options PublishOptions) (PublishReport, e
 	if existingIndex >= 0 {
 		existing := index.Entries[existingIndex]
 		if existing.Bundle.Digest != entry.Bundle.Digest {
-			return PublishReport{}, fmt.Errorf("registry coordinate %s@%s already identifies different content", entry.ID, entry.Release)
+			return PublishReport{}, fmt.Errorf("%w: registry coordinate %s@%s already identifies different content", ErrConflict, entry.ID, entry.Release)
 		}
 		blobPath, err := localBlobPath(root, entry.Bundle.Digest)
 		if err != nil {
@@ -310,8 +310,12 @@ func verifyEntryBytes(entry Entry, data []byte) error {
 		Digest:      digest.SHA256Bytes(data),
 		Annotations: map[string]string{"browsertools.id": entry.ID, "browsertools.release": entry.Release},
 	})
-	if !descriptorEqual(expected, entry.Bundle) {
-		return fmt.Errorf("registry blob for %s@%s does not match its descriptor", entry.ID, entry.Release)
+	equal, err := descriptorsEqual(expected, entry.Bundle)
+	if err != nil {
+		return fmt.Errorf("%w: compare registry blob descriptor: %w", ErrIntegrity, err)
+	}
+	if !equal {
+		return fmt.Errorf("%w: registry blob for %s@%s does not match its descriptor", ErrIntegrity, entry.ID, entry.Release)
 	}
 	value, err := bundle.Parse(data)
 	if err != nil {
@@ -329,12 +333,18 @@ func verifyEntryBytes(entry Entry, data []byte) error {
 		entry.Title != value.Payload.Identity.Title || !slices.Equal(entry.Origins, normalizeStrings([]string(value.Payload.Identity.Origins))) ||
 		!slices.Equal(entry.Actions, actions) || entry.ActionCount != len(actions) ||
 		!entry.PublishedAt.Equal(value.Payload.PublishedAt) {
-		return fmt.Errorf("registry metadata for %s@%s does not match its bundle", entry.ID, entry.Release)
+		return fmt.Errorf("%w: registry metadata for %s@%s does not match its bundle", ErrIntegrity, entry.ID, entry.Release)
 	}
-	provenanceLeft, _ := json.Marshal(entry.Provenance)
-	provenanceRight, _ := json.Marshal(value.Payload.Provenance)
+	provenanceLeft, err := json.Marshal(entry.Provenance)
+	if err != nil {
+		return fmt.Errorf("%w: encode registry provenance: %w", ErrIntegrity, err)
+	}
+	provenanceRight, err := json.Marshal(value.Payload.Provenance)
+	if err != nil {
+		return fmt.Errorf("%w: encode bundle provenance: %w", ErrIntegrity, err)
+	}
 	if !bytes.Equal(provenanceLeft, provenanceRight) {
-		return fmt.Errorf("registry provenance for %s@%s does not match its bundle", entry.ID, entry.Release)
+		return fmt.Errorf("%w: registry provenance for %s@%s does not match its bundle", ErrIntegrity, entry.ID, entry.Release)
 	}
 	return nil
 }
@@ -405,8 +415,12 @@ func verifyBlobFile(ctx context.Context, path string, descriptor eartifact.Descr
 		Version: eartifact.DescriptorVersion, MediaType: descriptor.MediaType,
 		SizeBytes: int64(len(data)), Digest: digest.SHA256Bytes(data), Annotations: descriptor.Annotations,
 	})
-	if !descriptorEqual(actual, descriptor) {
-		return fmt.Errorf("registry blob digest or size mismatch: %s", path)
+	equal, compareErr := descriptorsEqual(actual, descriptor)
+	if compareErr != nil {
+		return fmt.Errorf("%w: compare registry blob descriptor: %w", ErrIntegrity, compareErr)
+	}
+	if !equal {
+		return fmt.Errorf("%w: registry blob digest or size mismatch: %s", ErrIntegrity, path)
 	}
 	return nil
 }
@@ -478,7 +492,7 @@ func acquirePublishLock(root string) (func(), error) {
 	path := filepath.Join(root, ".publish.lock")
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		return nil, fmt.Errorf("registry has another publish transaction: %s", path)
+		return nil, fmt.Errorf("%w: registry has another publish transaction: %s", ErrConflict, path)
 	}
 	if err != nil {
 		return nil, err

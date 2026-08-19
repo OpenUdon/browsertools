@@ -183,6 +183,48 @@ func runActionQuestions(p *prompter, catalog *Catalog, seenActions map[string]st
 			return ActionIntent{}, err
 		}
 	}
+	unboundIDs := candidateUnboundOutputIDs(catalog, selectedRecords)
+	if len(unboundIDs) > 0 {
+		declarationCount, countErr := p.integer("number of unbound hints to bind with an explicit portable output declaration", 0, len(unboundIDs))
+		if countErr != nil {
+			return ActionIntent{}, countErr
+		}
+		remaining := append([]string(nil), unboundIDs...)
+		for index := 0; index < declarationCount; index++ {
+			fmt.Fprintf(p.out, "Portable output declaration %d of %d\n", index+1, declarationCount)
+			hintID, declarationErr := p.oneID("unbound output hint ID", remaining)
+			if declarationErr != nil {
+				return ActionIntent{}, declarationErr
+			}
+			remaining = removeString(remaining, hintID)
+			source, declarationErr := p.choice("portable output source", []string{
+				string(profile.OutputA11y), string(profile.OutputJSONLD), string(profile.OutputMicrodata), string(profile.OutputCSS),
+			})
+			if declarationErr != nil {
+				return ActionIntent{}, declarationErr
+			}
+			declaration := OutputDeclaration{HintID: hintID, Source: profile.OutputSource(source)}
+			switch declaration.Source {
+			case profile.OutputA11y:
+				declaration.LocatorID, declarationErr = p.oneID("accessibility locator ID", candidateLocatorIDs(catalog, selectedRecords))
+			case profile.OutputJSONLD, profile.OutputMicrodata:
+				declaration.Property, declarationErr = p.required("structured-data property")
+			case profile.OutputCSS:
+				declaration.Selector, declarationErr = p.required("portable CSS selector")
+				if declarationErr == nil {
+					reason, reasonErr := p.choice("CSS fallback reason", []string{
+						string(profile.FallbackNoA11yRegion), string(profile.FallbackNoStructuredData),
+						string(profile.FallbackAmbiguousA11y), string(profile.FallbackOther),
+					})
+					declaration.FallbackReason, declarationErr = profile.FallbackReason(reason), reasonErr
+				}
+			}
+			if declarationErr != nil {
+				return ActionIntent{}, declarationErr
+			}
+			action.OutputDeclarations = append(action.OutputDeclarations, declaration)
+		}
+	}
 
 	stepCount, err := p.integer("number of sequence macros", 1, maxSteps)
 	if err != nil {
@@ -230,6 +272,11 @@ func runActionQuestions(p *prompter, catalog *Catalog, seenActions map[string]st
 	for _, outputID := range action.OutputIDs {
 		if locatorID := outputLocatorID(catalog, outputID); locatorID != "" {
 			usedLocators[locatorID] = struct{}{}
+		}
+	}
+	for _, declaration := range action.OutputDeclarations {
+		if declaration.LocatorID != "" {
+			usedLocators[declaration.LocatorID] = struct{}{}
 		}
 	}
 	usedIDs := make([]string, 0, len(usedLocators))
@@ -467,11 +514,31 @@ func candidateLocatorIDs(catalog *Catalog, selected map[string]struct{}) []strin
 func candidateOutputIDs(catalog *Catalog, selected map[string]struct{}) []string {
 	var ids []string
 	for _, candidate := range catalog.Outputs {
-		if _, ok := selected[candidate.RecordID]; ok {
+		if _, ok := selected[candidate.RecordID]; ok && candidate.Bound {
 			ids = append(ids, candidate.ID)
 		}
 	}
 	return ids
+}
+
+func candidateUnboundOutputIDs(catalog *Catalog, selected map[string]struct{}) []string {
+	var ids []string
+	for _, candidate := range catalog.Outputs {
+		if _, ok := selected[candidate.RecordID]; ok && !candidate.Bound {
+			ids = append(ids, candidate.ID)
+		}
+	}
+	return ids
+}
+
+func removeString(values []string, target string) []string {
+	result := values[:0]
+	for _, value := range values {
+		if value != target {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func locatorAmbiguous(catalog *Catalog, selected map[string]struct{}, locator evidence.CandidateLocator) bool {
@@ -529,6 +596,9 @@ func renderActionCandidates(w io.Writer, catalog *Catalog, selected map[string]s
 			continue
 		}
 		fmt.Fprintf(w, "  %s key=%q type=%q source=%q", candidate.ID, candidate.Output.Key, candidate.Output.Type, candidate.Output.Source)
+		if !candidate.Bound {
+			fmt.Fprint(w, " unbound=true")
+		}
 		if candidate.Output.Property != "" {
 			fmt.Fprintf(w, " property=%q", candidate.Output.Property)
 		}

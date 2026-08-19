@@ -1,17 +1,15 @@
 package profile
 
 import (
-	"bytes"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/OpenUdon/uws/schemas"
-	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 //go:embed schema/browser.1.5.json
@@ -48,59 +46,27 @@ func (e *ValidationError) Unwrap() error { return e.Cause }
 // SchemaBytes returns the embedded uws.browser.1.5 JSON Schema.
 func SchemaBytes() ([]byte, error) { return schemaFS.ReadFile(schemaResource) }
 
-var (
-	compiledOnce   sync.Once
-	compiledSchema *jsonschema.Schema
-	compiledErr    error
-)
-
-func compileSchema() (*jsonschema.Schema, error) {
-	compiledOnce.Do(func() {
-		data, err := schemaFS.ReadFile(schemaResource)
-		if err != nil {
-			compiledErr = fmt.Errorf("read embedded schema: %w", err)
-			return
-		}
-		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
-		if err != nil {
-			compiledErr = fmt.Errorf("parse embedded schema: %w", err)
-			return
-		}
-		compiler := jsonschema.NewCompiler()
-		if err := compiler.AddResource(schemaResource, doc); err != nil {
-			compiledErr = fmt.Errorf("add schema resource: %w", err)
-			return
-		}
-		compiledSchema, compiledErr = compiler.Compile(schemaResource)
-		if compiledErr != nil {
-			compiledErr = fmt.Errorf("compile schema: %w", compiledErr)
-		}
-	})
-	return compiledSchema, compiledErr
-}
-
 // Validate checks a JSON-compatible browser-profile value against both the
-// embedded schema and Browsertools' engine-neutral semantic safety rules.
+// pinned UWS schema and Browsertools' engine-neutral semantic safety rules.
 func Validate(value any) error {
-	if root, ok := value.(map[string]any); ok && (root["profile"] == "uws.browser.1.6" || root["profile"] == "uws.browser.1.7") {
-		data, err := json.Marshal(value)
-		if err != nil {
-			return err
-		}
-		if err := schemas.ValidateBrowserSourceProfile(data); err != nil {
-			return &ValidationError{Cause: err}
-		}
-		issues := Check(value)
-		if len(issues) > 0 {
-			return &ValidationError{Issues: issues}
-		}
-		return nil
+	root, ok := value.(map[string]any)
+	if !ok {
+		return &ValidationError{Issues: []Issue{{Code: "invalid_document", Path: "$", Message: "browser profile must be an object"}}}
 	}
-	schema, err := compileSchema()
+	discriminator, ok := root["profile"].(string)
+	if !ok || strings.TrimSpace(discriminator) == "" {
+		return &ValidationError{Issues: []Issue{{Code: "unsupported_profile", Path: "profile", Message: "browser profile discriminator is required"}}}
+	}
+	switch discriminator {
+	case "uws.browser.1.5", "uws.browser.1.6", "uws.browser.1.7":
+	default:
+		return &ValidationError{Issues: []Issue{{Code: "unsupported_profile", Path: "profile", Message: fmt.Sprintf("unsupported browser profile discriminator %q", discriminator)}}}
+	}
+	data, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return &ValidationError{Cause: err}
 	}
-	if err := schema.Validate(value); err != nil {
+	if err := schemas.ValidateBrowserSourceProfile(data); err != nil {
 		return &ValidationError{Cause: err}
 	}
 	issues := Check(value)
@@ -136,16 +102,18 @@ func Check(value any) []Issue {
 				})
 				continue
 			}
-			if strings.Contains(step.Navigate, "{{") || strings.Contains(step.Navigate, "}}") {
+			resolved, templateErr := resolveNavigateTemplate(step.Navigate)
+			if templateErr != nil {
+				issues = append(issues, Issue{Code: "invalid_navigate_target", Path: path, Message: templateErr.Error()})
 				continue
 			}
-			allowed, checkErr := literalTargetAllowed(step.Navigate, p.Info.Origin)
+			allowed, checkErr := literalTargetAllowed(resolved, p.Info.Origin)
 			if checkErr != nil {
 				issues = append(issues, Issue{Code: "invalid_navigate_target", Path: path, Message: checkErr.Error()})
 			} else if !allowed {
 				issues = append(issues, Issue{
 					Code: "origin_rejected", Path: path,
-					Message: fmt.Sprintf("literal navigate target %q is outside info.origin", step.Navigate),
+					Message: fmt.Sprintf("navigate target %q is outside info.origin", step.Navigate),
 				})
 			}
 		}
@@ -157,6 +125,40 @@ func Check(value any) []Issue {
 		return issues[i].Path < issues[j].Path
 	})
 	return issues
+}
+
+var navigateTemplatePattern = regexp.MustCompile(`\{\{[A-Za-z0-9_-]{1,128}\}\}`)
+
+// resolveNavigateTemplate substitutes only well-formed path/query/fragment
+// placeholders. A placeholder in a scheme or authority is unprovable and is
+// rejected even if one sample substitution happens to match an allowed host.
+func resolveNavigateTemplate(target string) (string, error) {
+	matches := navigateTemplatePattern.FindAllStringIndex(target, -1)
+	remainder := navigateTemplatePattern.ReplaceAllString(target, "")
+	if strings.ContainsAny(remainder, "{}") {
+		return "", fmt.Errorf("navigate target %q contains a malformed template", target)
+	}
+	authorityStart, authorityEnd := -1, -1
+	if index := strings.Index(target, "://"); index >= 0 {
+		authorityStart = index + 3
+	} else if strings.HasPrefix(target, "//") {
+		authorityStart = 2
+	}
+	if authorityStart >= 0 {
+		authorityEnd = len(target)
+		if offset := strings.IndexAny(target[authorityStart:], "/?#"); offset >= 0 {
+			authorityEnd = authorityStart + offset
+		}
+	}
+	for _, match := range matches {
+		if authorityStart >= 0 && match[0] < authorityEnd {
+			return "", fmt.Errorf("navigate target %q has a dynamic or unprovable authority", target)
+		}
+		if authorityStart > 0 && match[0] < authorityStart {
+			return "", fmt.Errorf("navigate target %q has a dynamic or unprovable scheme", target)
+		}
+	}
+	return navigateTemplatePattern.ReplaceAllString(target, "browsertools-placeholder"), nil
 }
 
 func literalTargetAllowed(target string, origins Origins) (bool, error) {

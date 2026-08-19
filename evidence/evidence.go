@@ -20,7 +20,9 @@ package evidence
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -98,8 +100,9 @@ func (d LocatorDecision) Matches(actionHint string, loc CandidateLocator) bool {
 }
 
 // CandidateOutput is a candidate output extraction observed or inferred during
-// evidence collection. Source must be one of: a11y, jsonld, microdata, css.
-// When Source is "css", Selector and FallbackReason are required.
+// evidence collection. An empty Source is an unbound schema/extraction hint
+// that cannot be promoted automatically. Bound sources must be one of a11y,
+// jsonld, microdata, or css and carry their source-specific fields.
 type CandidateOutput struct {
 	Key            string            `json:"key"`
 	Type           string            `json:"type"`   // JSON type: string, integer, number, boolean, array, object, null
@@ -219,6 +222,11 @@ func (r *RawRecord) Normalize() (Record, error) {
 	if rec.ObservationKind != "" && !validObservationKinds[rec.ObservationKind] {
 		return Record{}, fmt.Errorf("normalize: invalid observationKind %q", rec.ObservationKind)
 	}
+	for index, output := range rec.CandidateOutputs {
+		if err := validateCandidateOutput(output); err != nil {
+			return Record{}, fmt.Errorf("normalize: candidateOutputs[%d]: %w", index, err)
+		}
+	}
 
 	// Deep-copy slices before sorting so the original RawRecord is not mutated.
 	rec.CandidateLocators = cloneLocators(rec.CandidateLocators)
@@ -312,8 +320,56 @@ func cloneOutputs(src []CandidateOutput) []CandidateOutput {
 		return nil
 	}
 	out := make([]CandidateOutput, len(src))
-	copy(out, src)
+	for index, value := range src {
+		out[index] = value
+		if value.Locator != nil {
+			locator := *value.Locator
+			out[index].Locator = &locator
+		}
+	}
 	return out
+}
+
+func validateCandidateOutput(output CandidateOutput) error {
+	if strings.TrimSpace(output.Key) == "" {
+		return fmt.Errorf("key is required")
+	}
+	if !slices.Contains([]string{"string", "integer", "number", "boolean", "array", "object", "null"}, output.Type) {
+		return fmt.Errorf("type %q is invalid", output.Type)
+	}
+	switch output.Source {
+	case "":
+		if output.Locator != nil || strings.TrimSpace(output.FallbackReason) != "" {
+			return fmt.Errorf("unbound hints cannot carry a portable locator or fallback reason")
+		}
+	case "a11y":
+		if output.Locator == nil || strings.TrimSpace(output.Locator.Role) == "" {
+			return fmt.Errorf("a11y source requires a locator with a role")
+		}
+		if output.Selector != "" || output.Property != "" || output.FallbackReason != "" {
+			return fmt.Errorf("a11y source contains fields for another source")
+		}
+	case "jsonld", "microdata":
+		if strings.TrimSpace(output.Property) == "" {
+			return fmt.Errorf("%s source requires property", output.Source)
+		}
+		if output.Locator != nil || output.Selector != "" || output.FallbackReason != "" {
+			return fmt.Errorf("%s source contains fields for another source", output.Source)
+		}
+	case "css":
+		if strings.TrimSpace(output.Selector) == "" || strings.TrimSpace(output.FallbackReason) == "" {
+			return fmt.Errorf("css source requires selector and nonblank fallbackReason")
+		}
+		if !slices.Contains([]string{"no_a11y_region", "no_structured_data", "ambiguous_a11y", "other"}, output.FallbackReason) {
+			return fmt.Errorf("css fallbackReason %q is invalid", output.FallbackReason)
+		}
+		if output.Locator != nil || output.Property != "" {
+			return fmt.Errorf("css source contains fields for another source")
+		}
+	default:
+		return fmt.Errorf("source %q is invalid", output.Source)
+	}
+	return nil
 }
 
 func cloneDiagnostics(src []Diagnostic) []Diagnostic {

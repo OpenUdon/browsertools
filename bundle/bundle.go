@@ -17,12 +17,12 @@ import (
 
 	"github.com/OpenUdon/browsertools/cache"
 	bevidence "github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/internal/secretwalk"
 	"github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/browsertools/review"
 	eartifact "github.com/OpenUdon/evidence/artifact"
 	"github.com/OpenUdon/evidence/digest"
 	"github.com/OpenUdon/evidence/redact"
-	"github.com/OpenUdon/uws/schemas"
 	"github.com/OpenUdon/uws/uws1"
 	"gopkg.in/yaml.v3"
 )
@@ -74,6 +74,7 @@ type CacheReference struct {
 	Digest      string            `json:"digest"`
 	Source      string            `json:"source,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
+	ExpiresAt   string            `json:"expires_at,omitempty"`
 }
 
 // Companion is an optional inert UWS workflow document bound into the payload.
@@ -132,16 +133,33 @@ type BuildOptions struct {
 // Build constructs and verifies a publication bundle. It does not write a
 // file, contact a registry, launch a browser, or execute an action.
 func Build(options BuildOptions) (*Bundle, error) {
+	return build(options, defaultValidationConfig())
+}
+
+type validationConfig struct {
+	maxBundleBytes int64
+	maxTextBytes   int
+	scan           func(any) bool
+}
+
+func defaultValidationConfig() validationConfig {
+	return validationConfig{maxBundleBytes: MaxBundleBytes, maxTextBytes: 64 << 10, scan: containsSecretValue}
+}
+
+func build(options BuildOptions, config validationConfig) (*Bundle, error) {
+	if err := validateConfig(config); err != nil {
+		return nil, err
+	}
 	payload, supporting, err := buildPayload(options)
 	if err != nil {
-		return nil, err
+		return nil, categorized(err, ErrValidation)
 	}
 	payloadJSON, err := canonicalPayloadJSON(payload)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(payloadJSON)) > MaxBundleBytes {
-		return nil, fmt.Errorf("bundle payload exceeds %d bytes", MaxBundleBytes)
+	if int64(len(payloadJSON)) > config.maxBundleBytes {
+		return nil, fmt.Errorf("%w: bundle payload exceeds %d bytes", ErrLimit, config.maxBundleBytes)
 	}
 	descriptor := descriptorFor(payloadJSON, PayloadMediaType, map[string]string{
 		"browsertools.id":      payload.Identity.ID,
@@ -159,7 +177,10 @@ func Build(options BuildOptions) (*Bundle, error) {
 		return nil, fmt.Errorf("bundle assessment: %w", err)
 	}
 	result := &Bundle{Version: Version, Payload: payload, Descriptor: descriptor, Assessment: assessment}
-	if err := Verify(result, options.PublishedAt); err != nil {
+	if _, err := marshalCanonicalBundle(result, config.maxBundleBytes); err != nil {
+		return nil, err
+	}
+	if err := verify(result, options.PublishedAt, config); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -167,13 +188,13 @@ func Build(options BuildOptions) (*Bundle, error) {
 
 func buildPayload(options BuildOptions) (Payload, []eartifact.Descriptor, error) {
 	if options.Profile == nil || options.Review == nil {
-		return Payload{}, nil, fmt.Errorf("bundle profile and review are required")
+		return Payload{}, nil, fmt.Errorf("%w: bundle profile and review are required", ErrValidation)
 	}
 	if options.PublishedAt.IsZero() {
-		return Payload{}, nil, fmt.Errorf("bundle published time is required")
+		return Payload{}, nil, fmt.Errorf("%w: bundle published time is required", ErrValidation)
 	}
 	publishedAt := options.PublishedAt.UTC().Round(0)
-	profileCopy, err := cloneProfile(options.Profile)
+	profileCopy, err := profile.Clone(options.Profile)
 	if err != nil {
 		return Payload{}, nil, fmt.Errorf("bundle profile: %w", err)
 	}
@@ -209,12 +230,18 @@ func buildPayload(options BuildOptions) (Payload, []eartifact.Descriptor, error)
 			Authors: normalizeStrings(options.Authors), CacheEntries: cacheReferences,
 		},
 	}
-	if err := validatePayload(payload, publishedAt, true); err != nil {
-		return Payload{}, nil, err
+	profileJSON, err := json.Marshal(payload.Profile)
+	if err != nil {
+		return Payload{}, nil, fmt.Errorf("bundle profile descriptor: %w", err)
 	}
-	profileJSON, _ := json.Marshal(payload.Profile)
-	reviewJSON, _ := json.Marshal(payload.Review)
-	evidenceJSON, _ := json.Marshal(payload.Evidence)
+	reviewJSON, err := json.Marshal(payload.Review)
+	if err != nil {
+		return Payload{}, nil, fmt.Errorf("bundle review descriptor: %w", err)
+	}
+	evidenceJSON, err := json.Marshal(payload.Evidence)
+	if err != nil {
+		return Payload{}, nil, fmt.Errorf("bundle evidence descriptor: %w", err)
+	}
 	supporting := []eartifact.Descriptor{
 		descriptorFor(profileJSON, ProfileMediaType, map[string]string{"browsertools.part": "profile"}),
 		descriptorFor(reviewJSON, ReviewMediaType, map[string]string{"browsertools.part": "review"}),
@@ -228,55 +255,86 @@ func buildPayload(options BuildOptions) (Payload, []eartifact.Descriptor, error)
 // Verify proves exact content bindings and re-runs time-sensitive promotion
 // gates at at. Callers must supply a clock so expiry behavior is reproducible.
 func Verify(value *Bundle, at time.Time) error {
+	return verify(value, at, defaultValidationConfig())
+}
+
+func verify(value *Bundle, at time.Time, config validationConfig) error {
+	if err := validateConfig(config); err != nil {
+		return err
+	}
 	if value == nil {
-		return fmt.Errorf("bundle is required")
+		return fmt.Errorf("%w: bundle is required", ErrValidation)
 	}
 	if at.IsZero() {
-		return fmt.Errorf("bundle verification time is required")
+		return fmt.Errorf("%w: bundle verification time is required", ErrValidation)
 	}
 	if value.Version != Version || value.Payload.Version != Version {
-		return fmt.Errorf("bundle version must be %q", Version)
+		return fmt.Errorf("%w: bundle version must be %q", ErrValidation, Version)
 	}
 	if err := validatePayload(value.Payload, at.UTC().Round(0), false); err != nil {
-		return err
+		return categorized(err, ErrValidation)
 	}
 	payloadJSON, err := canonicalPayloadJSON(value.Payload)
 	if err != nil {
 		return err
 	}
-	if int64(len(payloadJSON)) > MaxBundleBytes {
-		return fmt.Errorf("bundle payload exceeds %d bytes", MaxBundleBytes)
+	if int64(len(payloadJSON)) > config.maxBundleBytes {
+		return fmt.Errorf("%w: bundle payload exceeds %d bytes", ErrLimit, config.maxBundleBytes)
+	}
+	if _, err := marshalCanonicalBundle(value, config.maxBundleBytes); err != nil {
+		return err
+	}
+	scanValue, err := payloadScanValue(value.Payload)
+	if err != nil {
+		return err
+	}
+	if err := validateTextBounds(scanValue, config.maxTextBytes); err != nil {
+		return err
+	}
+	if config.scan(scanValue) {
+		return fmt.Errorf("%w: bundle contains a secret-like value", ErrPolicy)
 	}
 	expected := descriptorFor(payloadJSON, PayloadMediaType, map[string]string{
 		"browsertools.id": value.Payload.Identity.ID, "browsertools.release": value.Payload.Identity.Release,
 	})
-	if !descriptorEqual(value.Descriptor, expected) {
-		return fmt.Errorf("bundle payload descriptor mismatch")
+	descriptorMatches, err := descriptorsEqual(value.Descriptor, expected)
+	if err != nil {
+		return fmt.Errorf("%w: compare bundle payload descriptor: %w", ErrIntegrity, err)
+	}
+	if !descriptorMatches {
+		return fmt.Errorf("%w: bundle payload descriptor mismatch", ErrIntegrity)
 	}
 	if err := eartifact.ValidateAssessment(value.Assessment); err != nil {
 		return fmt.Errorf("bundle assessment: %w", err)
 	}
-	if !descriptorEqual(value.Assessment.Subject, expected) {
-		return fmt.Errorf("bundle assessment subject mismatch")
+	assessmentMatches, err := descriptorsEqual(value.Assessment.Subject, expected)
+	if err != nil {
+		return fmt.Errorf("%w: compare bundle assessment subject: %w", ErrIntegrity, err)
+	}
+	if !assessmentMatches {
+		return fmt.Errorf("%w: bundle assessment subject mismatch", ErrIntegrity)
 	}
 	if !value.Assessment.AssessedAt.Equal(value.Payload.PublishedAt) {
-		return fmt.Errorf("bundle assessment time does not match published_at")
+		return fmt.Errorf("%w: bundle assessment time does not match published_at", ErrIntegrity)
 	}
 	if !value.Assessment.ExpiresAt.Equal(profileExpiry(&value.Payload.Profile)) {
-		return fmt.Errorf("bundle assessment expiry does not match profile expiry")
+		return fmt.Errorf("%w: bundle assessment expiry does not match profile expiry", ErrIntegrity)
 	}
 	if eartifact.EffectiveStatus(value.Assessment, at) != eartifact.LifecycleActive {
-		return fmt.Errorf("bundle lifecycle is %q", eartifact.EffectiveStatus(value.Assessment, at))
+		return fmt.Errorf("%w: bundle lifecycle is %q", ErrExpired, eartifact.EffectiveStatus(value.Assessment, at))
 	}
 	expectedSupporting, err := payloadDescriptors(value.Payload)
 	if err != nil {
 		return err
 	}
-	if !descriptorSlicesEqual(value.Assessment.Supporting, expectedSupporting) {
-		return fmt.Errorf("bundle supporting descriptors mismatch")
+	supportingMatches, err := descriptorSlicesEqual(value.Assessment.Supporting, expectedSupporting)
+	if err != nil {
+		return fmt.Errorf("%w: compare bundle supporting descriptors: %w", ErrIntegrity, err)
 	}
-	_, err = marshalCanonicalBundle(value)
-	return err
+	if !supportingMatches {
+		return fmt.Errorf("%w: bundle supporting descriptors mismatch", ErrIntegrity)
+	}
+	return nil
 }
 
 // CanonicalJSON returns deterministic verified wire bytes.
@@ -284,7 +342,7 @@ func CanonicalJSON(value *Bundle, at time.Time) ([]byte, error) {
 	if err := Verify(value, at); err != nil {
 		return nil, err
 	}
-	return marshalCanonicalBundle(value)
+	return marshalCanonicalBundle(value, MaxBundleBytes)
 }
 
 // Digest returns the SHA-256 identity of the complete canonical bundle.
@@ -300,16 +358,16 @@ func Digest(value *Bundle, at time.Time) (digest.Record, error) {
 // callers can choose an explicit assessment time.
 func Parse(data []byte) (*Bundle, error) {
 	if int64(len(data)) > MaxBundleBytes {
-		return nil, fmt.Errorf("bundle exceeds %d bytes", MaxBundleBytes)
+		return nil, fmt.Errorf("%w: bundle exceeds %d bytes", ErrLimit, MaxBundleBytes)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var value Bundle
 	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("decode bundle: %w", err)
+		return nil, fmt.Errorf("%w: decode bundle: %w", ErrValidation, err)
 	}
 	if err := ensureEOF(decoder); err != nil {
-		return nil, fmt.Errorf("decode bundle: %w", err)
+		return nil, fmt.Errorf("%w: decode bundle: %w", ErrValidation, err)
 	}
 	return &value, nil
 }
@@ -345,19 +403,8 @@ func validatePayload(value Payload, at time.Time, building bool) error {
 	if !slices.Equal(value.Provenance.Authors, normalizeStrings(value.Provenance.Authors)) {
 		return fmt.Errorf("bundle authors are not canonical")
 	}
-	profileJSON, err := json.Marshal(value.Profile)
-	if err != nil {
-		return err
-	}
-	if err := schemas.ValidateBrowserSourceProfile(profileJSON); err != nil {
-		return fmt.Errorf("bundle UWS profile validation: %w", err)
-	}
-	profileValue, err := value.Profile.Value()
-	if err != nil {
-		return err
-	}
-	if err := profile.Validate(profileValue); err != nil {
-		return err
+	if err := profile.ValidateTyped(&value.Profile); err != nil {
+		return fmt.Errorf("%w: bundle UWS profile validation: %v", ErrValidation, err)
 	}
 	if err := validateSideEffects(value.Profile); err != nil {
 		return err
@@ -365,7 +412,10 @@ func validatePayload(value Payload, at time.Time, building bool) error {
 	if profileExpiry(&value.Profile).IsZero() {
 		return fmt.Errorf("bundle profile expiry cannot be derived")
 	}
-	if err := review.Verify(&value.Review, &value.Profile, value.Evidence, at); err != nil {
+	if !at.Before(profileExpiry(&value.Profile)) {
+		return fmt.Errorf("%w: bundle profile expired at %s", ErrExpired, profileExpiry(&value.Profile).Format(time.RFC3339Nano))
+	}
+	if err := review.VerifyValidated(&value.Review, &value.Profile, value.Evidence, at); err != nil {
 		return fmt.Errorf("bundle review verification: %w", err)
 	}
 	reviewedAt, err := time.Parse(time.RFC3339, value.Review.AssessedAt)
@@ -376,21 +426,26 @@ func validatePayload(value Payload, at time.Time, building bool) error {
 	if err != nil {
 		return err
 	}
-	if !recordsEqual(value.Evidence, canonicalRecords) {
+	recordsMatch, err := recordsEqual(value.Evidence, canonicalRecords)
+	if err != nil {
+		return err
+	}
+	if !recordsMatch {
 		return fmt.Errorf("bundle evidence is not in canonical order")
 	}
 	companions, _, err := normalizeCompanions(value.Companions)
 	if err != nil {
 		return err
 	}
-	if !companionsEqual(value.Companions, companions) {
+	companionsMatch, err := companionsEqual(value.Companions, companions)
+	if err != nil {
+		return err
+	}
+	if !companionsMatch {
 		return fmt.Errorf("bundle companions are not canonical")
 	}
 	if err := validateCacheReferences(value.Provenance.CacheEntries, at); err != nil {
 		return err
-	}
-	if containsSecretLikeString(value) {
-		return fmt.Errorf("bundle contains a secret-like value")
 	}
 	if !building {
 		payloadBytes, err := json.Marshal(value)
@@ -447,7 +502,7 @@ func canonicalPayloadJSON(value Payload) ([]byte, error) {
 	return json.Marshal(value)
 }
 
-func marshalCanonicalBundle(value *Bundle) ([]byte, error) {
+func marshalCanonicalBundle(value *Bundle, maximum int64) ([]byte, error) {
 	normalized := *value
 	normalized.Descriptor = eartifact.NormalizeDescriptor(normalized.Descriptor)
 	normalized.Assessment = eartifact.NormalizeAssessment(normalized.Assessment)
@@ -455,8 +510,8 @@ func marshalCanonicalBundle(value *Bundle) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > MaxBundleBytes {
-		return nil, fmt.Errorf("bundle exceeds %d bytes", MaxBundleBytes)
+	if int64(len(data)) > maximum {
+		return nil, fmt.Errorf("%w: bundle exceeds %d bytes", ErrLimit, maximum)
 	}
 	return data, nil
 }
@@ -484,21 +539,27 @@ func normalizeCompanions(values []Companion) ([]Companion, []eartifact.Descripto
 			return nil, nil, fmt.Errorf("bundle companion[%d]: %w", index, err)
 		}
 		if _, ok := seenPaths[value.Path]; ok {
-			return nil, nil, fmt.Errorf("bundle companion path %q is duplicated", value.Path)
+			return nil, nil, fmt.Errorf("%w: bundle companion path %q is duplicated", ErrConflict, value.Path)
 		}
 		seenPaths[value.Path] = struct{}{}
 		total += int64(len(value.Content))
 		if total > MaxBundleBytes {
-			return nil, nil, fmt.Errorf("bundle companions exceed %d bytes", MaxBundleBytes)
+			return nil, nil, fmt.Errorf("%w: bundle companions exceed %d bytes", ErrLimit, MaxBundleBytes)
 		}
 		expected := descriptorFor(value.Content, value.MediaType, map[string]string{"browsertools.path": value.Path})
-		if !isZeroDescriptor(value.Descriptor) && !descriptorEqual(value.Descriptor, expected) {
-			return nil, nil, fmt.Errorf("bundle companion %q descriptor mismatch", value.Path)
+		if !isZeroDescriptor(value.Descriptor) {
+			matches, err := descriptorsEqual(value.Descriptor, expected)
+			if err != nil {
+				return nil, nil, fmt.Errorf("%w: compare bundle companion %q descriptor: %w", ErrIntegrity, value.Path, err)
+			}
+			if !matches {
+				return nil, nil, fmt.Errorf("%w: bundle companion %q descriptor mismatch", ErrIntegrity, value.Path)
+			}
 		}
 		value.Descriptor = expected
 		key := expected.Digest.String()
 		if _, ok := seenDigests[key]; ok {
-			return nil, nil, fmt.Errorf("bundle companion content %s is duplicated", key)
+			return nil, nil, fmt.Errorf("%w: bundle companion content %s is duplicated", ErrConflict, key)
 		}
 		seenDigests[key] = struct{}{}
 		result[index] = value
@@ -526,9 +587,6 @@ func validateCompanion(value Companion) error {
 	documentJSON, err := decodeJSONOrYAML(value.Content)
 	if err != nil {
 		return err
-	}
-	if containsSecretDocument(documentJSON) {
-		return fmt.Errorf("content contains a secret-like value or session material")
 	}
 	var document uws1.Document
 	if err := json.Unmarshal(documentJSON, &document); err != nil {
@@ -568,25 +626,31 @@ func normalizeCacheEntries(values []CachedArtifact, at time.Time) ([]CacheRefere
 			return nil, nil, fmt.Errorf("bundle cache entry[%d]: %w", index, err)
 		}
 		if int64(len(value.Content)) != value.Entry.SizeBytes || digest.SHA256String(value.Content) != value.Entry.Digest {
-			return nil, nil, fmt.Errorf("bundle cache entry[%d] content mismatch", index)
+			return nil, nil, fmt.Errorf("%w: bundle cache entry[%d] content mismatch", ErrIntegrity, index)
 		}
 		if value.Entry.ExpiresAt != "" {
-			expires, _ := time.Parse(time.RFC3339Nano, value.Entry.ExpiresAt)
+			expires, parseErr := time.Parse(time.RFC3339Nano, value.Entry.ExpiresAt)
+			if parseErr != nil {
+				return nil, nil, fmt.Errorf("bundle cache entry[%d] expiry: %w", index, parseErr)
+			}
 			if !at.Before(expires) {
-				return nil, nil, fmt.Errorf("bundle cache entry %s is expired", value.Entry.ID)
+				return nil, nil, fmt.Errorf("%w: bundle cache entry %s is expired", ErrExpired, value.Entry.ID)
 			}
 		}
 		if _, ok := seen[value.Entry.ID]; ok {
-			return nil, nil, fmt.Errorf("bundle cache entry %s is duplicated", value.Entry.ID)
+			return nil, nil, fmt.Errorf("%w: bundle cache entry %s is duplicated", ErrConflict, value.Entry.ID)
 		}
 		seen[value.Entry.ID] = struct{}{}
 		reference := CacheReference{
 			ID: value.Entry.ID, Kind: value.Entry.Kind, MediaType: normalizeMediaType(value.Entry.MediaType),
 			SizeBytes: value.Entry.SizeBytes, Digest: value.Entry.Digest, Source: strings.TrimSpace(value.Entry.Source),
-			Annotations: cloneStringMap(value.Entry.Annotations),
+			Annotations: cloneStringMap(value.Entry.Annotations), ExpiresAt: value.Entry.ExpiresAt,
 		}
 		result = append(result, reference)
-		record, _ := parseDigest(reference.Digest)
+		record, err := parseDigest(reference.Digest)
+		if err != nil {
+			return nil, nil, fmt.Errorf("bundle cache entry[%d]: %w", index, err)
+		}
 		descriptors = append(descriptors, eartifact.Descriptor{
 			Version: eartifact.DescriptorVersion, MediaType: reference.MediaType,
 			SizeBytes: reference.SizeBytes, Digest: record,
@@ -610,29 +674,28 @@ func validateCacheReferences(values []CacheReference, at time.Time) error {
 		entry := cache.Entry{
 			Version: cache.ManifestVersion, ID: value.ID, Kind: value.Kind, MediaType: value.MediaType,
 			SizeBytes: value.SizeBytes, Digest: value.Digest, CreatedAt: "1970-01-01T00:00:00Z",
-			Source: value.Source, Annotations: value.Annotations, PublicationEligible: true,
+			ExpiresAt: value.ExpiresAt, Source: value.Source, Annotations: value.Annotations, PublicationEligible: true,
 		}
 		if err := cache.ValidateForPublication(entry); err != nil {
 			return fmt.Errorf("bundle cache reference[%d]: %w", index, err)
 		}
-		if containsSecretLikeString(value) {
-			return fmt.Errorf("bundle cache reference[%d] contains a secret-like value", index)
+		if value.ExpiresAt != "" {
+			expires, err := time.Parse(time.RFC3339Nano, value.ExpiresAt)
+			if err != nil {
+				return fmt.Errorf("%w: bundle cache reference[%d] expiry is invalid", ErrValidation, index)
+			}
+			if !at.Before(expires) {
+				return fmt.Errorf("%w: bundle cache reference %s expired at %s", ErrExpired, value.ID, expires.UTC().Format(time.RFC3339Nano))
+			}
 		}
 	}
-	_ = at
 	return nil
 }
 
 func validateSideEffects(value profile.Profile) error {
 	for _, name := range value.SortedActionNames() {
 		action := value.Actions[name]
-		write := false
-		for _, effect := range action.SideEffects {
-			if effect != profile.SideEffectReadOnly {
-				write = true
-			}
-		}
-		if write && (!action.ConfirmationPolicy.Required || strings.TrimSpace(action.ConfirmationPolicy.Prompt) == "") {
+		if profile.HasWriteSideEffects(action) && (!action.ConfirmationPolicy.Required || strings.TrimSpace(action.ConfirmationPolicy.Prompt) == "") {
 			return fmt.Errorf("bundle action %q has side effects without explicit confirmation", name)
 		}
 	}
@@ -652,18 +715,6 @@ func profileExpiry(value *profile.Profile) time.Time {
 		return time.Time{}
 	}
 	return expires.UTC().Round(0)
-}
-
-func cloneProfile(value *profile.Profile) (*profile.Profile, error) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	var result profile.Profile
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
 }
 
 func cloneReview(value *review.Bundle) (*review.Bundle, error) {
@@ -767,84 +818,128 @@ func compareDescriptors(a, b eartifact.Descriptor) int {
 	return 0
 }
 
-func descriptorEqual(a, b eartifact.Descriptor) bool {
-	aJSON, errA := eartifact.CanonicalDescriptorJSON(a)
-	bJSON, errB := eartifact.CanonicalDescriptorJSON(b)
-	return errA == nil && errB == nil && bytes.Equal(aJSON, bJSON)
+func descriptorsEqual(a, b eartifact.Descriptor) (bool, error) {
+	aJSON, err := eartifact.CanonicalDescriptorJSON(a)
+	if err != nil {
+		return false, err
+	}
+	bJSON, err := eartifact.CanonicalDescriptorJSON(b)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(aJSON, bJSON), nil
 }
 
-func descriptorSlicesEqual(a, b []eartifact.Descriptor) bool {
+func descriptorSlicesEqual(a, b []eartifact.Descriptor) (bool, error) {
 	a = uniqueDescriptors(a)
 	b = uniqueDescriptors(b)
 	if len(a) != len(b) {
-		return false
+		return false, nil
 	}
 	for index := range a {
-		if !descriptorEqual(a[index], b[index]) {
-			return false
+		equal, err := descriptorsEqual(a[index], b[index])
+		if err != nil {
+			return false, err
+		}
+		if !equal {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 func isZeroDescriptor(value eartifact.Descriptor) bool {
 	return value.Version == "" && value.MediaType == "" && value.SizeBytes == 0 && value.Digest.IsZero() && len(value.Annotations) == 0
 }
 
-func recordsEqual(a, b []bevidence.Record) bool {
-	left, _ := json.Marshal(a)
-	right, _ := json.Marshal(b)
-	return bytes.Equal(left, right)
-}
-func companionsEqual(a, b []Companion) bool {
-	left, _ := json.Marshal(a)
-	right, _ := json.Marshal(b)
-	return bytes.Equal(left, right)
-}
-
-func containsSecretLikeString(value any) bool {
-	data, err := json.Marshal(value)
+func recordsEqual(a, b []bevidence.Record) (bool, error) {
+	left, err := json.Marshal(a)
 	if err != nil {
-		return true
+		return false, err
 	}
-	var document any
-	if json.Unmarshal(data, &document) != nil {
-		return true
+	right, err := json.Marshal(b)
+	if err != nil {
+		return false, err
 	}
-	return walkStrings(document, false)
+	return bytes.Equal(left, right), nil
+}
+func companionsEqual(a, b []Companion) (bool, error) {
+	left, err := json.Marshal(a)
+	if err != nil {
+		return false, err
+	}
+	right, err := json.Marshal(b)
+	if err != nil {
+		return false, err
+	}
+	return bytes.Equal(left, right), nil
 }
 
-func containsSecretDocument(data []byte) bool {
-	var document any
-	if json.Unmarshal(data, &document) != nil {
-		return true
-	}
-	return walkStrings(document, true)
+func containsSecretValue(value any) bool {
+	return secretwalk.Contains(value, secretwalk.Config{
+		CheckKeys: true, SensitiveKey: sensitivePublicationKey, IsReference: isReferenceValue,
+	})
 }
 
-func walkStrings(value any, checkKeys bool) bool {
+func payloadScanValue(value Payload) (any, error) {
+	copyValue := value
+	copyValue.Companions = append([]Companion(nil), value.Companions...)
+	for index := range copyValue.Companions {
+		copyValue.Companions[index].Content = nil
+	}
+	data, err := json.Marshal(copyValue)
+	if err != nil {
+		return nil, fmt.Errorf("prepare bundle secret scan: %w", err)
+	}
+	var payloadDocument any
+	if err := json.Unmarshal(data, &payloadDocument); err != nil {
+		return nil, fmt.Errorf("prepare bundle secret scan: %w", err)
+	}
+	result := []any{payloadDocument}
+	for index, companion := range value.Companions {
+		documentJSON, err := decodeJSONOrYAML(companion.Content)
+		if err != nil {
+			return nil, fmt.Errorf("prepare bundle companion[%d] secret scan: %w", index, err)
+		}
+		var document any
+		if err := json.Unmarshal(documentJSON, &document); err != nil {
+			return nil, fmt.Errorf("prepare bundle companion[%d] secret scan: %w", index, err)
+		}
+		result = append(result, document)
+	}
+	return result, nil
+}
+
+func validateTextBounds(value any, maximum int) error {
 	switch typed := value.(type) {
 	case string:
-		return redact.String(typed) != typed
+		if len(typed) > maximum {
+			return fmt.Errorf("%w: bundle free-text value exceeds %d bytes", ErrLimit, maximum)
+		}
 	case []any:
 		for _, item := range typed {
-			if walkStrings(item, checkKeys) {
-				return true
+			if err := validateTextBounds(item, maximum); err != nil {
+				return err
 			}
 		}
 	case map[string]any:
 		for key, item := range typed {
-			if checkKeys && sensitivePublicationKey(key) {
-				if text, ok := item.(string); ok && !isReferenceValue(text) {
-					return true
-				}
+			if len(key) > maximum {
+				return fmt.Errorf("%w: bundle key exceeds %d bytes", ErrLimit, maximum)
 			}
-			if walkStrings(item, checkKeys) {
-				return true
+			if err := validateTextBounds(item, maximum); err != nil {
+				return err
 			}
 		}
 	}
-	return false
+	return nil
+}
+
+func validateConfig(config validationConfig) error {
+	if config.maxBundleBytes <= 0 || config.maxBundleBytes > MaxBundleBytes || config.maxTextBytes <= 0 || config.scan == nil {
+		return fmt.Errorf("%w: bundle validation configuration is invalid", ErrValidation)
+	}
+	return nil
 }
 
 func sensitivePublicationKey(key string) bool {

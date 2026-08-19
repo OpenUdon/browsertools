@@ -285,6 +285,47 @@ type Output struct {
 	Context        string         `json:"context,omitempty" yaml:"context,omitempty"`
 }
 
+// MarshalJSON preserves the distinction between an absent validation schema
+// and an explicitly present empty schema. The latter is the JSON Schema true
+// schema and must remain {} on the wire.
+func (o Output) MarshalJSON() ([]byte, error) {
+	type outputWire struct {
+		Type           OutputType     `json:"type"`
+		Source         OutputSource   `json:"source"`
+		Locator        *Locator       `json:"locator,omitempty"`
+		Selector       string         `json:"selector,omitempty"`
+		FallbackReason FallbackReason `json:"fallbackReason,omitempty"`
+		Validation     *JSONSchema    `json:"validation,omitempty"`
+		Presence       *bool          `json:"presence,omitempty"`
+		Property       string         `json:"property,omitempty"`
+		Attribute      string         `json:"attribute,omitempty"`
+		Context        string         `json:"context,omitempty"`
+	}
+	value := outputWire{
+		Type: o.Type, Source: o.Source, Locator: o.Locator, Selector: o.Selector,
+		FallbackReason: o.FallbackReason, Presence: o.Presence, Property: o.Property,
+		Attribute: o.Attribute, Context: o.Context,
+	}
+	if o.Validation != nil {
+		validation := o.Validation
+		value.Validation = &validation
+	}
+	return json.Marshal(value)
+}
+
+// MarshalYAML uses the same presence-aware representation as MarshalJSON.
+func (o Output) MarshalYAML() (any, error) {
+	data, err := o.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	var value map[string]any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
 // ParseJSON validates and decodes a JSON browser profile.
 func ParseJSON(data []byte) (*Profile, error) {
 	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
@@ -554,29 +595,29 @@ func (s *Step) UnmarshalJSON(data []byte) error {
 				URL     string `json:"url"`
 				Context string `json:"context,omitempty"`
 			}
-			if err := json.Unmarshal(payload, &navigate); err != nil {
+			if err := decodeStrictJSON(payload, &navigate); err != nil {
 				return err
 			}
 			s.Navigate, s.NavigateContext, s.NavigateObject = navigate.URL, navigate.Context, true
 			return nil
 		case StepClick:
 			s.Click = &LocatorStep{}
-			return json.Unmarshal(payload, s.Click)
+			return decodeStrictJSON(payload, s.Click)
 		case StepTypeText:
 			s.TypeText = &TypeTextStep{}
-			return json.Unmarshal(payload, s.TypeText)
+			return decodeStrictJSON(payload, s.TypeText)
 		case StepCheckRadio:
 			s.CheckRadio = &LocatorStep{}
-			return json.Unmarshal(payload, s.CheckRadio)
+			return decodeStrictJSON(payload, s.CheckRadio)
 		case StepUncheck:
 			s.Uncheck = &LocatorStep{}
-			return json.Unmarshal(payload, s.Uncheck)
+			return decodeStrictJSON(payload, s.Uncheck)
 		case StepSelectOption:
 			s.SelectOption = &SelectOptionStep{}
-			return json.Unmarshal(payload, s.SelectOption)
+			return decodeStrictJSON(payload, s.SelectOption)
 		case StepWaitFor:
 			s.WaitFor = &WaitForCondition{}
-			return json.Unmarshal(payload, s.WaitFor)
+			return decodeStrictJSON(payload, s.WaitFor)
 		default:
 			return fmt.Errorf("unknown browser.1.5 macro %q", key)
 		}
@@ -618,16 +659,14 @@ func (s *Step) UnmarshalYAML(node *yaml.Node) error {
 func (s Step) payload() (string, any, error) {
 	switch s.Kind {
 	case StepNavigate:
-		if s.Navigate != "" {
-			if s.NavigateObject {
-				value := map[string]any{"url": s.Navigate}
-				if s.NavigateContext != "" {
-					value["context"] = s.NavigateContext
-				}
-				return string(s.Kind), value, nil
+		if s.NavigateObject {
+			value := map[string]any{"url": s.Navigate}
+			if s.NavigateContext != "" {
+				value["context"] = s.NavigateContext
 			}
-			return string(s.Kind), s.Navigate, nil
+			return string(s.Kind), value, nil
 		}
+		return string(s.Kind), s.Navigate, nil
 	case StepClick:
 		if s.Click != nil {
 			return string(s.Kind), s.Click, nil
@@ -679,7 +718,7 @@ func (w *WaitForCondition) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("contextual locator wait must contain locator and context")
 		}
 		var loc Locator
-		if err := json.Unmarshal(raw, &loc); err != nil {
+		if err := decodeStrictJSON(raw, &loc); err != nil {
 			return err
 		}
 		if err := json.Unmarshal(probe["context"], &w.Context); err != nil {
@@ -690,10 +729,26 @@ func (w *WaitForCondition) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	var loc Locator
-	if err := json.Unmarshal(data, &loc); err != nil {
+	if err := decodeStrictJSON(data, &loc); err != nil {
 		return err
 	}
 	w.Locator = &loc
+	return nil
+}
+
+func decodeStrictJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values are not supported")
+		}
+		return err
+	}
 	return nil
 }
 

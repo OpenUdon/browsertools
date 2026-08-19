@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"slices"
@@ -33,15 +34,16 @@ const (
 	NetworkAllow NetworkPolicy = "allow"
 )
 
-// Client reads local directories or static HTTPS registries. The unsafe-host
-// switch exists for local test servers and must not be enabled for untrusted
-// URLs.
+// Client reads local directories or static HTTPS registries.
 type Client struct {
-	HTTPClient       *http.Client
-	NetworkPolicy    NetworkPolicy
-	Timeout          time.Duration
-	MaxBytes         int64
-	MaxResults       int
+	HTTPClient         *http.Client
+	NetworkPolicy      NetworkPolicy
+	Timeout            time.Duration
+	MaxBytes           int64
+	MaxResults         int
+	AllowLoopbackHosts bool
+	// AllowUnsafeHosts is retained for source compatibility. Deprecated: it is
+	// now a loopback-only alias and never permits private or reserved targets.
 	AllowUnsafeHosts bool
 }
 
@@ -92,7 +94,7 @@ type PullResult struct {
 // bound. It never downloads bundle blobs.
 func (client *Client) Search(ctx context.Context, options SearchOptions) (SearchReport, error) {
 	if options.At.IsZero() {
-		return SearchReport{}, fmt.Errorf("registry search time is required")
+		return SearchReport{}, fmt.Errorf("%w: registry search time is required", ErrValidation)
 	}
 	ctx, cancel := client.withDeadline(ctx)
 	defer cancel()
@@ -136,10 +138,10 @@ func (client *Client) Search(ctx context.Context, options SearchOptions) (Search
 // metadata binding, and enforces lifecycle at the caller-supplied time.
 func (client *Client) Pull(ctx context.Context, options PullOptions) (PullResult, error) {
 	if options.At.IsZero() {
-		return PullResult{}, fmt.Errorf("registry pull time is required")
+		return PullResult{}, fmt.Errorf("%w: registry pull time is required", ErrValidation)
 	}
 	if (options.Coordinate == nil) == (strings.TrimSpace(options.Digest) == "") {
-		return PullResult{}, fmt.Errorf("registry pull requires exactly one coordinate or digest")
+		return PullResult{}, fmt.Errorf("%w: registry pull requires exactly one coordinate or digest", ErrValidation)
 	}
 	ctx, cancel := client.withDeadline(ctx)
 	defer cancel()
@@ -159,12 +161,12 @@ func (client *Client) Pull(ctx context.Context, options PullOptions) (PullResult
 		}
 	}
 	if position < 0 {
-		return PullResult{}, fmt.Errorf("registry bundle was not found")
+		return PullResult{}, fmt.Errorf("%w: registry bundle was not found", ErrConflict)
 	}
 	entry := index.Entries[position]
 	status := eartifact.EffectiveStatus(entry.Lifecycle, options.At)
 	if status != eartifact.LifecycleActive && !options.AllowInactive {
-		return PullResult{}, fmt.Errorf("registry bundle lifecycle is %q", status)
+		return PullResult{}, fmt.Errorf("%w: registry bundle lifecycle is %q", ErrExpired, status)
 	}
 	data, blobSource, err := client.loadBlob(ctx, options.Location, remoteBase, entry.Bundle.Digest)
 	if err != nil {
@@ -189,7 +191,7 @@ func (client *Client) Pull(ctx context.Context, options PullOptions) (PullResult
 // report shape for local and HTTPS registries.
 func (client *Client) Verify(ctx context.Context, location string, at time.Time) (VerifyReport, error) {
 	if at.IsZero() {
-		return VerifyReport{}, fmt.Errorf("registry verification time is required")
+		return VerifyReport{}, fmt.Errorf("%w: registry verification time is required", ErrValidation)
 	}
 	if !isRemoteLocation(location) {
 		return VerifyLocal(ctx, location, at)
@@ -300,7 +302,7 @@ func (client *Client) download(ctx context.Context, target *url.URL) ([]byte, *u
 		return nil, nil, err
 	}
 	request.Header.Set("Accept", "application/json")
-	httpClient, err := client.safeHTTPClient()
+	httpClient, err := client.safeHTTPClient(ctx, target.Hostname())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -312,12 +314,15 @@ func (client *Client) download(ctx context.Context, target *url.URL) ([]byte, *u
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, nil, fmt.Errorf("registry download: %s", response.Status)
 	}
+	if response.ContentLength > client.maxBytes() {
+		return nil, nil, fmt.Errorf("%w: registry response exceeds %d bytes", ErrLimit, client.maxBytes())
+	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, client.maxBytes()+1))
 	if err != nil {
 		return nil, nil, err
 	}
 	if int64(len(data)) > client.maxBytes() {
-		return nil, nil, fmt.Errorf("registry response exceeds %d bytes", client.maxBytes())
+		return nil, nil, fmt.Errorf("%w: registry response exceeds %d bytes", ErrLimit, client.maxBytes())
 	}
 	finalURL := target
 	if response.Request != nil && response.Request.URL != nil {
@@ -352,7 +357,7 @@ func (client *Client) registryBaseURL(ctx context.Context, raw string) (*url.URL
 	return parsed, nil
 }
 
-func (client *Client) safeHTTPClient() (*http.Client, error) {
+func (client *Client) safeHTTPClient(ctx context.Context, host string) (*http.Client, error) {
 	var base *http.Client
 	if client != nil {
 		base = client.HTTPClient
@@ -361,14 +366,19 @@ func (client *Client) safeHTTPClient() (*http.Client, error) {
 		base = http.DefaultClient
 	}
 	clone := *base
-	if client == nil || !client.AllowUnsafeHosts {
-		transport, ok := base.Transport.(*http.Transport)
-		if base.Transport == nil {
-			transport, ok = http.DefaultTransport.(*http.Transport)
+	transport, ok := base.Transport.(*http.Transport)
+	if base.Transport == nil {
+		transport, ok = http.DefaultTransport.(*http.Transport)
+	}
+	if !ok {
+		loopback, err := client.hostIsLoopback(ctx, host)
+		if err != nil {
+			return nil, err
 		}
-		if !ok {
-			return nil, fmt.Errorf("custom HTTP transport requires AllowUnsafeHosts")
+		if !client.allowLoopback() || !loopback {
+			return nil, fmt.Errorf("%w: custom HTTP transport is permitted only for an opted-in loopback registry", ErrPolicy)
 		}
+	} else {
 		transport = transport.Clone()
 		transport.Proxy = nil
 		transport.DialContext = client.safeDialContext
@@ -407,7 +417,7 @@ func (client *Client) safeDialContext(ctx context.Context, network, address stri
 	}
 	var firstErr error
 	for _, address := range addresses {
-		if unsafeIP(address.IP) {
+		if !client.ipAllowed(address.IP) {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("refusing private registry host %q", host)
 			}
@@ -428,19 +438,19 @@ func (client *Client) safeDialContext(ctx context.Context, network, address stri
 }
 
 func (client *Client) rejectHost(ctx context.Context, host string) error {
-	if client != nil && client.AllowUnsafeHosts {
-		return nil
-	}
 	host = strings.TrimSpace(host)
 	if host == "" {
 		return fmt.Errorf("registry URL host is required")
 	}
 	if strings.EqualFold(host, "localhost") {
-		return fmt.Errorf("refusing localhost registry URL")
+		if client.allowLoopback() {
+			return nil
+		}
+		return fmt.Errorf("%w: refusing loopback registry host %q", ErrPolicy, host)
 	}
 	if parsed := net.ParseIP(host); parsed != nil {
-		if unsafeIP(parsed) {
-			return fmt.Errorf("refusing private registry host %q", host)
+		if !client.ipAllowed(parsed) {
+			return fmt.Errorf("%w: refusing private or reserved registry host %q", ErrPolicy, host)
 		}
 		return nil
 	}
@@ -449,33 +459,110 @@ func (client *Client) rejectHost(ctx context.Context, host string) error {
 		return err
 	}
 	for _, address := range addresses {
-		if unsafeIP(address.IP) {
-			return fmt.Errorf("refusing private registry host %q", host)
+		if !client.ipAllowed(address.IP) {
+			return fmt.Errorf("%w: refusing private or reserved registry host %q", ErrPolicy, host)
 		}
 	}
 	return nil
 }
 
 func unsafeIP(value net.IP) bool {
-	if ipv4 := value.To4(); ipv4 != nil && ipv4[0] == 100 && ipv4[1]&0xc0 == 0x40 {
+	address, ok := netip.AddrFromSlice(value)
+	if !ok {
 		return true
 	}
-	return value.IsLoopback() || value.IsPrivate() || value.IsLinkLocalUnicast() || value.IsLinkLocalMulticast() || value.IsUnspecified() || value.IsMulticast()
+	address = address.Unmap()
+	if address.Is4() {
+		return addressInAnyPrefix(address, unsafeIPv4Prefixes)
+	}
+	bytes := address.As16()
+	if bytes[0] == 0x20 && bytes[1] == 0x02 { // 6to4 embeds IPv4 at bits 16..48.
+		embedded := netip.AddrFrom4([4]byte{bytes[2], bytes[3], bytes[4], bytes[5]})
+		if addressInAnyPrefix(embedded, unsafeIPv4Prefixes) {
+			return true
+		}
+	}
+	if bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0 && bytes[3] == 0 { // Teredo.
+		server := netip.AddrFrom4([4]byte{bytes[4], bytes[5], bytes[6], bytes[7]})
+		client := netip.AddrFrom4([4]byte{^bytes[12], ^bytes[13], ^bytes[14], ^bytes[15]})
+		if addressInAnyPrefix(server, unsafeIPv4Prefixes) || addressInAnyPrefix(client, unsafeIPv4Prefixes) {
+			return true
+		}
+	}
+	return addressInAnyPrefix(address, unsafeIPv6Prefixes)
+}
+
+var unsafeIPv4Prefixes = mustPrefixes(
+	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+	"169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24",
+	"192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
+	"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+)
+
+var unsafeIPv6Prefixes = mustPrefixes(
+	"::/128", "::1/128", "100::/64", "2001:db8::/32", "fc00::/7", "fe80::/10", "ff00::/8",
+)
+
+func mustPrefixes(values ...string) []netip.Prefix {
+	result := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		result = append(result, netip.MustParsePrefix(value))
+	}
+	return result
+}
+
+func addressInAnyPrefix(address netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+func (client *Client) allowLoopback() bool {
+	return client != nil && (client.AllowLoopbackHosts || client.AllowUnsafeHosts)
+}
+
+func (client *Client) ipAllowed(value net.IP) bool {
+	return !unsafeIP(value) || client.allowLoopback() && value.IsLoopback()
+}
+
+func (client *Client) hostIsLoopback(ctx context.Context, host string) (bool, error) {
+	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
+		return true, nil
+	}
+	if parsed := net.ParseIP(host); parsed != nil {
+		return parsed.IsLoopback(), nil
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return false, err
+	}
+	if len(addresses) == 0 {
+		return false, fmt.Errorf("registry host %q resolved to no addresses", host)
+	}
+	for _, address := range addresses {
+		if !address.IP.IsLoopback() {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (client *Client) requireNetwork() error {
 	if client == nil {
-		return fmt.Errorf("registry network policy forbids remote reads")
+		return fmt.Errorf("%w: registry network policy forbids remote reads", ErrPolicy)
 	}
 	switch client.NetworkPolicy {
 	case NetworkAllow:
 		return nil
 	case NetworkAsk:
-		return fmt.Errorf("registry network approval is required")
+		return fmt.Errorf("%w: registry network approval is required", ErrPolicy)
 	case NetworkNever, "":
-		return fmt.Errorf("registry network policy forbids remote reads")
+		return fmt.Errorf("%w: registry network policy forbids remote reads", ErrPolicy)
 	default:
-		return fmt.Errorf("registry network policy must be never, ask, or allow")
+		return fmt.Errorf("%w: registry network policy must be never, ask, or allow", ErrValidation)
 	}
 }
 

@@ -78,7 +78,12 @@ func Build(prof *profile.Profile, records []evidence.Record, decisions []evidenc
 	if now.IsZero() {
 		return nil, fmt.Errorf("review: assessment time is required")
 	}
-	profileDigest, err := digestProfile(prof)
+	validationErr := profile.ValidateTyped(prof)
+	snapshot, err := profile.Clone(prof)
+	if err != nil {
+		return nil, fmt.Errorf("review: profile snapshot: %w", err)
+	}
+	profileDigest, err := digestProfile(snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("review: profile digest: %w", err)
 	}
@@ -87,10 +92,6 @@ func Build(prof *profile.Profile, records []evidence.Record, decisions []evidenc
 		return nil, fmt.Errorf("review: evidence digest: %w", err)
 	}
 
-	snapshot, err := cloneProfile(prof)
-	if err != nil {
-		return nil, fmt.Errorf("review: profile snapshot: %w", err)
-	}
 	bundle := &Bundle{
 		Profile: *snapshot, ProfileDigest: profileDigest, EvidenceDigest: evidenceDigest,
 		AssessedAt:          now.UTC().Format(time.RFC3339),
@@ -114,18 +115,27 @@ func Build(prof *profile.Profile, records []evidence.Record, decisions []evidenc
 		bundle.Decisions = []evidence.LocatorDecision{}
 	}
 
-	value, valueErr := prof.Value()
-	if valueErr != nil {
-		bundle.Validation = ValidationReport{Valid: false, Errors: []string{valueErr.Error()}}
-	} else if validationErr := profile.Validate(value); validationErr != nil {
+	if validationErr != nil {
 		bundle.Validation = ValidationReport{Valid: false, Errors: []string{validationErr.Error()}}
 	} else {
 		bundle.Validation = ValidationReport{Valid: true, Errors: []string{}}
 	}
 
-	bundle.Revalidation, err = revalidate.CheckAt(prof, records, decisions, now)
+	bundle.Revalidation, err = revalidate.CheckValidatedAt(prof, records, decisions, now)
 	if err != nil {
 		return nil, err
+	}
+	if validationErr != nil {
+		bundle.Revalidation.OK = false
+		bundle.Revalidation.Failures = append(bundle.Revalidation.Failures, revalidate.Failure{
+			Kind: revalidate.CheckInvalidProfile, Field: "$", Message: validationErr.Error(),
+		})
+		sort.Slice(bundle.Revalidation.Failures, func(i, j int) bool {
+			if bundle.Revalidation.Failures[i].Kind != bundle.Revalidation.Failures[j].Kind {
+				return bundle.Revalidation.Failures[i].Kind < bundle.Revalidation.Failures[j].Kind
+			}
+			return bundle.Revalidation.Failures[i].Field < bundle.Revalidation.Failures[j].Field
+		})
 	}
 	for _, failure := range bundle.Revalidation.Failures {
 		bundle.Gaps = append(bundle.Gaps, Gap{Kind: string(failure.Kind), Field: failure.Field, Message: failure.Message})
@@ -148,18 +158,6 @@ func Build(prof *profile.Profile, records []evidence.Record, decisions []evidenc
 	return bundle, nil
 }
 
-func cloneProfile(prof *profile.Profile) (*profile.Profile, error) {
-	data, err := json.Marshal(prof)
-	if err != nil {
-		return nil, err
-	}
-	var result profile.Profile
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
 // Promotable reports whether the bundle passed every gate at AssessedAt.
 func (b Bundle) Promotable() bool {
 	return b.Validation.Valid && b.Revalidation.OK && len(b.Gaps) == 0 && b.ProfileDigest != "" && b.EvidenceDigest != ""
@@ -168,6 +166,21 @@ func (b Bundle) Promotable() bool {
 // Verify proves that bundle still matches prof and records and that the same
 // fixture safety checks pass at now.
 func Verify(bundle *Bundle, prof *profile.Profile, records []evidence.Record, now time.Time) error {
+	if bundle == nil || prof == nil {
+		return fmt.Errorf("review: bundle and profile are required")
+	}
+	if now.IsZero() {
+		return fmt.Errorf("review: verification time is required")
+	}
+	if err := profile.ValidateTyped(prof); err != nil {
+		return fmt.Errorf("review: profile validation: %w", err)
+	}
+	return VerifyValidated(bundle, prof, records, now)
+}
+
+// VerifyValidated verifies a review whose profile was already schema-validated
+// by the enclosing top-level operation.
+func VerifyValidated(bundle *Bundle, prof *profile.Profile, records []evidence.Record, now time.Time) error {
 	if bundle == nil || prof == nil {
 		return fmt.Errorf("review: bundle and profile are required")
 	}
@@ -195,7 +208,7 @@ func Verify(bundle *Bundle, prof *profile.Profile, records []evidence.Record, no
 	if evidenceDigest != bundle.EvidenceDigest {
 		return fmt.Errorf("review: evidence digest mismatch")
 	}
-	result, err := revalidate.CheckAt(prof, records, bundle.Decisions, now)
+	result, err := revalidate.CheckValidatedAt(prof, records, bundle.Decisions, now)
 	if err != nil {
 		return err
 	}
@@ -267,11 +280,11 @@ func summarizeSideEffects(prof *profile.Profile) SideEffectSummary {
 	result := SideEffectSummary{ActionsWithSideEffects: map[string][]string{}}
 	for _, name := range prof.SortedActionNames() {
 		action := prof.Actions[name]
+		if profile.HasWriteSideEffects(action) {
+			result.HasWriteActions = true
+		}
 		for _, effect := range action.SideEffects {
 			result.ActionsWithSideEffects[name] = append(result.ActionsWithSideEffects[name], string(effect))
-			if effect != profile.SideEffectReadOnly {
-				result.HasWriteActions = true
-			}
 		}
 		sort.Strings(result.ActionsWithSideEffects[name])
 		if action.ConfirmationPolicy.Required {

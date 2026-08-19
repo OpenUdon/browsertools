@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +50,7 @@ func TestBuildVerifyDeterministicAndTimeBound(t *testing.T) {
 	if err := Verify(first, time.Date(2026, 9, 13, 23, 59, 59, 0, time.UTC)); err != nil {
 		t.Fatalf("bundle should still be current: %v", err)
 	}
-	if err := Verify(first, time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)); err == nil || !strings.Contains(err.Error(), "expired") {
+	if err := Verify(first, time.Date(2026, 9, 14, 0, 0, 0, 0, time.UTC)); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expected expiry, got %v", err)
 	}
 }
@@ -169,7 +170,7 @@ func TestRejectsSecretsUnsafeCompanionsAndInvalidMetadata(t *testing.T) {
 		{"traversal", func(options *BuildOptions) { options.Companions[0].Path = "../workflow.uws.yaml" }, "safe normalized"},
 		{"wrong companion kind", func(options *BuildOptions) { options.Companions[0].Path = "workflow.txt" }, "supported UWS"},
 		{"session material", func(options *BuildOptions) {
-			options.Companions[0].Content = []byte("uws: 1.7.0\ninfo: {title: X, version: 1.0.0}\nvariables: {cookies: abc}\n")
+			options.Companions[0].Content = bytes.Replace(options.Companions[0].Content, []byte("operations:"), []byte("variables:\n  cookies:\n    type: string\n    default: abc\noperations:"), 1)
 		}, "secret-like"},
 		{"malformed companion", func(options *BuildOptions) {
 			options.Companions[0].Content = []byte("uws: [")
@@ -232,37 +233,86 @@ func TestParseStrictAndCanonicalRoundTrip(t *testing.T) {
 
 func TestBuildAndCanonicalJSONBoundCompleteBundle(t *testing.T) {
 	base := buildFixture(t, "read-only", nil)
+	complete, err := CanonicalJSON(base, fixtureTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scans := 0
+	config := validationConfig{
+		maxBundleBytes: int64(len(complete)), maxTextBytes: 1 << 20,
+		scan: func(value any) bool { scans++; return containsSecretValue(value) },
+	}
+	if _, err := build(buildOptions(t, "read-only", nil), config); err != nil {
+		t.Fatal(err)
+	}
+	if scans != 1 {
+		t.Fatalf("valid bundle invoked %d secret scans, want exactly one", scans)
+	}
+
+	scans = 0
+	oversizedOptions := buildOptions(t, "read-only", nil)
+	oversizedOptions.Source += strings.Repeat("x", 128)
+	if _, err := build(oversizedOptions, config); !errors.Is(err, ErrLimit) {
+		t.Fatalf("small injected complete-bundle limit error = %v", err)
+	}
+	if scans != 0 {
+		t.Fatalf("oversized bundle invoked %d secret scans", scans)
+	}
+
 	payloadData, err := canonicalPayloadJSON(base.Payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetPayloadSize := int(MaxBundleBytes - 1)
-	growth := targetPayloadSize - len(payloadData)
-	if growth <= 0 {
-		t.Fatalf("fixture payload unexpectedly uses %d bytes", len(payloadData))
+	scans = 0
+	config.maxBundleBytes = int64(len(payloadData))
+	if err := verify(base, fixtureTime, config); !errors.Is(err, ErrLimit) {
+		t.Fatalf("complete bundle bound did not run after acceptable payload: %v", err)
 	}
-
-	options := buildOptions(t, "read-only", nil)
-	options.Source += strings.Repeat("x", growth)
-	if _, err := Build(options); err == nil || !strings.Contains(err.Error(), "bundle exceeds") {
-		t.Fatalf("Build oversized complete bundle error = %v", err)
+	if scans != 0 {
+		t.Fatalf("complete-bundle rejection invoked %d secret scans", scans)
 	}
+}
 
-	oversized := *base
-	oversized.Payload.Provenance.Source += strings.Repeat("x", growth)
-	payloadData, err = canonicalPayloadJSON(oversized.Payload)
+func TestCacheReferenceExpiryIsPreservedAndVerified(t *testing.T) {
+	store, err := cache.Open(filepath.Join(t.TempDir(), "cache"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if int64(len(payloadData)) > MaxBundleBytes {
-		t.Fatalf("test payload exceeds payload bound: %d", len(payloadData))
-	}
-	oversized.Descriptor = descriptorFor(payloadData, PayloadMediaType, map[string]string{
-		"browsertools.id": oversized.Payload.Identity.ID, "browsertools.release": oversized.Payload.Identity.Release,
+	expiresAt := fixtureTime.Add(time.Hour)
+	content := []byte(`{"safe":true}`)
+	entry, err := store.Put(context.Background(), bytes.NewReader(content), cache.PutOptions{
+		Kind: cache.KindNormalizedEvidence, MediaType: "application/json", CreatedAt: fixtureTime.Add(-time.Hour),
+		ExpiresAt: expiresAt, Source: "synthetic", PublicationEligible: true,
 	})
-	oversized.Assessment.Subject = oversized.Descriptor
-	if _, err := CanonicalJSON(&oversized, fixtureTime); err == nil || !strings.Contains(err.Error(), "bundle exceeds") {
-		t.Fatalf("CanonicalJSON oversized complete bundle error = %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := Build(buildOptions(t, "read-only", func(options *BuildOptions) {
+		options.CacheEntries = []CachedArtifact{{Entry: entry, Content: content}}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := value.Payload.Provenance.CacheEntries[0].ExpiresAt; got != entry.ExpiresAt {
+		t.Fatalf("cache expiry = %q, want %q", got, entry.ExpiresAt)
+	}
+	if err := Verify(value, expiresAt.Add(-time.Nanosecond)); err != nil {
+		t.Fatalf("reference rejected before exact expiry: %v", err)
+	}
+	if err := Verify(value, expiresAt); !errors.Is(err, ErrExpired) {
+		t.Fatalf("exact-expiry reference error = %v", err)
+	}
+	tampered := cloneBundle(t, value)
+	tampered.Payload.Provenance.CacheEntries[0].ExpiresAt = fixtureTime.Format(time.RFC3339Nano)
+	if err := Verify(tampered, fixtureTime); !errors.Is(err, ErrExpired) {
+		t.Fatalf("expired-reference tamper error = %v", err)
+	}
+}
+
+func TestBundleProfileExactExpiryIsTyped(t *testing.T) {
+	value := buildFixture(t, "read-only", nil)
+	if err := Verify(value, value.Assessment.ExpiresAt); !errors.Is(err, ErrExpired) {
+		t.Fatalf("exact profile expiry error = %v", err)
 	}
 }
 

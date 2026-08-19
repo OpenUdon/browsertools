@@ -66,7 +66,7 @@ Browsertools does not own:
 
 ## Relationship To UWS
 
-UWS owns workflow structure and operation binding. UWS 1.5 supports
+UWS owns workflow structure and operation binding. UWS supports
 `sourceDescriptions[].type: browser-profile`. A UWS operation binds to a
 browser profile action using the same generic source selector pattern used by
 other source families:
@@ -99,7 +99,10 @@ The browser profile itself owns UI action metadata:
 - verification metadata
 
 Browsertools should validate against the UWS browser-profile schema rather than
-forking the contract.
+forking the contract. Browsertools accepts the pinned `uws.browser.1.5`,
+`uws.browser.1.6`, and `uws.browser.1.7` contracts through UWS' public schema
+API. Unsupported future discriminators fail explicitly; the embedded 1.5
+schema exists only for parity checks.
 
 ## Relationship To OpenAPI
 
@@ -282,20 +285,14 @@ Browsertools must not commit:
 - raw pages with secrets
 - captured credentials
 
-## Possible Future 1.6 Work
+## Supported Browser Contracts
 
-UWS 1.5 and `browser.1.5` are the current boundary: Browsertools produces
-reviewed UI capability profiles, and runtimes own live browser mechanics. If
-real reviewed workflows outgrow that boundary, Browsertools should collect the
-pressure as candidate `browser.1.6` requirements rather than widening the
-current artifact ad hoc.
-
-Possible 1.6 candidates include bounded file upload/download declarations,
-narrow drag/drop or pointer interactions, visual assertion evidence, richer
-completion checks, revalidation hints, and read-only crawler policy summaries.
-They should remain reviewed profile features, not Playwright command traces,
-arbitrary JavaScript, raw coordinate automation, MFA/login scripting,
-credential/session storage, or runtime retry/session policy.
+Browsertools validates browser profiles 1.5 through 1.7. Version 1.6 adds
+reviewed popup/frame contexts, while 1.7 permits the typed accessibility output
+conversions used by authenticated authoring. The oldest sufficient version is
+emitted. Upload/download, arbitrary pointer or JavaScript behavior, raw
+coordinates, credential/session storage, and runtime retry policy remain
+outside the portable contract.
 
 ## Implemented Milestones
 
@@ -328,6 +325,16 @@ credential/session storage, or runtime retry/session policy.
 27. Guided capability authoring and value-free live checks (`P03`).
 28. Headed manual authentication profile observation (`A02`).
 29. Private rich evidence and cross-engine portability evaluation (`E04`).
+30. Authenticated goal-directed browser authoring design (`M21`).
+31. Persistent authenticated browser authoring (`A03`).
+32. Authenticated goal exploration evidence (`E05`).
+33. Authenticated profile synthesis (`P04`).
+34. Authenticated authoring qualification hardening (`M22`).
+35. Author-session label contract hardening (`E06`).
+36. Reviewed MFA and typed output authoring (`A04`).
+37. Author-session navigation lifecycle hardening (`A05`).
+38. Network policy and dependency safety hardening (`M23`).
+39. Review remediation and consistency hardening (`M24`).
 
 ## CLI
 
@@ -338,7 +345,14 @@ driver long enough to verify its pinned browser executable; it does not launch
 a browser, install software, or contact a site.
 
 ```bash
+browsertools --help
+browsertools help registry
 browsertools profile validate --input ./profiles/example.yaml
+browsertools auth-profile validate --input ./browser-authentication/member.yaml
+browsertools auth-draft build --spec ./authentication-spec.yaml
+browsertools auth-review bundle --profile ./browser-authentication/member.yaml --at 2026-08-16T00:00:00Z
+browsertools auth-assist chromium --profile ./browser-authentication/member.yaml --flow member_login_push --approve-origin https://members.example.test --post-budget member_login_push:3=2 --out ./member.assisted.json
+browsertools author-session chromium --private-root ./.private-authoring
 browsertools evidence import --adapter playwright --input ./capture.json \
   --origin https://example.test --redaction-status not_required \
   --out ./evidence.json
@@ -350,7 +364,19 @@ browsertools review bundle --profile ./profiles/example.yaml \
 browsertools revalidate check --profile ./profiles/example.yaml \
   --evidence ./evidence.json --at 2026-08-14T00:00:00Z \
   --out ./revalidation.json
+browsertools bundle build --id example/status --release 1.0.0 --profile ./profiles/example.yaml --review ./review-bundle.json --evidence ./evidence.json --source reviewed_fixture --license CC0-1.0 --published-at 2026-08-14T00:00:00Z --out ./capability-bundle.json
+browsertools bundle verify --input ./capability-bundle.json --at 2026-08-14T00:00:00Z
+browsertools registry publish --root ./registry --bundle ./capability-bundle.json --at 2026-08-14T00:00:00Z
+browsertools registry search --location ./registry --query status --at 2026-08-14T00:00:00Z
+browsertools registry pull --location ./registry --id example/status --release 1.0.0 --at 2026-08-14T00:00:00Z --out ./capability-bundle.json
+browsertools registry verify --location ./registry --at 2026-08-14T00:00:00Z
+browsertools cache put --root ./.browsertools-cache --input ./capture.json --kind private_raw --media-type application/json --created-at 2026-08-14T00:00:00Z
+browsertools cache get --root ./.browsertools-cache --id sha256:EXACT_ID --at 2026-08-14T00:00:00Z --out ./capture.json
+browsertools cache list --root ./.browsertools-cache --at 2026-08-14T00:00:00Z
+browsertools cache prune --root ./.browsertools-cache --at 2026-09-14T00:00:00Z
+browsertools cache delete --root ./.browsertools-cache --id sha256:EXACT_ID --confirm-id sha256:EXACT_ID
 browsertools playwright doctor --engine chromium
+browsertools playwright capabilities
 browsertools capture chromium --url https://example.test/member \
   --allow-origin https://example.test \
   --cache-root ./.browsertools-cache --retain-for 24h
@@ -359,13 +385,6 @@ browsertools guide author --evidence ./evidence.json \
 browsertools live-check chromium --profile ./profiles/example.yaml \
   --url https://example.test/member --allow-origin https://example.test \
   --action read_status --at 2026-08-16T12:00:00Z --out ./live-check.json
-browsertools auth-assist chromium \
-  --profile ./browser-authentication/member.yaml \
-  --flow member_login_push \
-  --approve-origin https://members.example.test \
-  --approve-origin https://login.example.test \
-  --post-budget member_login_push:3=2 \
-  --out ./browser-authentication/member.assisted.json
 browsertools rich-capture chromium \
   --url https://example.test/member --allow-origin https://example.test \
   --cache-root ./.browsertools-cache --artifact screenshot --artifact trace \
@@ -375,6 +394,10 @@ browsertools portability check --profile ./profiles/example.yaml \
   --action read_status --engine chromium --engine firefox --engine webkit \
   --out ./portability.json
 ```
+
+Remote registry reads default to `--network never`. `--network allow` permits
+public HTTPS targets; `--allow-loopback` is the only host exception and cannot
+permit private or reserved address space.
 
 Every networked command is explicit. Generic capture is headless,
 non-interactive, exact-origin, ephemeral, read-only at the routed request

@@ -135,6 +135,20 @@ func TestCheckAmbiguityRequiresDecisionRationale(t *testing.T) {
 	}
 }
 
+func TestWhitespaceOnlyAmbiguityRationaleDoesNotResolve(t *testing.T) {
+	prof, rec := baseProfile(), baseRecord()
+	action := prof.Actions["read_status"]
+	action.Sequence = []profile.Step{{Kind: profile.StepClick, Click: &profile.LocatorStep{Locator: profile.Locator{Role: "button", Name: "Save"}}}}
+	prof.Actions["read_status"] = action
+	rec.CandidateLocators = []evidence.CandidateLocator{{Role: "button", Name: "Save", AmbiguityNote: "two matches"}}
+	decision := evidence.LocatorDecision{ActionHint: "read_status", Locator: evidence.CandidateLocator{Role: "button", Name: "Save"}, Rationale: " \t\n "}
+	result, err := CheckAt(prof, []evidence.Record{rec}, []evidence.LocatorDecision{decision}, assessmentTime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFailure(t, result, CheckAmbiguousLocator)
+}
+
 func TestCheckOriginCanonicalizationAndMismatch(t *testing.T) {
 	rec := baseRecord()
 	rec.Origin = "https://EXAMPLE.test:443"

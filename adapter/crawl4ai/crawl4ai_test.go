@@ -40,8 +40,8 @@ func TestImportFromFixture(t *testing.T) {
 		t.Errorf("expected 2 candidate outputs, got %d", len(rec.CandidateOutputs))
 	}
 	for _, out := range rec.CandidateOutputs {
-		if out.Source != "css" {
-			t.Errorf("expected source=css, got %q for key %q", out.Source, out.Key)
+		if out.Source != "" {
+			t.Errorf("incomplete extraction must remain unbound, got source=%q for key %q", out.Source, out.Key)
 		}
 		// FallbackReason should be empty — reviewer fills it in
 		if out.FallbackReason != "" {

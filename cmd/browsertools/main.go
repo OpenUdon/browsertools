@@ -48,78 +48,6 @@ const (
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) < 2 {
-		usage(stderr)
-		return exitUsageOrIO
-	}
-	switch args[0] + " " + args[1] {
-	case "profile validate":
-		return runProfileValidate(args[2:], stdin, stdout, stderr)
-	case "auth-profile validate":
-		return runAuthProfileValidate(args[2:], stdin, stdout, stderr)
-	case "auth-draft build":
-		return runAuthDraftBuild(args[2:], stdin, stdout, stderr)
-	case "auth-review bundle":
-		return runAuthReviewBundle(args[2:], stdin, stdout, stderr)
-	case "auth-assist chromium":
-		return runAuthAssistChromium(args[2:], stdin, stdout, stderr)
-	case "author-session chromium":
-		return runAuthorSessionChromium(args[2:], stdin, stdout, stderr)
-	case "evidence import":
-		return runEvidenceImport(args[2:], stdin, stdout, stderr)
-	case "draft build":
-		return runDraftBuild(args[2:], stdin, stdout, stderr)
-	case "review bundle":
-		return runReviewBundle(args[2:], stdin, stdout, stderr)
-	case "revalidate check":
-		return runRevalidate(args[2:], stdin, stdout, stderr)
-	case "bundle build":
-		return runCapabilityBundleBuild(args[2:], stdin, stdout, stderr)
-	case "bundle verify":
-		return runCapabilityBundleVerify(args[2:], stdin, stdout, stderr)
-	case "registry publish":
-		return runRegistryPublish(args[2:], stdin, stdout, stderr)
-	case "registry search":
-		return runRegistrySearch(args[2:], stdout, stderr)
-	case "registry pull":
-		return runRegistryPull(args[2:], stdout, stderr)
-	case "registry verify":
-		return runRegistryVerify(args[2:], stdout, stderr)
-	case "cache put":
-		return runCachePut(args[2:], stdin, stdout, stderr)
-	case "cache get":
-		return runCacheGet(args[2:], stdin, stdout, stderr)
-	case "cache list":
-		return runCacheList(args[2:], stdout, stderr)
-	case "cache prune":
-		return runCachePrune(args[2:], stdout, stderr)
-	case "cache delete":
-		return runCacheDelete(args[2:], stdout, stderr)
-	case "capture chromium":
-		return runCaptureChromium(args[2:], stdout, stderr)
-	case "rich-capture chromium":
-		return runRichCaptureChromium(args[2:], stdout, stderr)
-	case "guide author":
-		return runGuideAuthor(args[2:], stdin, stdout, stderr)
-	case "live-check chromium":
-		return runLiveCheckChromium(args[2:], stdin, stdout, stderr)
-	case "portability check":
-		return runPortabilityCheck(args[2:], stdin, stdout, stderr)
-	case "playwright doctor":
-		return runPlaywrightDoctor(args[2:], stdout, stderr)
-	case "playwright capabilities":
-		return runPlaywrightCapabilities(args[2:], stdout, stderr)
-	default:
-		usage(stderr)
-		return exitUsageOrIO
-	}
-}
-
-func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: browsertools <profile validate|auth-profile validate|auth-draft build|auth-review bundle|auth-assist chromium|author-session chromium|evidence import|draft build|review bundle|revalidate check|bundle build|bundle verify|registry publish|registry search|registry pull|registry verify|cache put|cache get|cache list|cache prune|cache delete|capture chromium|rich-capture chromium|guide author|live-check chromium|portability check|playwright doctor|playwright capabilities> [flags]")
-}
-
 func runAuthorSessionChromium(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return runAuthorSessionChromiumWith(args, stdin, stdout, stderr, time.Now, capture.NewPlaywrightAuthorBrowser)
 }
@@ -737,6 +665,10 @@ func runPortabilityCheckWith(
 }
 
 func runPlaywrightDoctor(args []string, stdout, stderr io.Writer) int {
+	return runPlaywrightDoctorWith(args, stdout, stderr, capture.NewPlaywrightRuntime)
+}
+
+func runPlaywrightDoctorWith(args []string, stdout, stderr io.Writer, newRuntime func(string) capture.Runtime) int {
 	fs := flag.NewFlagSet("playwright doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	engineName := fs.String("engine", string(capture.EngineChromium), "chromium, firefox, or webkit")
@@ -758,7 +690,11 @@ func runPlaywrightDoctor(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "playwright doctor:", err)
 		return exitUsageOrIO
 	}
-	report, doctorErr := capture.Doctor(context.Background(), capture.NewPlaywrightRuntime(*driverDirectory), engine)
+	if newRuntime == nil {
+		fmt.Fprintln(stderr, "playwright doctor: runtime dependency is unavailable")
+		return exitUsageOrIO
+	}
+	report, doctorErr := capture.Doctor(context.Background(), newRuntime(*driverDirectory), engine)
 	if *format == "json" {
 		if err := json.NewEncoder(stdout).Encode(report); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -788,6 +724,10 @@ func runPlaywrightCapabilities(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "playwright capabilities: unexpected positional arguments")
 		return exitUsageOrIO
 	}
+	if !validFormat(*format, "json", "text") {
+		fmt.Fprintln(stderr, "playwright capabilities: --format must be json or text")
+		return exitUsageOrIO
+	}
 	capabilities := capture.CapabilityMatrix()
 	pressure := capture.ContractPressure()
 	switch *format {
@@ -802,9 +742,6 @@ func runPlaywrightCapabilities(args []string, stdout, stderr io.Writer) int {
 		for _, item := range pressure {
 			fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", item.Capability, item.Disposition, item.Browser15, item.NextStep)
 		}
-	default:
-		fmt.Fprintln(stderr, "playwright capabilities: --format must be json or text")
-		return exitUsageOrIO
 	}
 	return exitOK
 }
@@ -828,6 +765,15 @@ func runRegistryPublish(args []string, stdin io.Reader, stdout, stderr io.Writer
 		fmt.Fprintln(stderr, "registry publish: invalid --at:", err)
 		return exitUsageOrIO
 	}
+	var prior *registry.Coordinate
+	if *supersedes != "" {
+		coordinate, parseErr := parseCoordinate(*supersedes)
+		if parseErr != nil {
+			fmt.Fprintln(stderr, "registry publish:", parseErr)
+			return exitUsageOrIO
+		}
+		prior = &coordinate
+	}
 	data, err := readInput(*bundlePath, stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -837,15 +783,6 @@ func runRegistryPublish(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitRejected
-	}
-	var prior *registry.Coordinate
-	if *supersedes != "" {
-		coordinate, parseErr := parseCoordinate(*supersedes)
-		if parseErr != nil {
-			fmt.Fprintln(stderr, "registry publish:", parseErr)
-			return exitUsageOrIO
-		}
-		prior = &coordinate
 	}
 	report, err := registry.PublishLocal(context.Background(), registry.PublishOptions{
 		Root: *root, Bundle: value, At: when, Supersedes: prior,
@@ -862,6 +799,10 @@ func runRegistryPublish(args []string, stdin io.Reader, stdout, stderr io.Writer
 }
 
 func runRegistrySearch(args []string, stdout, stderr io.Writer) int {
+	return runRegistrySearchWith(args, stdout, stderr, &registry.Client{})
+}
+
+func runRegistrySearchWith(args []string, stdout, stderr io.Writer, client *registry.Client) int {
 	fs := flag.NewFlagSet("registry search", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	location := fs.String("location", "", "local registry root or static HTTPS base URL")
@@ -870,12 +811,16 @@ func runRegistrySearch(args []string, stdout, stderr io.Writer) int {
 	limit := fs.Int("limit", registry.DefaultMaxResults, "maximum results")
 	includeInactive := fs.Bool("include-inactive", false, "include stale, revoked, and superseded entries")
 	format := fs.String("format", "json", "json or text")
-	client, policy := registryClientFlags(fs)
+	client, policy := registryClientFlagsWith(fs, client)
 	if err := fs.Parse(args); err != nil {
 		return exitUsageOrIO
 	}
 	if *location == "" || *at == "" {
 		fmt.Fprintln(stderr, "registry search: --location and --at are required")
+		return exitUsageOrIO
+	}
+	if !validFormat(*format, "json", "text") {
+		fmt.Fprintln(stderr, "registry search: --format must be json or text")
 		return exitUsageOrIO
 	}
 	if err := setRegistryNetworkPolicy(client, *policy); err != nil {
@@ -905,9 +850,6 @@ func runRegistrySearch(args []string, stdout, stderr io.Writer) int {
 		for _, result := range report.Results {
 			fmt.Fprintf(stdout, "%s@%s\t%s\t%d\t%s\t%s\n", result.Entry.ID, result.Entry.Release, result.Status, result.Score, result.Entry.Bundle.Digest.String(), result.Entry.Title)
 		}
-	default:
-		fmt.Fprintln(stderr, "registry search: --format must be json or text")
-		return exitUsageOrIO
 	}
 	return exitOK
 }
@@ -930,6 +872,10 @@ func runRegistryPull(args []string, stdout, stderr io.Writer) int {
 	coordinateSelected := *id != "" || *release != ""
 	if *location == "" || *at == "" || (coordinateSelected && (*id == "" || *release == "")) || (coordinateSelected == (*digestValue != "")) {
 		fmt.Fprintln(stderr, "registry pull: --location, --at, and exactly one of (--id with --release) or --digest are required")
+		return exitUsageOrIO
+	}
+	if *digestValue != "" && !validSHA256ID(*digestValue) {
+		fmt.Fprintln(stderr, "registry pull: --digest must be sha256:<64 lowercase hex>")
 		return exitUsageOrIO
 	}
 	if err := setRegistryNetworkPolicy(client, *policy); err != nil {
@@ -975,6 +921,10 @@ func runRegistryVerify(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "registry verify: --location and --at are required")
 		return exitUsageOrIO
 	}
+	if !validFormat(*format, "json", "text") {
+		fmt.Fprintln(stderr, "registry verify: --format must be json or text")
+		return exitUsageOrIO
+	}
 	if err := setRegistryNetworkPolicy(client, *policy); err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitUsageOrIO
@@ -999,9 +949,6 @@ func runRegistryVerify(args []string, stdout, stderr io.Writer) int {
 		for _, entry := range report.Entries {
 			fmt.Fprintf(stdout, "%s@%s\t%s\t%s\t%s\n", entry.Coordinate.ID, entry.Coordinate.Release, entry.Status, entry.Digest, entry.BlobPath)
 		}
-	default:
-		fmt.Fprintln(stderr, "registry verify: --format must be json or text")
-		return exitUsageOrIO
 	}
 	return exitOK
 }
@@ -1118,6 +1065,10 @@ func runCapabilityBundleVerify(args []string, stdin io.Reader, stdout, stderr io
 		fmt.Fprintln(stderr, "bundle verify: --input and --at are required")
 		return exitUsageOrIO
 	}
+	if !validFormat(*format, "text", "json") {
+		fmt.Fprintln(stderr, "bundle verify: --format must be text or json")
+		return exitUsageOrIO
+	}
 	when, err := time.Parse(time.RFC3339, *at)
 	if err != nil {
 		fmt.Fprintln(stderr, "bundle verify: invalid --at:", err)
@@ -1134,12 +1085,12 @@ func runCapabilityBundleVerify(args []string, stdin io.Reader, stdout, stderr io
 	}
 	if err != nil {
 		if *format == "json" {
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"valid": false, "errors": []string{err.Error()}})
+			if encodeErr := json.NewEncoder(stdout).Encode(map[string]any{"valid": false, "errors": []string{err.Error()}}); encodeErr != nil {
+				fmt.Fprintln(stderr, "bundle verify:", encodeErr)
+				return exitUsageOrIO
+			}
 		} else if *format == "text" {
 			fmt.Fprintln(stderr, err)
-		} else {
-			fmt.Fprintln(stderr, "bundle verify: --format must be text or json")
-			return exitUsageOrIO
 		}
 		return exitRejected
 	}
@@ -1152,12 +1103,12 @@ func runCapabilityBundleVerify(args []string, stdin io.Reader, stdout, stderr io
 	case "text":
 		fmt.Fprintf(stdout, "valid\t%s\t%s\t%s\n", value.Payload.Identity.ID, value.Payload.Identity.Release, record.String())
 	case "json":
-		_ = json.NewEncoder(stdout).Encode(map[string]any{
+		if err := json.NewEncoder(stdout).Encode(map[string]any{
 			"valid": true, "id": value.Payload.Identity.ID, "release": value.Payload.Identity.Release, "digest": record.String(),
-		})
-	default:
-		fmt.Fprintln(stderr, "bundle verify: --format must be text or json")
-		return exitUsageOrIO
+		}); err != nil {
+			fmt.Fprintln(stderr, "bundle verify:", err)
+			return exitUsageOrIO
+		}
 	}
 	return exitOK
 }
@@ -1180,6 +1131,10 @@ func runCachePut(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if *root == "" || *input == "" || *kind == "" || *mediaType == "" || *createdAt == "" {
 		fmt.Fprintln(stderr, "cache put: --root, --input, --kind, --media-type, and --created-at are required")
+		return exitUsageOrIO
+	}
+	if !validCacheKind(cache.Kind(*kind)) {
+		fmt.Fprintln(stderr, "cache put: --kind must be private_raw, normalized_evidence, profile, or review_bundle")
 		return exitUsageOrIO
 	}
 	created, err := time.Parse(time.RFC3339Nano, *createdAt)
@@ -1242,6 +1197,10 @@ func runCacheGet(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "cache get: --root, --id, and --at are required")
 		return exitUsageOrIO
 	}
+	if !validSHA256ID(*id) {
+		fmt.Fprintln(stderr, "cache get: --id must be sha256:<64 lowercase hex>")
+		return exitUsageOrIO
+	}
 	when, err := time.Parse(time.RFC3339Nano, *at)
 	if err != nil {
 		fmt.Fprintln(stderr, "cache get: invalid --at:", err)
@@ -1290,6 +1249,10 @@ func runCacheList(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "cache list: --root and --at are required")
 		return exitUsageOrIO
 	}
+	if !validFormat(*format, "json", "text") {
+		fmt.Fprintln(stderr, "cache list: --format must be json or text")
+		return exitUsageOrIO
+	}
 	when, err := time.Parse(time.RFC3339Nano, *at)
 	if err != nil {
 		fmt.Fprintln(stderr, "cache list: invalid --at:", err)
@@ -1319,6 +1282,10 @@ func runCachePrune(args []string, stdout, stderr io.Writer) int {
 	}
 	if *root == "" || *at == "" {
 		fmt.Fprintln(stderr, "cache prune: --root and --at are required")
+		return exitUsageOrIO
+	}
+	if !validFormat(*format, "json", "text") {
+		fmt.Fprintln(stderr, "cache prune: --format must be json or text")
 		return exitUsageOrIO
 	}
 	when, err := time.Parse(time.RFC3339Nano, *at)
@@ -1354,6 +1321,10 @@ func runCacheDelete(args []string, stdout, stderr io.Writer) int {
 	}
 	if *id != *confirmID {
 		fmt.Fprintln(stderr, "cache delete: --confirm-id must exactly match --id")
+		return exitUsageOrIO
+	}
+	if !validSHA256ID(*id) {
+		fmt.Fprintln(stderr, "cache delete: --id must be sha256:<64 lowercase hex>")
 		return exitUsageOrIO
 	}
 	store, err := cache.OpenExisting(*root)
@@ -1403,22 +1374,26 @@ func runProfileValidate(args []string, stdin io.Reader, stdout, stderr io.Writer
 		fmt.Fprintln(stderr, "profile validate: --input is required")
 		return exitUsageOrIO
 	}
+	if !validFormat(*format, "text", "json") {
+		fmt.Fprintln(stderr, "profile validate: --format must be text or json")
+		return exitUsageOrIO
+	}
 	_, err := loadProfileInput(*input, stdin)
 	if err == nil {
 		if *format == "json" {
 			fmt.Fprintln(stdout, `{"valid":true,"errors":[]}`)
 		} else if *format == "text" {
 			fmt.Fprintln(stdout, "valid")
-		} else {
-			fmt.Fprintln(stderr, "profile validate: --format must be text or json")
-			return exitUsageOrIO
 		}
 		return exitOK
 	}
 	var validationErr *profile.ValidationError
 	if errors.As(err, &validationErr) {
 		if *format == "json" {
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"valid": false, "errors": []string{err.Error()}})
+			if encodeErr := json.NewEncoder(stdout).Encode(map[string]any{"valid": false, "errors": []string{err.Error()}}); encodeErr != nil {
+				fmt.Fprintln(stderr, "profile validate:", encodeErr)
+				return exitUsageOrIO
+			}
 		} else {
 			fmt.Fprintln(stderr, err)
 		}
@@ -1441,23 +1416,31 @@ func runAuthProfileValidate(args []string, stdin io.Reader, stdout, stderr io.Wr
 		fmt.Fprintln(stderr, "auth-profile validate: --input is required")
 		return exitUsageOrIO
 	}
-	value, err := loadAuthProfileInput(*input, stdin)
-	if err == nil && *at != "" {
-		when, parseErr := time.Parse(time.RFC3339, *at)
+	if !validFormat(*format, "text", "json") {
+		fmt.Fprintln(stderr, "auth-profile validate: --format must be text or json")
+		return exitUsageOrIO
+	}
+	var when time.Time
+	if *at != "" {
+		var parseErr error
+		when, parseErr = time.Parse(time.RFC3339, *at)
 		if parseErr != nil {
 			fmt.Fprintln(stderr, "auth-profile validate: invalid --at:", parseErr)
 			return exitUsageOrIO
 		}
+	}
+	value, err := loadAuthProfileInput(*input, stdin)
+	if err == nil && *at != "" {
 		err = authprofile.ValidateAt(value, when)
 	}
 	if err != nil {
 		if *format == "json" {
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"valid": false, "errors": []string{err.Error()}})
+			if encodeErr := json.NewEncoder(stdout).Encode(map[string]any{"valid": false, "errors": []string{err.Error()}}); encodeErr != nil {
+				fmt.Fprintln(stderr, "auth-profile validate:", encodeErr)
+				return exitUsageOrIO
+			}
 		} else if *format == "text" {
 			fmt.Fprintln(stderr, err)
-		} else {
-			fmt.Fprintln(stderr, "auth-profile validate: --format must be text or json")
-			return exitUsageOrIO
 		}
 		return exitRejected
 	}
@@ -1465,9 +1448,6 @@ func runAuthProfileValidate(args []string, stdin io.Reader, stdout, stderr io.Wr
 		fmt.Fprintln(stdout, `{"valid":true,"errors":[]}`)
 	} else if *format == "text" {
 		fmt.Fprintln(stdout, "valid")
-	} else {
-		fmt.Fprintln(stderr, "auth-profile validate: --format must be text or json")
-		return exitUsageOrIO
 	}
 	return exitOK
 }
@@ -1484,6 +1464,10 @@ func runAuthDraftBuild(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	}
 	if *specPath == "" {
 		fmt.Fprintln(stderr, "auth-draft build: --spec is required")
+		return exitUsageOrIO
+	}
+	if !validFormat(*format, "yaml", "json") {
+		fmt.Fprintln(stderr, "auth-draft build: --format must be yaml or json")
 		return exitUsageOrIO
 	}
 	data, err := readInput(*specPath, stdin)
@@ -1507,9 +1491,6 @@ func runAuthDraftBuild(args []string, stdin io.Reader, stdout, stderr io.Writer)
 		encoded, err = authprofile.MarshalYAML(value)
 	case "json":
 		encoded, err = json.MarshalIndent(value, "", "  ")
-	default:
-		fmt.Fprintln(stderr, "auth-draft build: --format must be yaml or json")
-		return exitUsageOrIO
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -1587,9 +1568,18 @@ func runEvidenceImport(args []string, stdin io.Reader, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, "evidence import: --adapter, --input, --origin, and --redaction-status are required")
 		return exitUsageOrIO
 	}
+	importer, err := importerFor(*tool)
+	if err != nil {
+		fmt.Fprintln(stderr, "evidence import:", err)
+		return exitUsageOrIO
+	}
 	status := evidence.RedactionStatus(*redaction)
 	if status != evidence.RedactionNotRequired && status != evidence.RedactionCompleted {
 		fmt.Fprintln(stderr, "evidence import: --redaction-status must be not_required or redacted")
+		return exitUsageOrIO
+	}
+	if _, err := profile.ParseOrigin(*origin); err != nil {
+		fmt.Fprintln(stderr, "evidence import: invalid --origin:", err)
 		return exitUsageOrIO
 	}
 	if status == evidence.RedactionCompleted && len(redactedFields) == 0 {
@@ -1597,11 +1587,6 @@ func runEvidenceImport(args []string, stdin io.Reader, stdout, stderr io.Writer)
 		return exitUsageOrIO
 	}
 	raw, err := readInput(*input, stdin)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return exitUsageOrIO
-	}
-	importer, err := importerFor(*tool)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitUsageOrIO
@@ -1641,6 +1626,10 @@ func runDraftBuild(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "draft build: --evidence and --spec are required")
 		return exitUsageOrIO
 	}
+	if !validFormat(*format, "json", "yaml") {
+		fmt.Fprintln(stderr, "draft build: --format must be json or yaml")
+		return exitUsageOrIO
+	}
 	if *evidencePath == "-" && *specPath == "-" {
 		fmt.Fprintln(stderr, "draft build: only one input may use stdin")
 		return exitUsageOrIO
@@ -1664,7 +1653,9 @@ func runDraftBuild(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		if result != nil && len(result.Diagnostics) > 0 {
-			_ = json.NewEncoder(stderr).Encode(result.Diagnostics)
+			if encodeErr := json.NewEncoder(stderr).Encode(result.Diagnostics); encodeErr != nil {
+				return exitUsageOrIO
+			}
 		}
 		return exitRejected
 	}
@@ -1700,6 +1691,11 @@ func runReviewBundle(args []string, stdin io.Reader, stdout, stderr io.Writer) i
 		fmt.Fprintln(stderr, "review bundle: only one input may use stdin")
 		return exitUsageOrIO
 	}
+	now, err := time.Parse(time.RFC3339, *at)
+	if err != nil {
+		fmt.Fprintln(stderr, "review bundle: invalid --at:", err)
+		return exitUsageOrIO
+	}
 	prof, err := loadProfileInput(*profilePath, stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -1715,17 +1711,16 @@ func runReviewBundle(args []string, stdin io.Reader, stdout, stderr io.Writer) i
 		fmt.Fprintln(stderr, err)
 		return exitUsageOrIO
 	}
-	now, err := time.Parse(time.RFC3339, *at)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return exitUsageOrIO
-	}
 	bundle, err := review.Build(prof, records, decisions, now)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitUsageOrIO
 	}
-	data, _ := json.MarshalIndent(bundle, "", "  ")
+	data, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, "review bundle:", err)
+		return exitUsageOrIO
+	}
 	data = append(data, '\n')
 	if err := writeOutput(*out, data, *force, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -1757,6 +1752,11 @@ func runRevalidate(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "revalidate check: only one input may use stdin")
 		return exitUsageOrIO
 	}
+	now, err := time.Parse(time.RFC3339, *at)
+	if err != nil {
+		fmt.Fprintln(stderr, "revalidate check: invalid --at:", err)
+		return exitUsageOrIO
+	}
 	prof, err := loadProfileInput(*profilePath, stdin)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -1772,17 +1772,16 @@ func runRevalidate(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, err)
 		return exitUsageOrIO
 	}
-	now, err := time.Parse(time.RFC3339, *at)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return exitUsageOrIO
-	}
 	result, err := revalidate.CheckAt(prof, records, decisions, now)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return exitUsageOrIO
 	}
-	data, _ := json.MarshalIndent(result, "", "  ")
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, "revalidate check:", err)
+		return exitUsageOrIO
+	}
 	data = append(data, '\n')
 	if err := writeOutput(*out, data, *force, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -1995,11 +1994,17 @@ func decodeStrictJSON(data []byte, target any) error {
 }
 
 func registryClientFlags(fs *flag.FlagSet) (*registry.Client, *string) {
-	client := &registry.Client{}
+	return registryClientFlagsWith(fs, &registry.Client{})
+}
+
+func registryClientFlagsWith(fs *flag.FlagSet, client *registry.Client) (*registry.Client, *string) {
+	if client == nil {
+		client = &registry.Client{}
+	}
 	policy := fs.String("network", "never", "network policy: never, ask, or allow")
 	fs.DurationVar(&client.Timeout, "timeout", registry.DefaultTimeout, "total registry read deadline (capped at 8s)")
 	fs.Int64Var(&client.MaxBytes, "max-bytes", registry.DefaultMaxBytes, "per-file response bound (capped at 20 MiB)")
-	fs.BoolVar(&client.AllowUnsafeHosts, "allow-unsafe-hosts", false, "allow localhost/private HTTPS hosts; intended only for local tests")
+	fs.BoolVar(&client.AllowLoopbackHosts, "allow-loopback", false, "allow an exact loopback HTTPS registry target")
 	return client, policy
 }
 
@@ -2038,6 +2043,9 @@ func parsePathMappings(values []string) ([]pathMapping, error) {
 		}
 		if _, ok := seen[target]; ok {
 			return nil, fmt.Errorf("UWS companion target %q is duplicated", target)
+		}
+		if _, err := companionMediaType(target); err != nil {
+			return nil, err
 		}
 		seen[target] = struct{}{}
 		result = append(result, pathMapping{target: target, source: source})

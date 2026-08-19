@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -87,7 +88,7 @@ func TestClientInactiveFilteringAndPullPolicy(t *testing.T) {
 	if err != nil || len(report.Results) != 1 || report.Results[0].Status != "revoked" {
 		t.Fatalf("inactive search = %#v, %v", report.Results, err)
 	}
-	if _, err := client.Pull(context.Background(), PullOptions{Location: root, Coordinate: &coordinate, At: registryTime.Add(time.Hour)}); err == nil || !strings.Contains(err.Error(), "revoked") {
+	if _, err := client.Pull(context.Background(), PullOptions{Location: root, Coordinate: &coordinate, At: registryTime.Add(time.Hour)}); !errors.Is(err, ErrExpired) {
 		t.Fatalf("expected revoked pull rejection, got %v", err)
 	}
 	if _, err := client.Pull(context.Background(), PullOptions{Location: root, Coordinate: &coordinate, At: registryTime.Add(time.Hour), AllowInactive: true}); err != nil {
@@ -141,7 +142,7 @@ func TestClientNetworkPolicyUnsafeHostAndHTTPSOnly(t *testing.T) {
 		t.Fatalf("policy rejection made %d requests", requests.Load())
 	}
 	client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client()}
-	if _, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime}); err == nil || !strings.Contains(err.Error(), "private") {
+	if _, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime}); err == nil || !errors.Is(err, ErrPolicy) {
 		t.Fatalf("expected unsafe host rejection, got %v", err)
 	}
 	client.AllowUnsafeHosts = true
@@ -150,7 +151,7 @@ func TestClientNetworkPolicyUnsafeHostAndHTTPSOnly(t *testing.T) {
 	}
 }
 
-func TestUnsafeIPRejectsCGNATBoundariesAndMappedAddresses(t *testing.T) {
+func TestUnsafeIPRejectsReservedAndEmbeddedAddresses(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		value  string
@@ -161,9 +162,22 @@ func TestUnsafeIPRejectsCGNATBoundariesAndMappedAddresses(t *testing.T) {
 		{name: "below CGNAT", value: "100.63.255.255", unsafe: false},
 		{name: "above CGNAT", value: "100.128.0.0", unsafe: false},
 		{name: "IPv4-mapped CGNAT", value: "::ffff:100.64.0.1", unsafe: true},
+		{name: "current network", value: "0.1.2.3", unsafe: true},
+		{name: "IETF assignment", value: "192.0.0.9", unsafe: true},
+		{name: "documentation one", value: "192.0.2.1", unsafe: true},
+		{name: "documentation two", value: "198.51.100.1", unsafe: true},
+		{name: "documentation three", value: "203.0.113.1", unsafe: true},
+		{name: "benchmarking", value: "198.19.255.255", unsafe: true},
+		{name: "future use", value: "250.1.2.3", unsafe: true},
 		{name: "public IPv4", value: "8.8.8.8", unsafe: false},
 		{name: "private IPv4", value: "10.0.0.1", unsafe: true},
 		{name: "private IPv6", value: "fd00::1", unsafe: true},
+		{name: "IPv6 documentation", value: "2001:db8::1", unsafe: true},
+		{name: "6to4 private", value: "2002:0a00:0001::", unsafe: true},
+		{name: "6to4 public", value: "2002:0808:0808::", unsafe: false},
+		{name: "Teredo private server", value: "2001:0000:0a00:0001:0000:0000:f7f7:f7f7", unsafe: true},
+		{name: "Teredo private client", value: "2001:0000:0808:0808:0000:0000:f5ff:fffe", unsafe: true},
+		{name: "Teredo public", value: "2001:0000:0808:0808:0000:0000:f7f7:f7f7", unsafe: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			value := net.ParseIP(test.value)
@@ -174,6 +188,20 @@ func TestUnsafeIPRejectsCGNATBoundariesAndMappedAddresses(t *testing.T) {
 				t.Fatalf("unsafeIP(%q)=%v, want %v", test.value, got, test.unsafe)
 			}
 		})
+	}
+}
+
+func TestLoopbackOptInCannotPermitPrivateOrReservedHosts(t *testing.T) {
+	for _, deprecated := range []bool{false, true} {
+		client := &Client{AllowLoopbackHosts: !deprecated, AllowUnsafeHosts: deprecated}
+		if err := client.rejectHost(context.Background(), "127.0.0.1"); err != nil {
+			t.Fatalf("deprecated=%v loopback: %v", deprecated, err)
+		}
+		for _, host := range []string{"10.0.0.1", "192.0.2.1", "198.18.0.1"} {
+			if err := client.rejectHost(context.Background(), host); err == nil {
+				t.Fatalf("deprecated=%v unexpectedly allowed %s", deprecated, host)
+			}
+		}
 	}
 }
 
@@ -189,7 +217,7 @@ func TestClientBoundsCancellationTimeoutAndRedirect(t *testing.T) {
 		}))
 		defer server.Close()
 		client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client(), AllowUnsafeHosts: true, MaxBytes: 64}
-		if _, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime}); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		if _, err := client.Search(context.Background(), SearchOptions{Location: server.URL, At: registryTime}); err == nil || !errors.Is(err, ErrLimit) {
 			t.Fatalf("expected size rejection, got %v", err)
 		}
 	})
@@ -237,7 +265,7 @@ func TestClientRejectsRemoteTamperAndBadSelection(t *testing.T) {
 	defer server.Close()
 	client := &Client{NetworkPolicy: NetworkAllow, HTTPClient: server.Client(), AllowUnsafeHosts: true}
 	coordinate := Coordinate{ID: "example/status", Release: "1.0.0"}
-	if _, err := client.Pull(context.Background(), PullOptions{Location: server.URL, Coordinate: &coordinate, At: registryTime}); err == nil || !strings.Contains(err.Error(), "descriptor") {
+	if _, err := client.Pull(context.Background(), PullOptions{Location: server.URL, Coordinate: &coordinate, At: registryTime}); err == nil || !errors.Is(err, ErrIntegrity) {
 		t.Fatalf("expected remote tamper rejection, got %v", err)
 	}
 	if _, err := client.Pull(context.Background(), PullOptions{Location: server.URL, At: registryTime}); err == nil {

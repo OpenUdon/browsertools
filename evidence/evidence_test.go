@@ -99,8 +99,8 @@ func TestDeterministicSerialization(t *testing.T) {
 		{Role: "button", Name: "Submit"},
 	}
 	rec1.CandidateOutputs = []CandidateOutput{
-		{Key: "total", Type: "string", Source: "microdata"},
-		{Key: "items", Type: "array", Source: "a11y"},
+		{Key: "total", Type: "string", Source: "microdata", Property: "total"},
+		{Key: "items", Type: "array"},
 	}
 
 	rec2 := baseRecord()
@@ -109,8 +109,8 @@ func TestDeterministicSerialization(t *testing.T) {
 		{Role: "link", Name: "Next"},
 	}
 	rec2.CandidateOutputs = []CandidateOutput{
-		{Key: "items", Type: "array", Source: "a11y"},
-		{Key: "total", Type: "string", Source: "microdata"},
+		{Key: "items", Type: "array"},
+		{Key: "total", Type: "string", Source: "microdata", Property: "total"},
 	}
 
 	b1, err := MarshalDeterministic(rec1)
@@ -216,6 +216,40 @@ func TestNormalizeDoesNotMutateOriginal(t *testing.T) {
 	if raw.Record.CandidateLocators[0].Role != originalOrder[0] ||
 		raw.Record.CandidateLocators[1].Role != originalOrder[1] {
 		t.Error("Normalize mutated the original RawRecord slices")
+	}
+}
+
+func TestNormalizeCandidateOutputInvariantsAndDeepCopy(t *testing.T) {
+	validLocator := CandidateLocator{Role: "status", Name: "Ready"}
+	for _, test := range []struct {
+		name   string
+		output CandidateOutput
+		valid  bool
+	}{
+		{name: "unbound hint", output: CandidateOutput{Key: "title", Type: "string"}, valid: true},
+		{name: "a11y", output: CandidateOutput{Key: "ready", Type: "boolean", Source: "a11y", Locator: &validLocator}, valid: true},
+		{name: "jsonld", output: CandidateOutput{Key: "title", Type: "string", Source: "jsonld", Property: "title"}, valid: true},
+		{name: "microdata", output: CandidateOutput{Key: "price", Type: "number", Source: "microdata", Property: "price"}, valid: true},
+		{name: "css", output: CandidateOutput{Key: "title", Type: "string", Source: "css", Selector: "h1", FallbackReason: "no_structured_data"}, valid: true},
+		{name: "unknown type", output: CandidateOutput{Key: "x", Type: "scalar"}},
+		{name: "a11y missing locator", output: CandidateOutput{Key: "x", Type: "string", Source: "a11y"}},
+		{name: "structured missing property", output: CandidateOutput{Key: "x", Type: "string", Source: "jsonld"}},
+		{name: "css incomplete", output: CandidateOutput{Key: "x", Type: "string", Source: "css", Selector: ".x"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			raw := &RawRecord{Record: baseRecord()}
+			raw.Record.CandidateOutputs = []CandidateOutput{test.output}
+			normalized, err := raw.Normalize()
+			if (err == nil) != test.valid {
+				t.Fatalf("valid=%v err=%v", test.valid, err)
+			}
+			if err == nil && test.output.Locator != nil {
+				normalized.CandidateOutputs[0].Locator.Name = "Changed"
+				if raw.Record.CandidateOutputs[0].Locator.Name != "Ready" {
+					t.Fatal("Normalize retained the caller's CandidateOutput.Locator pointer")
+				}
+			}
+		})
 	}
 }
 

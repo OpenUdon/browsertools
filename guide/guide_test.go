@@ -111,6 +111,34 @@ func TestAuthorPreservesExplicitNoOutputs(t *testing.T) {
 	}
 }
 
+func TestAuthorRequiresExplicitPortableDeclarationForUnboundHint(t *testing.T) {
+	records := validRecords()
+	records[0].CandidateOutputs[0] = evidence.CandidateOutput{Key: "headline", Type: "string", Selector: "h1"}
+	catalog, err := NewCatalog(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog.Outputs[0].Bound {
+		t.Fatal("unbound extraction hint was marked portable")
+	}
+	intent := validIntent()
+	if _, err := Author(catalog, intent, guideNow); err == nil || !strings.Contains(err.Error(), "unbound hint") {
+		t.Fatalf("expected direct hint selection rejection, got %v", err)
+	}
+	intent.Actions[0].OutputIDs = []string{}
+	intent.Actions[0].OutputDeclarations = []OutputDeclaration{{
+		HintID: "E001.O001", Source: profile.OutputJSONLD, Property: "headline",
+	}}
+	bundle, err := Author(catalog, intent, guideNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := bundle.Profile.Actions["lookup"].Outputs["headline"]
+	if output.Source != profile.OutputJSONLD || output.Property != "headline" {
+		t.Fatalf("explicit declaration was not preserved: %#v", output)
+	}
+}
+
 func TestAuthorRequiresAmbiguityDecision(t *testing.T) {
 	records := validRecords()
 	records[0].CandidateLocators[0].AmbiguityNote = "two buttons share the same name"

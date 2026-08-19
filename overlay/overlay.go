@@ -19,6 +19,8 @@ package overlay
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/OpenUdon/browsertools/evidence"
@@ -92,19 +94,78 @@ type Sidecar struct {
 // Verify checks lifecycle, operation mappings, bundle digests, evidence, and
 // current revalidation state before a sidecar is used for handoff.
 func (s Sidecar) Verify(prof *profile.Profile, records []evidence.Record, now time.Time) error {
+	if s.OverlayVersion != "1" {
+		return fmt.Errorf("overlay: version must be %q", "1")
+	}
+	if err := normalizedIdentifier("overlay id", s.OverlayID); err != nil {
+		return err
+	}
+	if err := normalizedReference("wrapper OpenAPI", s.WrapperOpenAPI); err != nil {
+		return err
+	}
+	if err := normalizedReference("browser profile", s.BrowserProfile); err != nil {
+		return err
+	}
+	if now.IsZero() {
+		return fmt.Errorf("overlay: verification time is required")
+	}
+	switch s.Lifecycle {
+	case LifecycleDraft, LifecycleReviewed, LifecycleExported, LifecycleStale:
+	default:
+		return fmt.Errorf("overlay: lifecycle %q is invalid", s.Lifecycle)
+	}
 	if s.Lifecycle != LifecycleReviewed && s.Lifecycle != LifecycleExported {
 		return fmt.Errorf("overlay: lifecycle %q is not promotable", s.Lifecycle)
 	}
 	if prof == nil {
 		return fmt.Errorf("overlay: profile is required")
 	}
+	if err := profile.ValidateTyped(prof); err != nil {
+		return fmt.Errorf("overlay: profile validation: %w", err)
+	}
+	if len(s.OperationMappings) == 0 {
+		return fmt.Errorf("overlay: at least one operation mapping is required")
+	}
 	for operationID, mapping := range s.OperationMappings {
+		if err := normalizedIdentifier("operation mapping key", operationID); err != nil {
+			return err
+		}
+		if err := normalizedIdentifier("OpenAPI operation id", mapping.OpenAPIOperationID); err != nil {
+			return err
+		}
+		if err := normalizedIdentifier("profile action name", mapping.ProfileActionName); err != nil {
+			return err
+		}
+		if mapping.ConfidenceNote != strings.TrimSpace(mapping.ConfidenceNote) {
+			return fmt.Errorf("overlay: mapping %q confidence note is not normalized", operationID)
+		}
 		if mapping.OpenAPIOperationID != operationID {
-			return fmt.Errorf("overlay: mapping key %q does not match openapiOperationId %q", operationID, mapping.OpenAPIOperationID)
+			return fmt.Errorf("overlay: mapping key %q does not match openAPIOperationId %q", operationID, mapping.OpenAPIOperationID)
 		}
 		if _, ok := prof.Actions[mapping.ProfileActionName]; !ok {
 			return fmt.Errorf("overlay: mapping %q references unknown profile action %q", operationID, mapping.ProfileActionName)
 		}
 	}
-	return review.Verify(&s.ReviewBundle, prof, records, now)
+	if err := review.VerifyValidated(&s.ReviewBundle, prof, records, now); err != nil {
+		return fmt.Errorf("overlay: embedded review binding: %w", err)
+	}
+	return nil
+}
+
+func normalizedIdentifier(label, value string) error {
+	if value == "" || value != strings.TrimSpace(value) || strings.ContainsAny(value, "\r\n\x00") {
+		return fmt.Errorf("overlay: %s must be a nonempty normalized value", label)
+	}
+	return nil
+}
+
+func normalizedReference(label, value string) error {
+	if err := normalizedIdentifier(label, value); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.User != nil || parsed.Fragment != "" {
+		return fmt.Errorf("overlay: %s must be a normalized URL or relative path", label)
+	}
+	return nil
 }

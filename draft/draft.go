@@ -101,15 +101,19 @@ func Build(records []evidence.Record, spec Spec) (*Result, error) {
 		if actionSpec.Outputs == nil {
 			outputs = candidateOutputs(actionName, records)
 		}
+		parameters, err := cloneSchema(actionSpec.Parameters)
+		if err != nil {
+			return nil, fmt.Errorf("draft: clone action %q parameters: %w", actionName, err)
+		}
 		action := profile.Action{
 			Description:        actionSpec.Description,
-			Parameters:         cloneSchema(actionSpec.Parameters),
+			Parameters:         parameters,
 			Sequence:           actionSpec.Sequence,
 			Outputs:            outputs,
 			SideEffects:        actionSpec.SideEffects,
 			ConfirmationPolicy: actionSpec.ConfirmationPolicy,
 		}
-		cloned, err := cloneAction(action)
+		cloned, err := profile.CloneAction(action)
 		if err != nil {
 			return nil, fmt.Errorf("draft: clone action %q: %w", actionName, err)
 		}
@@ -131,7 +135,10 @@ func Build(records []evidence.Record, spec Spec) (*Result, error) {
 		Decisions: append([]evidence.LocatorDecision(nil), spec.Decisions...),
 	}
 
-	checkedAt, _ := time.Parse(time.RFC3339, latest)
+	checkedAt, err := time.Parse(time.RFC3339, latest)
+	if err != nil {
+		return result, fmt.Errorf("draft: latest evidence time: %w", err)
+	}
 	revalidation, checkErr := revalidate.CheckAt(prof, records, result.Decisions, checkedAt)
 	if checkErr != nil {
 		return result, checkErr
@@ -165,7 +172,7 @@ func candidateOutputs(actionName string, records []evidence.Record) map[string]p
 			continue
 		}
 		for _, candidate := range rec.CandidateOutputs {
-			if candidate.Key == "" {
+			if candidate.Key == "" || candidate.Source == "" {
 				continue
 			}
 			if _, exists := outputs[candidate.Key]; exists {
@@ -221,14 +228,19 @@ func sortedKeys[V any](values map[string]V) []string {
 	return keys
 }
 
-func cloneSchema(schema profile.JSONSchema) profile.JSONSchema {
+func cloneSchema(schema profile.JSONSchema) (profile.JSONSchema, error) {
 	if schema == nil {
-		return nil
+		return nil, nil
 	}
-	data, _ := json.Marshal(schema)
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return nil, err
+	}
 	var result profile.JSONSchema
-	_ = json.Unmarshal(data, &result)
-	return result
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func cloneOutputs(outputs map[string]profile.Output) map[string]profile.Output {
@@ -240,16 +252,4 @@ func cloneOutputs(outputs map[string]profile.Output) map[string]profile.Output {
 		result[key] = value
 	}
 	return result
-}
-
-func cloneAction(action profile.Action) (profile.Action, error) {
-	data, err := json.Marshal(action)
-	if err != nil {
-		return profile.Action{}, err
-	}
-	var result profile.Action
-	if err := json.Unmarshal(data, &result); err != nil {
-		return profile.Action{}, err
-	}
-	return result, nil
 }

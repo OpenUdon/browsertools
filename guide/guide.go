@@ -20,6 +20,7 @@ import (
 
 	"github.com/OpenUdon/browsertools/draft"
 	"github.com/OpenUdon/browsertools/evidence"
+	"github.com/OpenUdon/browsertools/internal/secretwalk"
 	"github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/browsertools/review"
 	"github.com/OpenUdon/evidence/redact"
@@ -87,6 +88,7 @@ type OutputCandidate struct {
 	RecordID  string                   `json:"recordId"`
 	Output    evidence.CandidateOutput `json:"output"`
 	LocatorID string                   `json:"locatorId,omitempty"`
+	Bound     bool                     `json:"bound"`
 }
 
 // Intent is the complete set of explicit answers accepted from an operator.
@@ -106,9 +108,21 @@ type ActionIntent struct {
 	Parameters           []ParameterIntent          `json:"parameters"`
 	Sequence             []StepIntent               `json:"sequence"`
 	OutputIDs            []string                   `json:"outputIds"`
+	OutputDeclarations   []OutputDeclaration        `json:"outputDeclarations,omitempty"`
 	SideEffects          []profile.SideEffect       `json:"sideEffects"`
 	ConfirmationPolicy   profile.ConfirmationPolicy `json:"confirmationPolicy"`
 	AmbiguityResolutions []AmbiguityResolution      `json:"ambiguityResolutions"`
+}
+
+// OutputDeclaration binds one unbound extraction hint to an explicit portable
+// source. The hint supplies only key/type; all source semantics are authored.
+type OutputDeclaration struct {
+	HintID         string                 `json:"hintId"`
+	Source         profile.OutputSource   `json:"source"`
+	LocatorID      string                 `json:"locatorId,omitempty"`
+	Property       string                 `json:"property,omitempty"`
+	Selector       string                 `json:"selector,omitempty"`
+	FallbackReason profile.FallbackReason `json:"fallbackReason,omitempty"`
 }
 
 // ParameterIntent is the deliberately restricted scalar parameter shape used
@@ -184,7 +198,9 @@ func NewCatalog(records []evidence.Record) (*Catalog, error) {
 		}
 		canonical = append(canonical, normalized)
 	}
-	sortCanonical(canonical)
+	if err := sortCanonical(canonical); err != nil {
+		return nil, fmt.Errorf("guide: sort evidence: %w", err)
+	}
 	catalog := &Catalog{
 		recordByID:  make(map[string]evidence.Record, len(canonical)),
 		locatorByID: map[string]LocatorCandidate{}, outputByID: map[string]OutputCandidate{},
@@ -196,7 +212,11 @@ func NewCatalog(records []evidence.Record) (*Catalog, error) {
 			ID: recordID, Origin: record.Origin, ObservedAt: record.ObservedAt,
 			Tool: record.Provenance.Tool, SourceActionHint: record.ActionHint,
 		})
-		catalog.recordByID[recordID] = cloneRecord(record)
+		clonedRecord, err := cloneRecord(record)
+		if err != nil {
+			return nil, fmt.Errorf("guide: clone evidence record %q: %w", recordID, err)
+		}
+		catalog.recordByID[recordID] = clonedRecord
 		originSet[record.Origin] = struct{}{}
 
 		locators := append([]evidence.CandidateLocator(nil), record.CandidateLocators...)
@@ -205,7 +225,9 @@ func NewCatalog(records []evidence.Record) (*Catalog, error) {
 				locators = append(locators, *output.Locator)
 			}
 		}
-		sortCanonical(locators)
+		if err := sortCanonical(locators); err != nil {
+			return nil, fmt.Errorf("guide: sort locators for %q: %w", recordID, err)
+		}
 		if len(catalog.Locators)+len(locators) > maxCatalogLocators {
 			return nil, fmt.Errorf("guide: evidence exceeds %d locator candidates", maxCatalogLocators)
 		}
@@ -221,7 +243,9 @@ func NewCatalog(records []evidence.Record) (*Catalog, error) {
 			locatorIDs[locatorIdentity(locator)] = id
 		}
 		outputs := append([]evidence.CandidateOutput(nil), record.CandidateOutputs...)
-		sortCanonical(outputs)
+		if err := sortCanonical(outputs); err != nil {
+			return nil, fmt.Errorf("guide: sort outputs for %q: %w", recordID, err)
+		}
 		if len(catalog.Outputs)+len(outputs) > maxCatalogOutputs {
 			return nil, fmt.Errorf("guide: evidence exceeds %d output candidates", maxCatalogOutputs)
 		}
@@ -234,7 +258,7 @@ func NewCatalog(records []evidence.Record) (*Catalog, error) {
 				return nil, fmt.Errorf("guide: evidence record %q contains a non-portable CSS output candidate", recordID)
 			}
 			id := fmt.Sprintf("%s.O%03d", recordID, outputIndex+1)
-			candidate := OutputCandidate{ID: id, RecordID: recordID, Output: output}
+			candidate := OutputCandidate{ID: id, RecordID: recordID, Output: output, Bound: output.Source != ""}
 			if output.Locator != nil {
 				candidate.LocatorID = locatorIDs[locatorIdentity(*output.Locator)]
 			}
@@ -295,7 +319,7 @@ func Author(catalog *Catalog, intent Intent, assessedAt time.Time) (*Bundle, err
 		for _, record := range records {
 			candidates += len(record.CandidateLocators) + len(record.CandidateOutputs)
 		}
-		matchingWork += candidates * (len(action.Sequence) + len(action.OutputIDs) + 1)
+		matchingWork += candidates * (len(action.Sequence) + len(action.OutputIDs) + len(action.OutputDeclarations) + 1)
 		if matchingWork > maxMatchingWork {
 			return nil, fmt.Errorf("guide: selected evidence and declarations exceed bounded matching work")
 		}
@@ -314,7 +338,10 @@ func Author(catalog *Catalog, intent Intent, assessedAt time.Time) (*Bundle, err
 		if profile.ObservationKind(record.ObservationKind) != spec.ObservationKind {
 			return nil, fmt.Errorf("guide: evidence[%d] observationKind %q does not match the explicit profile observationKind %q", index, record.ObservationKind, spec.ObservationKind)
 		}
-		observedAt, _ := time.Parse(time.RFC3339, record.ObservedAt)
+		observedAt, err := time.Parse(time.RFC3339, record.ObservedAt)
+		if err != nil {
+			return nil, fmt.Errorf("guide: evidence[%d] observedAt: %w", index, err)
+		}
 		if observedAt.After(assessedAt) {
 			return nil, fmt.Errorf("guide: evidence[%d] is from the future relative to assessment time", index)
 		}
@@ -497,6 +524,9 @@ func buildAction(catalog *Catalog, action ActionIntent, origins profile.Origins)
 		if _, selected := selectedSet[candidate.RecordID]; !selected {
 			return nil, draft.ActionSpec{}, nil, fmt.Errorf("output %q is outside selected evidence", id)
 		}
+		if !candidate.Bound {
+			return nil, draft.ActionSpec{}, nil, fmt.Errorf("output %q is an unbound hint; use an explicit portable output declaration", id)
+		}
 		if redact.SensitiveKey(strings.ToLower(candidate.Output.Key)) ||
 			(candidate.Output.Property != "" && redact.SensitiveKey(strings.ToLower(candidate.Output.Property))) {
 			return nil, draft.ActionSpec{}, nil, fmt.Errorf("output %q is credential-shaped", id)
@@ -512,6 +542,58 @@ func buildAction(catalog *Catalog, action ActionIntent, origins profile.Origins)
 		if candidate.LocatorID != "" {
 			usedLocators[candidate.LocatorID] = catalog.locatorByID[candidate.LocatorID]
 		}
+	}
+	declarationHints := map[string]struct{}{}
+	for index, declaration := range action.OutputDeclarations {
+		hintID := strings.TrimSpace(declaration.HintID)
+		if _, duplicate := declarationHints[hintID]; duplicate {
+			return nil, draft.ActionSpec{}, nil, fmt.Errorf("output declaration hint %q is duplicated", hintID)
+		}
+		declarationHints[hintID] = struct{}{}
+		candidate, ok := catalog.outputByID[hintID]
+		if !ok || candidate.Bound {
+			return nil, draft.ActionSpec{}, nil, fmt.Errorf("output declaration[%d] must reference an unbound output hint", index)
+		}
+		if _, selected := selectedSet[candidate.RecordID]; !selected {
+			return nil, draft.ActionSpec{}, nil, fmt.Errorf("output declaration hint %q is outside selected evidence", hintID)
+		}
+		output := profile.Output{Type: profile.OutputType(candidate.Output.Type), Source: declaration.Source}
+		switch declaration.Source {
+		case profile.OutputA11y:
+			locatorCandidate, ok := catalog.locatorByID[strings.TrimSpace(declaration.LocatorID)]
+			if !ok {
+				return nil, draft.ActionSpec{}, nil, fmt.Errorf("output declaration[%d] requires a known accessibility locator", index)
+			}
+			if _, selected := selectedSet[locatorCandidate.RecordID]; !selected {
+				return nil, draft.ActionSpec{}, nil, fmt.Errorf("output declaration locator %q is outside selected evidence", declaration.LocatorID)
+			}
+			locator := profileLocator(locatorCandidate.Locator)
+			output.Locator = &locator
+			usedLocators[locatorCandidate.ID] = locatorCandidate
+		case profile.OutputJSONLD, profile.OutputMicrodata:
+			output.Property = strings.TrimSpace(declaration.Property)
+			if output.Property == "" || redact.SensitiveKey(strings.ToLower(output.Property)) {
+				return nil, draft.ActionSpec{}, nil, fmt.Errorf("output declaration[%d] requires property", index)
+			}
+			if err := rejectSecretString("output declaration property", output.Property); err != nil {
+				return nil, draft.ActionSpec{}, nil, err
+			}
+		case profile.OutputCSS:
+			output.Selector = strings.TrimSpace(declaration.Selector)
+			output.FallbackReason = declaration.FallbackReason
+			if !portableCSS(output.Selector) || !slices.Contains([]profile.FallbackReason{
+				profile.FallbackNoA11yRegion, profile.FallbackNoStructuredData, profile.FallbackAmbiguousA11y, profile.FallbackOther,
+			}, output.FallbackReason) {
+				return nil, draft.ActionSpec{}, nil, fmt.Errorf("output declaration[%d] requires portable CSS and a supported fallback reason", index)
+			}
+			output.Validation = profile.JSONSchema{"type": candidate.Output.Type}
+		default:
+			return nil, draft.ActionSpec{}, nil, fmt.Errorf("output declaration[%d] has unsupported source %q", index, declaration.Source)
+		}
+		if previous, duplicate := outputs[candidate.Output.Key]; duplicate && !reflect.DeepEqual(previous, output) {
+			return nil, draft.ActionSpec{}, nil, fmt.Errorf("selected outputs conflict for key %q", candidate.Output.Key)
+		}
+		outputs[candidate.Output.Key] = output
 	}
 
 	description := strings.TrimSpace(action.Description)
@@ -802,7 +884,7 @@ func normalizeSideEffects(values []profile.SideEffect) ([]profile.SideEffect, er
 }
 
 func hasMutation(values []profile.SideEffect) bool {
-	return len(values) != 1 || values[0] != profile.SideEffectReadOnly
+	return profile.HasWriteSideEffectList(values)
 }
 
 func uniqueSorted(values []string, label string) ([]string, error) {
@@ -849,15 +931,25 @@ func withoutAmbiguity(value evidence.CandidateLocator) evidence.CandidateLocator
 }
 
 func locatorIdentity(value evidence.CandidateLocator) string {
-	data, _ := json.Marshal([]string{value.Role, value.Name, value.Text, value.Value})
-	return string(data)
+	values := []string{value.Role, value.Name, value.Text, value.Value}
+	var result strings.Builder
+	for _, item := range values {
+		fmt.Fprintf(&result, "%d:", len(item))
+		result.WriteString(item)
+	}
+	return result.String()
 }
 
-func cloneRecord(value evidence.Record) evidence.Record {
-	data, _ := json.Marshal(value)
+func cloneRecord(value evidence.Record) (evidence.Record, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return evidence.Record{}, err
+	}
 	var cloned evidence.Record
-	_ = json.Unmarshal(data, &cloned)
-	return cloned
+	if err := json.Unmarshal(data, &cloned); err != nil {
+		return evidence.Record{}, err
+	}
+	return cloned, nil
 }
 
 func rejectSecretString(field, value string) error {
@@ -945,46 +1037,30 @@ func rejectSecretLike(value any) error {
 	if err := decoder.Decode(&document); err != nil {
 		return err
 	}
-	var walk func(any) bool
-	walk = func(current any) bool {
-		switch typed := current.(type) {
-		case string:
-			return redact.String(typed) != typed
-		case []any:
-			for _, item := range typed {
-				if walk(item) {
-					return true
-				}
-			}
-		case map[string]any:
-			for _, item := range typed {
-				if walk(item) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	if walk(document) {
+	if secretwalk.Contains(document, secretwalk.Config{}) {
 		return fmt.Errorf("contains a secret-shaped value")
 	}
 	return nil
 }
 
-func sortCanonical[T any](values []T) {
+func sortCanonical[T any](values []T) error {
 	type decorated struct {
 		value T
 		key   []byte
 	}
 	items := make([]decorated, len(values))
 	for index, value := range values {
-		key, _ := json.Marshal(value)
+		key, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
 		items[index] = decorated{value: value, key: key}
 	}
 	sort.Slice(items, func(i, j int) bool { return bytes.Compare(items[i].key, items[j].key) < 0 })
 	for index := range items {
 		values[index] = items[index].value
 	}
+	return nil
 }
 
 func portableCSS(selector string) bool {
