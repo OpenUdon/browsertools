@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -146,6 +147,33 @@ func TestClientNetworkPolicyUnsafeHostAndHTTPSOnly(t *testing.T) {
 	client.AllowUnsafeHosts = true
 	if _, err := client.Search(context.Background(), SearchOptions{Location: strings.Replace(server.URL, "https://", "http://", 1), At: registryTime}); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Fatalf("expected HTTPS rejection, got %v", err)
+	}
+}
+
+func TestUnsafeIPRejectsCGNATBoundariesAndMappedAddresses(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		value  string
+		unsafe bool
+	}{
+		{name: "CGNAT lower boundary", value: "100.64.0.0", unsafe: true},
+		{name: "CGNAT upper boundary", value: "100.127.255.255", unsafe: true},
+		{name: "below CGNAT", value: "100.63.255.255", unsafe: false},
+		{name: "above CGNAT", value: "100.128.0.0", unsafe: false},
+		{name: "IPv4-mapped CGNAT", value: "::ffff:100.64.0.1", unsafe: true},
+		{name: "public IPv4", value: "8.8.8.8", unsafe: false},
+		{name: "private IPv4", value: "10.0.0.1", unsafe: true},
+		{name: "private IPv6", value: "fd00::1", unsafe: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := net.ParseIP(test.value)
+			if value == nil {
+				t.Fatalf("could not parse test IP %q", test.value)
+			}
+			if got := unsafeIP(value); got != test.unsafe {
+				t.Fatalf("unsafeIP(%q)=%v, want %v", test.value, got, test.unsafe)
+			}
+		})
 	}
 }
 

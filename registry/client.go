@@ -457,6 +457,9 @@ func (client *Client) rejectHost(ctx context.Context, host string) error {
 }
 
 func unsafeIP(value net.IP) bool {
+	if ipv4 := value.To4(); ipv4 != nil && ipv4[0] == 100 && ipv4[1]&0xc0 == 0x40 {
+		return true
+	}
 	return value.IsLoopback() || value.IsPrivate() || value.IsLinkLocalUnicast() || value.IsLinkLocalMulticast() || value.IsUnspecified() || value.IsMulticast()
 }
 
