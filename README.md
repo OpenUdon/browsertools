@@ -39,6 +39,11 @@ up to 16 final accessibility outputs produce one private
 credential, page value, cookie, or browser state. See [Authenticated
 goal-directed browser authoring](docs/authenticated-goal-authoring.md).
 
+Page-controlled frame names cross the same canonical reduction boundary as
+candidate labels. Exact backend-reported MFA subsets are preserved, and the
+finite total timeout charges browser work rather than human credential/MFA
+wait time.
+
 ## Quick Start
 
 ```

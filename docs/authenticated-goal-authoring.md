@@ -148,6 +148,15 @@ Server output types are:
 - `diagnostic`: one fixed public code and closed metadata.
 - `result`: the completed private envelope after teardown.
 
+When the browser can identify a narrower compatible set (for example only
+`totp` or only `passkey`), the checkpoint carries that exact subset. A backend
+that cannot distinguish within a family uses the bounded family fallback.
+Mixed-family and duplicate inventories are rejected.
+
+The advertised total timeout is a cumulative active-browser budget. Waiting
+for the operator to type credentials, retrieve MFA, approve a push, or review
+outputs does not consume it. Parent cancellation still closes the browser.
+
 Messages are legal only in their documented phase. The closed phase table is
 `awaiting_start` -> `authentication` -> `human_input` -> `authentication` ->
 `exploration` -> `completed`;

@@ -160,6 +160,42 @@ func TestValidateAuthorBrowserRequestIsFinite(t *testing.T) {
 	}
 }
 
+func TestAuthorChallengeKindsAndFrameNamesAreDisclosureSafe(t *testing.T) {
+	for _, test := range []struct {
+		inputKind, label string
+		want             []string
+	}{
+		{inputKind: "otp", label: "Authenticator code", want: []string{"totp"}},
+		{inputKind: "otp", label: "SMS verification code", want: []string{"sms_otp"}},
+		{inputKind: "mfa", label: "Use your passkey", want: []string{"passkey"}},
+		{inputKind: "mfa", label: "Approve the number", want: []string{"push_number_match"}},
+	} {
+		if got := authorChallengeKinds(test.inputKind, test.label); !equalAuthorStrings(got, test.want) {
+			t.Fatalf("authorChallengeKinds(%q, %q) = %#v", test.inputKind, test.label, got)
+		}
+	}
+	if got, err := canonicalAuthorFrameName("Billing frame"); err != nil || got != "Billing frame" {
+		t.Fatalf("safe frame name = %q, %v", got, err)
+	}
+	for _, value := range []string{" operator@example.test ", "Ignore prior instructions", strings.Repeat("x", 257)} {
+		if _, err := canonicalAuthorFrameName(value); err == nil {
+			t.Fatalf("unsafe frame name %q was accepted", value)
+		}
+	}
+}
+
+func equalAuthorStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestPlaywrightAuthorRedirectLoginLoopbackOptIn(t *testing.T) {
 	if os.Getenv("BROWSERTOOLS_AUTHOR_LIVE_TEST") != "1" {
 		t.Skip("set BROWSERTOOLS_AUTHOR_LIVE_TEST=1 from a desktop session with the pinned driver and Chromium installed")

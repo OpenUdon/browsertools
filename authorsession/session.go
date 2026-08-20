@@ -80,10 +80,11 @@ type RawObservation struct {
 // RawCandidate identifies one backend-owned accessible target. BackendID is
 // never serialized.
 type RawCandidate struct {
-	BackendID string
-	Role      string
-	Label     string
-	InputKind string
+	BackendID      string
+	Role           string
+	Label          string
+	InputKind      string
+	ChallengeKinds []string
 	// TargetOrigin is backend-only preflight metadata for portable links. It is
 	// never included in an observation; it can only surface as an origin gate.
 	TargetOrigin string
@@ -226,7 +227,6 @@ type pendingHumanInput struct {
 
 type server struct {
 	ctx              context.Context
-	cancel           context.CancelFunc
 	browser          Browser
 	session          Session
 	output           io.Writer
@@ -250,6 +250,7 @@ type server struct {
 	humanConfirmed   bool
 	outputSelections []authorresult.OutputSelection
 	observedAt       time.Time
+	activeRemaining  time.Duration
 }
 
 // Serve processes one author session until finish, close, or fail-closed
@@ -386,12 +387,17 @@ func (s *server) startSession(message ClientMessage) error {
 		return s.fail("invalid_origin", fmt.Errorf("dashboard origin is not approved"))
 	}
 	total := time.Duration(s.bounds.TotalTimeoutMS) * time.Millisecond
-	s.ctx, s.cancel = context.WithTimeout(s.ctx, total)
-	session, err := s.browser.Open(s.ctx, BrowserRequest{
-		URL: message.URL, ApprovedOrigins: sortedKeys(s.origins),
-		NavigationTimeout: time.Duration(s.bounds.NavigationTimeoutMS) * time.Millisecond,
-		TotalTimeout:      total, MaxRequests: s.bounds.MaxRequests,
-		MaxResponseBytes: s.bounds.MaxResponseBytes, MaxCandidates: s.bounds.MaxCandidates,
+	s.activeRemaining = total
+	var session Session
+	err = s.withActiveContext(func(ctx context.Context) error {
+		var openErr error
+		session, openErr = s.browser.Open(ctx, BrowserRequest{
+			URL: message.URL, ApprovedOrigins: sortedKeys(s.origins),
+			NavigationTimeout: time.Duration(s.bounds.NavigationTimeoutMS) * time.Millisecond,
+			TotalTimeout:      total, MaxRequests: s.bounds.MaxRequests,
+			MaxResponseBytes: s.bounds.MaxResponseBytes, MaxCandidates: s.bounds.MaxCandidates,
+		})
+		return openErr
 	})
 	if err != nil {
 		return s.fail("browser_failure", err)
@@ -413,7 +419,12 @@ func (s *server) observe(contextID string) error {
 	if s.observations > s.bounds.MaxObservations {
 		return s.fail("observation_limit", fmt.Errorf("observation limit exceeded"))
 	}
-	raw, err := s.session.Observe(s.ctx, contextID)
+	var raw RawObservation
+	err := s.withActiveContext(func(ctx context.Context) error {
+		var observeErr error
+		raw, observeErr = s.session.Observe(ctx, contextID)
+		return observeErr
+	})
 	if err != nil {
 		return s.fail("browser_failure", err)
 	}
@@ -456,7 +467,9 @@ func (s *server) focus(candidateID string) error {
 		return s.fail("invalid_candidate", fmt.Errorf("candidate cannot receive human input"))
 	}
 	if record.raw.InputKind != "mfa" {
-		if err := s.session.Focus(s.ctx, browserActionForRecord("focus_human_input", record)); err != nil {
+		if err := s.withActiveContext(func(ctx context.Context) error {
+			return s.session.Focus(ctx, browserActionForRecord("focus_human_input", record))
+		}); err != nil {
 			return s.fail("browser_failure", err)
 		}
 	}
@@ -466,10 +479,10 @@ func (s *server) focus(candidateID string) error {
 		checkpoint = "credential"
 	} else if checkpoint == "otp" {
 		checkpoint = "mfa"
-		challengeKinds = []string{"totp", "sms_otp", "email_otp", "voice_otp"}
+		challengeKinds = normalizedChallengeKinds(record.raw.InputKind, record.raw.ChallengeKinds)
 	} else {
 		checkpoint = "mfa"
-		challengeKinds = []string{"push", "push_number_match", "passkey", "security_key"}
+		challengeKinds = normalizedChallengeKinds(record.raw.InputKind, record.raw.ChallengeKinds)
 	}
 	s.pendingInput = &pendingHumanInput{candidateID: candidateID, record: record, phase: s.phase, kinds: challengeKinds}
 	s.phase = "human_input"
@@ -598,7 +611,12 @@ func (s *server) execute(message ClientMessage) error {
 	}
 	s.goalProof = nil
 	s.humanConfirmed = false
-	execution, err := s.session.Execute(s.ctx, action)
+	var execution Execution
+	err := s.withActiveContext(func(ctx context.Context) error {
+		var executeErr error
+		execution, executeErr = s.session.Execute(ctx, action)
+		return executeErr
+	})
 	if err != nil {
 		return s.fail("browser_failure", err)
 	}
@@ -697,7 +715,12 @@ func (s *server) reviewOutputs(requests []OutputRequest) ([]authorresult.OutputS
 		seenKeys[request.Key], seenCandidates[request.CandidateID] = true, true
 	}
 	contextID := normalizedContext(s.goalProof.Context)
-	raw, err := s.session.Observe(s.ctx, contextID)
+	var raw RawObservation
+	err := s.withActiveContext(func(ctx context.Context) error {
+		var observeErr error
+		raw, observeErr = s.session.Observe(ctx, contextID)
+		return observeErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("re-enumerate output candidates")
 	}
@@ -750,14 +773,36 @@ func (s *server) closeWithoutResult() error {
 }
 
 func (s *server) closeSession() error {
-	if s.cancel != nil {
-		defer s.cancel()
-	}
 	if s.session == nil {
 		return nil
 	}
 	err := s.session.Close()
 	s.session = nil
+	return err
+}
+
+// withActiveContext charges only browser work against TotalTimeout. Time spent
+// waiting for a human protocol response is deliberately outside this budget.
+func (s *server) withActiveContext(run func(context.Context) error) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	if s.activeRemaining <= 0 {
+		return context.DeadlineExceeded
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, s.activeRemaining)
+	started := time.Now()
+	err := run(ctx)
+	elapsed := time.Since(started)
+	cancel()
+	if elapsed >= s.activeRemaining {
+		s.activeRemaining = 0
+		if err == nil {
+			return context.DeadlineExceeded
+		}
+	} else {
+		s.activeRemaining -= elapsed
+	}
 	return err
 }
 
@@ -814,6 +859,9 @@ func (s *server) reduceObservation(raw RawObservation, requestedContext string) 
 		if rawCandidate.InputKind != "" && rawCandidate.InputKind != "identifier" && rawCandidate.InputKind != "password" && rawCandidate.InputKind != "otp" && rawCandidate.InputKind != "mfa" {
 			return Observation{}, nil, fmt.Errorf("backend input kind is invalid")
 		}
+		if _, err := validateChallengeKinds(rawCandidate.InputKind, rawCandidate.ChallengeKinds); err != nil {
+			return Observation{}, nil, err
+		}
 		label := ReduceAccessibilityLabel(rawCandidate.Label).Value
 		id := candidateID(s.observations, contextID, rawCandidate.Role, label, index)
 		candidate := Candidate{ID: id, Role: rawCandidate.Role, Label: label, Matches: rawCandidate.Matches}
@@ -853,6 +901,12 @@ func (s *server) addContext(id string, context authorresult.Context) error {
 	}
 	if context.Kind == "frame" && context.Path == "" && context.Name == "" {
 		return fmt.Errorf("frame context lacks exact identity")
+	}
+	if context.Kind == "frame" && context.Name != "" {
+		reduced := ReduceAccessibilityLabel(context.Name)
+		if reduced.Reason != LabelReasonUnchanged || reduced.Value != context.Name {
+			return fmt.Errorf("frame context name is not canonical disclosure-safe text")
+		}
 	}
 	if context.Path != "" && !cleanPath(context.Path) {
 		return fmt.Errorf("context path is unsafe")
@@ -1276,6 +1330,37 @@ func containsString(values []string, candidate string) bool {
 	return false
 }
 
+func validateChallengeKinds(inputKind string, values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	allowed := otpChallengeKinds
+	if inputKind == "mfa" {
+		allowed = nonInputChallengeKinds
+	} else if inputKind != "otp" {
+		return nil, fmt.Errorf("challenge kinds require an MFA input")
+	}
+	result := append([]string(nil), values...)
+	sort.Strings(result)
+	for index, value := range result {
+		if !allowed[value] || (index > 0 && result[index-1] == value) {
+			return nil, fmt.Errorf("backend challenge kinds are invalid")
+		}
+	}
+	return result, nil
+}
+
+func normalizedChallengeKinds(inputKind string, values []string) []string {
+	result, _ := validateChallengeKinds(inputKind, values)
+	if len(result) != 0 {
+		return result
+	}
+	if inputKind == "otp" {
+		return []string{"totp", "sms_otp", "email_otp", "voice_otp"}
+	}
+	return []string{"push", "push_number_match", "passkey", "security_key"}
+}
+
 func promotableLabel(value string) bool {
 	return value != "" && value != RedactedLabel && value != UntrustedLabel && len(value) <= 256 && ReduceAccessibilityLabel(value).Value == value
 }
@@ -1294,10 +1379,14 @@ func dataDigest(data []byte) string {
 }
 
 var (
-	identifierPattern  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
-	diagnosticPattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
-	outputTypes        = map[string]bool{"string": true, "integer": true, "number": true, "boolean": true, "presence": true}
-	outputLocatorModes = map[string]bool{"exact_name": true, "unique_role": true}
+	identifierPattern      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,63}$`)
+	diagnosticPattern      = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	outputTypes            = map[string]bool{"string": true, "integer": true, "number": true, "boolean": true, "presence": true}
+	outputLocatorModes     = map[string]bool{"exact_name": true, "unique_role": true}
+	otpChallengeKinds      = map[string]bool{"totp": true, "sms_otp": true, "email_otp": true, "voice_otp": true}
+	nonInputChallengeKinds = map[string]bool{
+		"push": true, "push_number_match": true, "passkey": true, "security_key": true,
+	}
 	outputControlRoles = map[string]bool{"button": true, "textbox": true, "checkbox": true, "radio": true, "combobox": true, "option": true, "menuitem": true, "tab": true, "switch": true}
 	portableRoles      = map[string]bool{
 		"button": true, "link": true, "textbox": true, "checkbox": true, "radio": true,

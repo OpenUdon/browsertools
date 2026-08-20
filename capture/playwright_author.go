@@ -203,8 +203,9 @@ func (s *playwrightAuthorSession) Observe(ctx context.Context, contextID string)
 			return authorsession.RawObservation{}, fmt.Errorf("CAPTCHA is unsupported")
 		}
 		inputKind := authorInputKind(locator, role, label)
+		challengeKinds := authorChallengeKinds(inputKind, label)
 		targetOrigin := authorTargetOrigin(locator, targetURL)
-		key := role + "\x00" + label + "\x00" + inputKind
+		key := role + "\x00" + label + "\x00" + inputKind + "\x00" + strings.Join(challengeKinds, ",")
 		if existing := groups[key]; existing != nil {
 			existing.candidate.Matches++
 			if existing.candidate.TargetOrigin != targetOrigin {
@@ -212,7 +213,7 @@ func (s *playwrightAuthorSession) Observe(ctx context.Context, contextID string)
 			}
 			continue
 		}
-		groups[key] = &group{candidate: authorsession.RawCandidate{Role: role, Label: label, InputKind: inputKind, TargetOrigin: targetOrigin, Matches: 1}, locator: locator}
+		groups[key] = &group{candidate: authorsession.RawCandidate{Role: role, Label: label, InputKind: inputKind, ChallengeKinds: challengeKinds, TargetOrigin: targetOrigin, Matches: 1}, locator: locator}
 	}
 	keys := make([]string, 0, len(groups))
 	for key := range groups {
@@ -589,8 +590,8 @@ func (s *playwrightAuthorSession) discoverFrames() error {
 			return fmt.Errorf("frame context parent changed")
 		}
 		origin, path, err := authorURLFacts(frame.URL(), s.guard.allowedOrigin)
-		name := strings.TrimSpace(frame.Name())
-		if err != nil || origin != stored.Origin || path != stored.Path || name != stored.Name {
+		name, nameErr := canonicalAuthorFrameName(frame.Name())
+		if err != nil || nameErr != nil || origin != stored.Origin || path != stored.Path || name != stored.Name {
 			return fmt.Errorf("frame context identity changed")
 		}
 		identity := parentID + "\x00" + origin + "\x00" + path + "\x00" + name
@@ -623,7 +624,10 @@ func (s *playwrightAuthorSession) discoverFrames() error {
 				if err != nil {
 					return err
 				}
-				name := strings.TrimSpace(frame.Name())
+				name, err := canonicalAuthorFrameName(frame.Name())
+				if err != nil {
+					return err
+				}
 				identity := parentID + "\x00" + origin + "\x00" + path + "\x00" + name
 				if _, duplicate := seenIdentity[identity]; duplicate {
 					return fmt.Errorf("frame identity is ambiguous")
@@ -943,6 +947,47 @@ func authorInputKind(locator playwright.Locator, role, label string) string {
 	default:
 		return ""
 	}
+}
+
+func authorChallengeKinds(inputKind, label string) []string {
+	lower := strings.ToLower(label)
+	if inputKind == "otp" {
+		switch {
+		case strings.Contains(lower, "authenticator") || strings.Contains(lower, "totp"):
+			return []string{"totp"}
+		case strings.Contains(lower, "text") || strings.Contains(lower, "sms"):
+			return []string{"sms_otp"}
+		case strings.Contains(lower, "email"):
+			return []string{"email_otp"}
+		case strings.Contains(lower, "voice") || strings.Contains(lower, "call"):
+			return []string{"voice_otp"}
+		}
+	}
+	if inputKind == "mfa" {
+		switch {
+		case strings.Contains(lower, "number"):
+			return []string{"push_number_match"}
+		case strings.Contains(lower, "passkey"):
+			return []string{"passkey"}
+		case strings.Contains(lower, "security key"):
+			return []string{"security_key"}
+		case strings.Contains(lower, "push") || strings.Contains(lower, "phone"):
+			return []string{"push"}
+		}
+	}
+	return nil
+}
+
+func canonicalAuthorFrameName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", nil
+	}
+	reduced := authorsession.ReduceAccessibilityLabel(name)
+	if reduced.Reason != authorsession.LabelReasonUnchanged || reduced.Value != name {
+		return "", fmt.Errorf("frame name is not canonical disclosure-safe text")
+	}
+	return name, nil
 }
 
 func authorTargetOrigin(locator playwright.Locator, currentURL string) string {
