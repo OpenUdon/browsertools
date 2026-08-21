@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/OpenUdon/browsertools/adapter"
@@ -65,8 +67,14 @@ func runAuthorSessionChromium(args []string, stdin io.Reader, stdout, stderr io.
 		fmt.Fprintln(stderr, "author-session chromium: --private-root and browser dependencies are required")
 		return exitUsageOrIO
 	}
-	if err := authorworker.Run(context.Background(), authorworker.Options{
-		PrivateRoot: *privateRoot, DriverDirectory: *driverDirectory, Stdin: stdin, Stdout: stdout,
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	input, ok := stdin.(io.ReadCloser)
+	if !ok {
+		input = io.NopCloser(stdin)
+	}
+	if err := authorworker.Run(ctx, authorworker.Options{
+		PrivateRoot: *privateRoot, DriverDirectory: *driverDirectory, Stdin: input, Stdout: stdout,
 	}); err != nil {
 		fmt.Fprintln(stderr, "author-session chromium: session failed closed")
 		return exitRejected

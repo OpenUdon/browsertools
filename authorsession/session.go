@@ -36,6 +36,7 @@ const (
 	DefaultMaxCandidates     = 128
 	DefaultMaxOutputs        = 16
 	AbsoluteMaxOutputs       = 32
+	maxApprovalID            = 9999
 	maxSelectedOutputs       = 16
 	maxProtocolLineBytes     = 64 << 10
 )
@@ -295,7 +296,13 @@ func Serve(ctx context.Context, input io.Reader, output io.Writer, browser Brows
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return s.cancel(ctxErr)
+		}
 		return s.fail("protocol_limit", err)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return s.cancel(ctxErr)
 	}
 	if s.closed {
 		return nil
@@ -562,6 +569,9 @@ func (s *server) requestExecute(message ClientMessage) error {
 }
 
 func (s *server) requireApproval(kind string, message ClientMessage, origin string) error {
+	if s.approvalCounter >= maxApprovalID {
+		return s.fail("approval_limit", fmt.Errorf("approval limit exceeded"))
+	}
 	s.approvalCounter++
 	id := fmt.Sprintf("approval-%04d", s.approvalCounter)
 	s.pending = &pendingApproval{id: id, kind: kind, message: message, origin: origin}
@@ -767,9 +777,16 @@ func (s *server) closeWithoutResult() error {
 	err := s.closeSession()
 	s.closed = true
 	if err != nil {
-		return s.write(ServerMessage{Type: "diagnostic", Diagnostic: &Diagnostic{Code: "teardown_failure"}})
+		return errors.Join(err, s.write(ServerMessage{Type: "diagnostic", Diagnostic: &Diagnostic{Code: "teardown_failure"}}))
 	}
 	return s.write(ServerMessage{Type: "state", Phase: "closed"})
+}
+
+func (s *server) cancel(cause error) error {
+	closeErr := s.closeSession()
+	s.closed = true
+	writeErr := s.write(ServerMessage{Type: "diagnostic", Diagnostic: &Diagnostic{Code: "canceled"}})
+	return errors.Join(cause, closeErr, writeErr)
 }
 
 func (s *server) closeSession() error {

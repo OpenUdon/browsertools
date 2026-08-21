@@ -8,6 +8,11 @@ import (
 	"github.com/OpenUdon/evidence/redact"
 )
 
+// AccessibilityLabelDisclosure is operator-facing guidance for every consumer
+// that displays reduced observations or reviewed authoring traces. Reduction is
+// a useful heuristic, not data loss prevention.
+const AccessibilityLabelDisclosure = "Accessibility-label reduction is heuristic, not data loss prevention. Ordinary names, identifiers, and order numbers may appear in reduced observations and reviewed traces. Review the page and trace before retaining or sharing them."
+
 // LabelReductionReason is the closed explanation for an accessibility-label
 // reduction. Consumers can safely report the reason without retaining the raw
 // page-derived label.

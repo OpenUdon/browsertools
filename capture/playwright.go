@@ -30,6 +30,9 @@ func (r *playwrightRuntime) Open(ctx context.Context, engine Engine) (Session, e
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if _, err := PreflightPlaywrightDriver(r.driverDirectory); err != nil {
+		return nil, err
+	}
 	options := &playwright.RunOptions{
 		DriverDirectory: r.driverDirectory, SkipInstallBrowsers: true, Verbose: false,
 		Stdout: io.Discard, Stderr: io.Discard,

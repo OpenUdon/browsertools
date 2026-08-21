@@ -51,3 +51,11 @@ func TestReduceAccessibilityLabelMarkersAreIdempotent(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessibilityLabelDisclosureStatesHeuristicBoundary(t *testing.T) {
+	for _, phrase := range []string{"heuristic", "not data loss prevention", "Ordinary names", "identifiers", "order numbers", "reviewed traces"} {
+		if !strings.Contains(AccessibilityLabelDisclosure, phrase) {
+			t.Fatalf("disclosure is missing %q: %s", phrase, AccessibilityLabelDisclosure)
+		}
+	}
+}

@@ -207,6 +207,12 @@ headings, and safe hostnames remain stable under repeated reduction. Its closed
 reason vocabulary is `unchanged`, `normalized`, `too_long`, `sensitive`, and
 `prompt_injection`; rejected raw values never belong in diagnostics.
 
+This reduction is heuristic, not data loss prevention. Ordinary names,
+identifiers, order numbers, and other page-controlled labels can remain in an
+observation and its reviewed trace. The operator disclosure must say so before
+reduced observations are shown, and operators must review them before
+retention or sharing; a successful reduction is not a secret-review result.
+
 Browsertools applies that reducer before candidate IDs are derived. An
 independent consumer verifies that reducing each incoming label again produces
 the exact incoming value before it displays or discloses an observation. This

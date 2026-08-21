@@ -73,6 +73,13 @@ typed Playwright/Chromium doctor through the same isolated re-execution with a
 30-second ceiling. Only the worker process initializes Playwright; the iCoT
 engine and HTTP server do not.
 
+Browsertools exposes a separate UI-safe doctor shape for that response. It
+omits `BrowserExecutable` and converts every backend/path-bearing failure to
+fixed text before a UI stores, hashes, or serializes it. The standalone CLI
+retains the full local doctor report for operator diagnostics. The UI also
+displays `authorsession.AccessibilityLabelDisclosure`: reduction is heuristic,
+not DLP, so ordinary names, identifiers, and order numbers may remain visible.
+
 The explicit live iCoT/Browsertools design for human authentication followed
 by same-context goal exploration is specified in
 [Authenticated goal-directed browser authoring](authenticated-goal-authoring.md).

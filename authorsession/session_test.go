@@ -102,6 +102,25 @@ func TestServeAuthenticatedGoalHappyPathIsDeterministicAndPrivate(t *testing.T) 
 	}
 }
 
+func TestCloseNegotiationReturnsTeardownFailure(t *testing.T) {
+	session := &fakeSession{closeErr: errors.New("synthetic teardown failure")}
+	input := protocolLines(startMessage(), ClientMessage{Protocol: Protocol, Type: "close"})
+	var output bytes.Buffer
+	err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+	if err == nil || !strings.Contains(err.Error(), "synthetic teardown failure") || !strings.Contains(output.String(), `"code":"teardown_failure"`) {
+		t.Fatalf("error=%v output=%q", err, output.String())
+	}
+}
+
+func TestApprovalIdentifierFailsBeforeFixedWidthOverflow(t *testing.T) {
+	var output bytes.Buffer
+	s := &server{output: &output, approvalCounter: maxApprovalID}
+	err := s.requireApproval("action", ClientMessage{Action: "click"}, "")
+	if err == nil || s.approvalCounter != maxApprovalID || s.pending != nil || !strings.Contains(output.String(), `"code":"approval_limit"`) {
+		t.Fatalf("counter=%d pending=%#v error=%v output=%q", s.approvalCounter, s.pending, err, output.String())
+	}
+}
+
 func TestActiveTimeoutDoesNotChargeHumanIdleTime(t *testing.T) {
 	value := server{ctx: context.Background(), activeRemaining: 80 * time.Millisecond}
 	time.Sleep(100 * time.Millisecond)

@@ -27,7 +27,7 @@ func TestRunUsesWorkerBoundaryAndDriver(t *testing.T) {
 	err := run(context.Background(), Options{
 		PrivateRoot:     privateRoot,
 		DriverDirectory: "/installed/playwright",
-		Stdin:           strings.NewReader(`{"protocol":"browsertools.author-session.v2","type":"close"}` + "\n"),
+		Stdin:           io.NopCloser(strings.NewReader(`{"protocol":"browsertools.author-session.v2","type":"close"}` + "\n")),
 		Stdout:          &output,
 	}, nilClock, func(value string) authorsession.Browser {
 		driverDirectory = value
@@ -84,6 +84,9 @@ func TestRunCancellationInterruptsBlockedProtocolReadAndClosesSession(t *testing
 	case <-session.closed:
 	default:
 		t.Fatal("author session was not closed before Run returned")
+	}
+	if !strings.Contains(output.String(), `"code":"canceled"`) || strings.Contains(output.String(), `"code":"protocol_limit"`) {
+		t.Fatalf("cancellation diagnostic = %q", output.String())
 	}
 }
 

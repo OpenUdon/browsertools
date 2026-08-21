@@ -117,6 +117,41 @@ type DoctorReport struct {
 	Error               string       `json:"error,omitempty"`
 }
 
+// UIDoctorReport is the separate UI-safe doctor shape. It deliberately omits
+// BrowserExecutable and replaces backend/path-bearing errors with fixed text.
+type UIDoctorReport struct {
+	Version             string       `json:"version"`
+	Engine              Engine       `json:"engine"`
+	PlaywrightGoVersion string       `json:"playwright_go_version"`
+	PlaywrightVersion   string       `json:"playwright_version"`
+	DriverReady         bool         `json:"driver_ready"`
+	BrowserReady        bool         `json:"browser_ready"`
+	CapabilityPolicy    []Capability `json:"capability_policy"`
+	Error               string       `json:"error,omitempty"`
+}
+
+// UI returns a path-free report safe for HTTP storage, ETags, and UI output.
+// DoctorReport remains the full local CLI contract.
+func (report DoctorReport) UI() UIDoctorReport {
+	safe := UIDoctorReport{
+		Version: report.Version, Engine: report.Engine,
+		PlaywrightGoVersion: report.PlaywrightGoVersion, PlaywrightVersion: report.PlaywrightVersion,
+		DriverReady: report.DriverReady, BrowserReady: report.BrowserReady,
+		CapabilityPolicy: append([]Capability(nil), report.CapabilityPolicy...),
+	}
+	if report.Error != "" {
+		switch {
+		case !report.DriverReady:
+			safe.Error = "Playwright driver is unavailable"
+		case !report.BrowserReady:
+			safe.Error = "installed browser is unavailable"
+		default:
+			safe.Error = "Playwright teardown failed"
+		}
+	}
+	return safe
+}
+
 // ParseEngine validates an engine name without silently selecting a fallback.
 func ParseEngine(value string) (Engine, error) {
 	engine := Engine(value)

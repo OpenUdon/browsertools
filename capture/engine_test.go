@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
@@ -125,6 +126,22 @@ func TestDoctorReportsDriverShutdownFailure(t *testing.T) {
 	}}, EngineChromium)
 	if err == nil || !strings.Contains(err.Error(), "stop playwright driver") || report.Error == "" {
 		t.Fatalf("report=%#v err=%v", report, err)
+	}
+}
+
+func TestDoctorUIReportOmitsPrivatePathsOnSuccessAndFailure(t *testing.T) {
+	privatePath := "/private/operator/cache/chromium"
+	for _, report := range []DoctorReport{
+		{Version: DoctorVersion, Engine: EngineChromium, BrowserExecutable: privatePath, DriverReady: true, BrowserReady: true},
+		{Version: DoctorVersion, Engine: EngineChromium, BrowserExecutable: privatePath, DriverReady: true, Error: "missing at " + privatePath},
+	} {
+		data, err := json.Marshal(report.UI())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), privatePath) || strings.Contains(string(data), "browser_executable") {
+			t.Fatalf("UI report leaked private path: %s", data)
+		}
 	}
 }
 

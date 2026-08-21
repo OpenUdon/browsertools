@@ -16,6 +16,7 @@ import (
 
 	playwrightadapter "github.com/OpenUdon/browsertools/adapter/playwright"
 	"github.com/OpenUdon/browsertools/authassist"
+	"github.com/OpenUdon/browsertools/authorresult"
 	"github.com/OpenUdon/browsertools/authorsession"
 	"github.com/OpenUdon/browsertools/authprofile"
 	"github.com/OpenUdon/browsertools/authreview"
@@ -40,6 +41,24 @@ type cliAuthorBrowser struct{}
 func (*cliAuthorBrowser) Open(context.Context, authorsession.BrowserRequest) (authorsession.Session, error) {
 	return nil, errors.New("unexpected browser launch")
 }
+
+type cliClosingAuthorBrowser struct{ session authorsession.Session }
+
+func (b *cliClosingAuthorBrowser) Open(context.Context, authorsession.BrowserRequest) (authorsession.Session, error) {
+	return b.session, nil
+}
+
+type cliClosingAuthorSession struct{ closeErr error }
+
+func (*cliClosingAuthorSession) Observe(context.Context, string) (authorsession.RawObservation, error) {
+	return authorsession.RawObservation{}, nil
+}
+func (*cliClosingAuthorSession) Focus(context.Context, authorsession.BrowserAction) error { return nil }
+func (*cliClosingAuthorSession) Execute(context.Context, authorsession.BrowserAction) (authorsession.Execution, error) {
+	return authorsession.Execution{}, nil
+}
+func (*cliClosingAuthorSession) AddOrigin(string) error { return nil }
+func (s *cliClosingAuthorSession) Close() error         { return s.closeErr }
 
 func TestAuthorSessionChromiumCLIUsesNDJSONAndGenericFailure(t *testing.T) {
 	privateRoot := t.TempDir()
@@ -77,6 +96,34 @@ func TestAuthorSessionChromiumSharedWorkerPreservesMissingRootUsageFailure(t *te
 	if code != exitUsageOrIO || stdout.Len() != 0 || !strings.Contains(stderr.String(), "--private-root") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
+}
+
+func TestAuthorSessionChromiumReturnsNonzeroOnTeardownFailure(t *testing.T) {
+	privateRoot := t.TempDir()
+	if err := os.Chmod(privateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	input := protocolLinesForCLI(
+		authorsession.ClientMessage{Protocol: authorsession.Protocol, Type: "start", Title: "member", URL: "https://members.example.test/login", DashboardURL: "https://members.example.test/dashboard", Goal: "Open dashboard", Origins: []string{"https://members.example.test"}, GoalPredicate: &authorresult.GoalPredicate{Origin: "https://members.example.test", Path: "/dashboard", Role: "heading", Label: "Dashboard"}},
+		authorsession.ClientMessage{Protocol: authorsession.Protocol, Type: "close"},
+	)
+	var stdout, stderr bytes.Buffer
+	code := runAuthorSessionChromiumWith([]string{"--private-root", privateRoot}, strings.NewReader(input), &stdout, &stderr, time.Now, func(string) authorsession.Browser {
+		return &cliClosingAuthorBrowser{session: &cliClosingAuthorSession{closeErr: errors.New("teardown failed")}}
+	})
+	if code != exitRejected || !strings.Contains(stdout.String(), `"code":"teardown_failure"`) {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func protocolLinesForCLI(messages ...authorsession.ClientMessage) string {
+	var output strings.Builder
+	for _, message := range messages {
+		data, _ := json.Marshal(message)
+		output.Write(data)
+		output.WriteByte('\n')
+	}
+	return output.String()
 }
 
 type cliRichAcquirer struct {

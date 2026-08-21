@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/OpenUdon/browsertools/authorsession"
@@ -22,13 +23,19 @@ import (
 type Options struct {
 	PrivateRoot     string
 	DriverDirectory string
-	Stdin           io.Reader
+	Stdin           io.ReadCloser
 	Stdout          io.Writer
 }
 
 // Run serves one Chromium author session until completion, cancellation, or a
 // fail-closed protocol error.
 func Run(ctx context.Context, options Options) error {
+	if ctx == nil || options.Stdin == nil || options.Stdout == nil || options.PrivateRoot == "" {
+		return fmt.Errorf("author worker private root, stdin, stdout, and context are required")
+	}
+	if _, err := capture.PreflightPlaywrightDriver(options.DriverDirectory); err != nil {
+		return err
+	}
 	return run(ctx, options, time.Now, capture.NewPlaywrightAuthorBrowser)
 }
 
@@ -39,31 +46,24 @@ func run(ctx context.Context, options Options, clock func() time.Time, newBrowse
 	if options.Stdin == nil || options.Stdout == nil || options.PrivateRoot == "" || clock == nil || newBrowser == nil {
 		return fmt.Errorf("author worker private root, stdin, stdout, and browser dependencies are required")
 	}
-	input, closeInput := cancellationAwareInput(ctx, options.Stdin)
-	defer closeInput()
-	return authorsession.Serve(ctx, input, options.Stdout, newBrowser(options.DriverDirectory), authorsession.ServeOptions{
+	var closeOnce sync.Once
+	closeInput := func() { closeOnce.Do(func() { _ = options.Stdin.Close() }) }
+	completed := make(chan struct{})
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		select {
+		case <-ctx.Done():
+			closeInput()
+		case <-completed:
+		}
+	}()
+	err := authorsession.Serve(ctx, options.Stdin, options.Stdout, newBrowser(options.DriverDirectory), authorsession.ServeOptions{
 		PrivateRoot: options.PrivateRoot,
 		Clock:       clock,
 	})
-}
-
-func cancellationAwareInput(ctx context.Context, input io.Reader) (io.Reader, func()) {
-	reader, writer := io.Pipe()
-	copied := make(chan struct{})
-	go func() {
-		_, err := io.Copy(writer, input)
-		_ = writer.CloseWithError(err)
-		close(copied)
-	}()
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = writer.CloseWithError(ctx.Err())
-			if closer, ok := input.(io.ReadCloser); ok {
-				_ = closer.Close()
-			}
-		case <-copied:
-		}
-	}()
-	return reader, func() { _ = reader.Close() }
+	close(completed)
+	<-watcherDone
+	closeInput()
+	return err
 }

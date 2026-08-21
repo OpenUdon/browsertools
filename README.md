@@ -48,8 +48,16 @@ wait time.
 
 The `authorworker` package is the supported process-entry adapter for
 `browsertools author-session chromium` and the hidden iCoT worker. It accepts
-context, private root, optional driver directory, stdin, and stdout. Embedding
-it does not move Playwright into the iCoT engine or HTTP server process.
+context, private root, optional driver directory, interruptible owned stdin,
+and stdout. SIGINT/SIGTERM or parent cancellation closes protocol input, then
+waits for browser teardown; failed close negotiation or teardown exits
+nonzero. Embedding it does not move Playwright into the iCoT engine or HTTP
+server process.
+
+Accessibility-label reduction is a useful heuristic, not data loss
+prevention. Ordinary names, identifiers, and order numbers can remain in
+reduced observations and reviewed traces. Operators must review those records
+before retaining or sharing them.
 
 ## Quick Start
 
@@ -157,8 +165,13 @@ go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.0 install chrom
 go run ./cmd/browsertools playwright doctor --engine chromium
 ```
 
-`playwright doctor` starts and stops only the installed Playwright driver. It
-does not install software, contact a site, or launch a browser. The other CLI
+Before `playwright doctor` or an author session starts, Browsertools verifies
+the installed Node executable, CLI, and exact Playwright `1.62.1` package using
+read-only filesystem checks. It creates no cache directory, invokes no
+installer, and contacts no network. The doctor then starts and stops only that
+installed driver; its full local CLI report may include the browser executable
+path, while the separate UI-safe report omits executable and private paths. It
+does not contact a site or launch a browser. The other CLI
 commands remain file-first unless they are explicitly named live acquisition,
 check, or assisted-authentication commands.
 
