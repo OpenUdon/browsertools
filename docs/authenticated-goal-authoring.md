@@ -10,7 +10,6 @@ The operator entry point is an explicit OpenUdon command:
 ```bash
 icot browser-author live \
   --example ./examples/member-dashboard \
-  --browsertools /absolute/path/browsertools \
   --url https://members.example.com/login \
   --dashboard-url https://members.example.com/dashboard \
   --goal "reach the member dashboard and learn how to read account status" \
@@ -19,10 +18,12 @@ icot browser-author live \
   --private-root /private/operator/member-authoring
 ```
 
-The ordinary iCoT command and agent mode remain artifact-only and do not
-launch a browser. `browser-author live` is a separately selected local
-authoring operation. `--yes` never approves model disclosure, authentication,
-a new origin, an action, or goal completion.
+The iCoT UI is the primary human authoring surface and launches this capture
+through the bundled isolated worker. `browser-author live` remains a separately
+selected expert terminal fallback; it uses the same worker by default, while
+`--browsertools /absolute/path/browsertools` is only a compatibility override.
+`--yes` never approves model disclosure, authentication, a new origin, an
+action, or goal completion.
 
 ## Current boundary and gap
 

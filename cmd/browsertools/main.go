@@ -24,6 +24,7 @@ import (
 	"github.com/OpenUdon/browsertools/authassist"
 	"github.com/OpenUdon/browsertools/authdraft"
 	"github.com/OpenUdon/browsertools/authorsession"
+	"github.com/OpenUdon/browsertools/authorworker"
 	"github.com/OpenUdon/browsertools/authprofile"
 	"github.com/OpenUdon/browsertools/authreview"
 	capabilitybundle "github.com/OpenUdon/browsertools/bundle"
@@ -49,7 +50,28 @@ const (
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func runAuthorSessionChromium(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return runAuthorSessionChromiumWith(args, stdin, stdout, stderr, time.Now, capture.NewPlaywrightAuthorBrowser)
+	fs := flag.NewFlagSet("author-session chromium", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	privateRoot := fs.String("private-root", "", "existing mode-0700 directory for the private result envelope")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "author-session chromium: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *privateRoot == "" {
+		fmt.Fprintln(stderr, "author-session chromium: --private-root and browser dependencies are required")
+		return exitUsageOrIO
+	}
+	if err := authorworker.Run(context.Background(), authorworker.Options{
+		PrivateRoot: *privateRoot, DriverDirectory: *driverDirectory, Stdin: stdin, Stdout: stdout,
+	}); err != nil {
+		fmt.Fprintln(stderr, "author-session chromium: session failed closed")
+		return exitRejected
+	}
+	return exitOK
 }
 
 func runAuthorSessionChromiumWith(

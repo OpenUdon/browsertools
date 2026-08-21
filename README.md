@@ -20,8 +20,10 @@ real website UI
 [OpenUdon's iCoT](https://github.com/OpenUdon/openudon#authoring-with-icot) is
 the primary end-user authoring entry point across API, browser, and
 runtime-handoff sources. iCoT retains goal interviewing, LLM/human interaction,
-source selection, and package staging. For UI-only acquisition, it delegates to
-an external Browsertools process.
+source selection, and package staging. For UI-only acquisition, the distributed
+`icot` executable re-executes a private copy of itself as a separate process
+using Browsertools' importable worker; an external `browsertools` CLI remains
+available for experts and maintainers.
 
 Browsertools owns Playwright-based acquisition, browser safety policy, profile
 synthesis, and the shared validation library for browser capability and
@@ -43,6 +45,11 @@ Page-controlled frame names cross the same canonical reduction boundary as
 candidate labels. Exact backend-reported MFA subsets are preserved, and the
 finite total timeout charges browser work rather than human credential/MFA
 wait time.
+
+The `authorworker` package is the supported process-entry adapter for
+`browsertools author-session chromium` and the hidden iCoT worker. It accepts
+context, private root, optional driver directory, stdin, and stdout. Embedding
+it does not move Playwright into the iCoT engine or HTTP server process.
 
 ## Quick Start
 

@@ -71,6 +71,14 @@ func TestAuthorSessionChromiumCLIUsesNDJSONAndGenericFailure(t *testing.T) {
 	}
 }
 
+func TestAuthorSessionChromiumSharedWorkerPreservesMissingRootUsageFailure(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runAuthorSessionChromium(nil, strings.NewReader(""), &stdout, &stderr)
+	if code != exitUsageOrIO || stdout.Len() != 0 || !strings.Contains(stderr.String(), "--private-root") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 type cliRichAcquirer struct {
 	request capture.RichBackendRequest
 	calls   int

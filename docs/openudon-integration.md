@@ -11,7 +11,10 @@ product or the production runtime.
 iCoT retains goal interviewing, LLM/human interaction, source selection, and
 package staging. When a reviewed workflow needs UI-only acquisition, iCoT
 either consumes an existing Browsertools artifact offline or delegates live
-acquisition to an external Browsertools process. Browsertools owns
+acquisition to a separate Browsertools worker process. The normal single-binary
+distribution re-executes a privately stabilized `icot` copy through the
+importable `authorworker` entry point; the standalone Browsertools CLI remains
+an expert compatibility and maintainer surface. Browsertools owns
 Playwright-based acquisition, browser safety policy, profile synthesis, and
 the shared validation library for browser capability and authentication
 profiles.
@@ -48,10 +51,10 @@ the accepted explicit inputs and approval flow.
 
 ### Live `author-session` orchestration
 
-For authenticated UI-only acquisition, the user explicitly invokes
-`icot browser-author live`. iCoT starts an external
-`browsertools author-session chromium` process and owns the goal, disclosure,
-human-action, completion, and staging gates. Browsertools owns the one headed,
+For authenticated UI-only acquisition, the primary iCoT UI or expert
+`icot browser-author live` path starts a separate worker speaking the same
+`browsertools author-session chromium` protocol. iCoT owns the goal,
+disclosure, human-action, completion, and staging gates. Browsertools owns the one headed,
 non-persistent Playwright-Go context, enforces the origin/network/action policy,
 returns only reduced semantic candidates, and writes a private deterministic
 result after teardown. OpenUdon independently validates that result and stages
@@ -64,6 +67,11 @@ the human, and sends the final reviewed output list only after confirmation.
 Browsertools revalidates exact-name or role-only accessibility matching without
 reading values and returns value-free selection proofs for independent
 consumer validation.
+
+The UI never accepts an arbitrary worker executable path. It performs the
+typed Playwright/Chromium doctor through the same isolated re-execution with a
+30-second ceiling. Only the worker process initializes Playwright; the iCoT
+engine and HTTP server do not.
 
 The explicit live iCoT/Browsertools design for human authentication followed
 by same-context goal exploration is specified in
