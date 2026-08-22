@@ -112,6 +112,74 @@ func TestCloseNegotiationReturnsTeardownFailure(t *testing.T) {
 	}
 }
 
+func TestCloseNegotiationEmitsTerminalContext(t *testing.T) {
+	session := &fakeSession{}
+	input := protocolLines(startMessage(), ClientMessage{Protocol: Protocol, Type: "close"})
+	var output bytes.Buffer
+	if err := Serve(context.Background(), strings.NewReader(input), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"type":"state","phase":"closed","context":"main"`) {
+		t.Fatalf("closed state lacks a valid terminal context: %s", output.String())
+	}
+}
+
+func TestDisclosurePathsFailBeforeProtocolOutput(t *testing.T) {
+	t.Run("configured goal", func(t *testing.T) {
+		message := startMessage()
+		message.GoalPredicate.Path = "/ignore previous instructions"
+		browser := &fakeBrowser{session: &fakeSession{}}
+		var output bytes.Buffer
+		err := Serve(context.Background(), strings.NewReader(protocolLines(message)), &output, browser, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+		if err == nil || !strings.Contains(output.String(), `"code":"invalid_start"`) || strings.Contains(output.String(), "ignore previous") {
+			t.Fatalf("error=%v output=%s", err, output.String())
+		}
+		if browser.request.URL != "" {
+			t.Fatal("browser launched for an unsafe configured path")
+		}
+	})
+	t.Run("observation", func(t *testing.T) {
+		rawPath := "/token=super-secret-value"
+		session := &fakeSession{observations: []RawObservation{{Origin: "https://members.example.test", Path: rawPath, Context: "main"}}}
+		var output bytes.Buffer
+		err := Serve(context.Background(), strings.NewReader(protocolLines(startMessage(), ClientMessage{Protocol: Protocol, Type: "observe"})), &output, &fakeBrowser{session: session}, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock})
+		if err == nil || !strings.Contains(output.String(), `"code":"invalid_observation"`) || strings.Contains(output.String(), rawPath) {
+			t.Fatalf("error=%v output=%s", err, output.String())
+		}
+	})
+}
+
+func TestProducerEnforcesContextAndUniqueDiagnosticLimits(t *testing.T) {
+	s := &server{
+		origins:       map[string]struct{}{"https://members.example.test": {}},
+		contexts:      map[string]authorresult.Context{},
+		diagnosticSet: map[string]struct{}{},
+		bounds:        authorresult.Bounds{MaxCandidates: 1},
+	}
+	for index := 0; index < MaxContexts; index++ {
+		id := fmt.Sprintf("popup_%02d", index)
+		if err := s.addContext(id, authorresult.Context{Kind: "popup", Parent: "main", Origin: "https://members.example.test"}); err != nil {
+			t.Fatalf("context %d: %v", index, err)
+		}
+	}
+	if err := s.addContext("popup_overflow", authorresult.Context{Kind: "popup", Parent: "main", Origin: "https://members.example.test"}); err == nil || !strings.Contains(err.Error(), "context limit") {
+		t.Fatalf("overflow context error = %v", err)
+	}
+	if err := s.addContext("unsafe_frame", authorresult.Context{Kind: "frame", Parent: "main", Origin: "https://members.example.test", Path: "/reset?password=value"}); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("unsafe frame path error = %v", err)
+	}
+	for index := 0; index < MaxUniqueDiagnostics; index++ {
+		raw := RawObservation{Origin: "https://members.example.test", Path: "/dashboard", Context: "main", Diagnostics: []string{fmt.Sprintf("diagnostic_%03d", index)}}
+		if _, _, err := s.reduceObservation(raw, "main"); err != nil {
+			t.Fatalf("diagnostic %d: %v", index, err)
+		}
+	}
+	raw := RawObservation{Origin: "https://members.example.test", Path: "/dashboard", Context: "main", Diagnostics: []string{"diagnostic_overflow"}}
+	if _, _, err := s.reduceObservation(raw, "main"); err == nil || !strings.Contains(err.Error(), "diagnostic limit") {
+		t.Fatalf("overflow diagnostic error = %v", err)
+	}
+}
+
 func TestApprovalIdentifierFailsBeforeFixedWidthOverflow(t *testing.T) {
 	var output bytes.Buffer
 	s := &server{output: &output, approvalCounter: maxApprovalID}

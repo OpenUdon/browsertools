@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/OpenUdon/browsertools/disclosurepath"
 	"github.com/OpenUdon/evidence/redact"
 )
 
@@ -220,9 +221,19 @@ func validateBuildRequest(request BuildRequest, origins []string) error {
 		}
 		allowed[origin] = struct{}{}
 	}
+	if len(request.Contexts) > 64 {
+		return fmt.Errorf("result context limit exceeded")
+	}
+	uniqueDiagnostics := make(map[string]struct{}, len(request.Diagnostics))
+	for _, diagnostic := range request.Diagnostics {
+		uniqueDiagnostics[diagnostic] = struct{}{}
+	}
+	if len(uniqueDiagnostics) > 256 {
+		return fmt.Errorf("result diagnostic limit exceeded")
+	}
 	for _, raw := range []string{request.InitialURL, request.DashboardURL} {
 		parsed, err := url.Parse(raw)
-		if err != nil || parsed.Host == "" {
+		if err != nil || parsed == nil || parsed.Host == "" || disclosurepath.Validate(absoluteEscapedPath(parsed)) != nil {
 			return fmt.Errorf("result URL is invalid")
 		}
 		origin, err := exactOrigin(parsed.Scheme + "://" + parsed.Host)
@@ -234,22 +245,19 @@ func validateBuildRequest(request BuildRequest, origins []string) error {
 		}
 	}
 	dashboard, err := url.Parse(request.DashboardURL)
-	if err != nil {
+	if err != nil || dashboard == nil || disclosurepath.Validate(absoluteEscapedPath(dashboard)) != nil {
 		return fmt.Errorf("result dashboard URL is invalid")
 	}
 	dashboardOrigin, err := exactOrigin(dashboard.Scheme + "://" + dashboard.Host)
 	if err != nil {
 		return err
 	}
-	dashboardPath := dashboard.EscapedPath()
-	if dashboardPath == "" {
-		dashboardPath = "/"
-	}
+	dashboardPath := absoluteEscapedPath(dashboard)
 	if request.AuthenticationProof.Matches != 1 || request.AuthenticationProof.Origin != dashboardOrigin || request.AuthenticationProof.Path != dashboardPath ||
 		!identifier.MatchString(request.AuthenticationProof.Role) || request.AuthenticationProof.Label == "[redacted]" || request.AuthenticationProof.Label == "[untrusted-label]" {
 		return fmt.Errorf("authentication success proof does not match the dashboard boundary")
 	}
-	if _, ok := allowed[request.GoalPredicate.Origin]; !ok || !cleanPath(request.GoalPredicate.Path) || !identifier.MatchString(request.GoalPredicate.Role) {
+	if _, ok := allowed[request.GoalPredicate.Origin]; !ok || disclosurepath.Validate(request.GoalPredicate.Path) != nil || !identifier.MatchString(request.GoalPredicate.Role) {
 		return fmt.Errorf("result goal predicate is invalid")
 	}
 	if request.Bounds.NavigationTimeoutMS <= 0 || request.Bounds.TotalTimeoutMS < request.Bounds.NavigationTimeoutMS || request.Bounds.MaxRequests <= 0 || request.Bounds.MaxResponseBytes <= 0 || request.Bounds.MaxObservations <= 0 || request.Bounds.MaxCandidates <= 0 || request.Bounds.MaxOutputs <= 0 || request.Bounds.MaxOutputs > 32 {
@@ -300,7 +308,7 @@ func validateBuildRequest(request BuildRequest, origins []string) error {
 		if context.Kind == "frame" && (context.Path == "" && context.Name == "") {
 			return fmt.Errorf("result frame identity is missing")
 		}
-		if context.Path != "" && !cleanPath(context.Path) {
+		if context.Path != "" && disclosurepath.Validate(context.Path) != nil {
 			return fmt.Errorf("result frame path is unsafe")
 		}
 	}
@@ -397,19 +405,6 @@ func exactOrigin(raw string) (string, error) {
 		host = "[" + host + "]"
 	}
 	return strings.ToLower(parsed.Scheme) + "://" + host, nil
-}
-
-func cleanPath(raw string) bool {
-	if !strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, "?#\\") {
-		return false
-	}
-	for _, part := range strings.Split(raw, "/")[1:] {
-		decoded, err := url.PathUnescape(part)
-		if err != nil || decoded == "." || decoded == ".." || strings.Contains(decoded, "/") {
-			return false
-		}
-	}
-	return true
 }
 
 // MarshalDeterministic validates the envelope's digest bindings and returns
@@ -689,11 +684,18 @@ func authenticationEffects(hasChallenge bool) []any {
 
 func cleanURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
-	if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.User != nil {
+	if err != nil || parsed == nil || !parsed.IsAbs() || parsed.Host == "" || parsed.User != nil || disclosurepath.Validate(absoluteEscapedPath(parsed)) != nil {
 		return "", fmt.Errorf("must be an absolute URL")
 	}
 	parsed.RawQuery, parsed.Fragment = "", ""
 	return parsed.String(), nil
+}
+
+func absoluteEscapedPath(parsed *url.URL) string {
+	if parsed == nil || parsed.EscapedPath() == "" {
+		return "/"
+	}
+	return parsed.EscapedPath()
 }
 
 func canonicalStrings(values []string) []string {

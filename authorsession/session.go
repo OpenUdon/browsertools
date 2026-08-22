@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/OpenUdon/browsertools/authorresult"
+	"github.com/OpenUdon/browsertools/disclosurepath"
 	"github.com/OpenUdon/evidence/redact"
 )
 
@@ -36,6 +37,8 @@ const (
 	DefaultMaxCandidates     = 128
 	DefaultMaxOutputs        = 16
 	AbsoluteMaxOutputs       = 32
+	MaxContexts              = 64
+	MaxUniqueDiagnostics     = 256
 	maxApprovalID            = 9999
 	maxSelectedOutputs       = 16
 	maxProtocolLineBytes     = 64 << 10
@@ -187,6 +190,7 @@ type Approval struct {
 type Checkpoint struct {
 	Kind           string   `json:"kind"`
 	CandidateID    string   `json:"candidateId,omitempty"`
+	InputKind      string   `json:"inputKind,omitempty"`
 	ChallengeKinds []string `json:"challengeKinds,omitempty"`
 }
 
@@ -242,6 +246,7 @@ type server struct {
 	candidates       map[string]candidateRecord
 	trace            []authorresult.TraceStep
 	diagnostics      []string
+	diagnosticSet    map[string]struct{}
 	observations     int
 	approvalCounter  int
 	pending          *pendingApproval
@@ -272,7 +277,7 @@ func Serve(ctx context.Context, input io.Reader, output io.Writer, browser Brows
 	s := &server{
 		ctx: ctx, browser: browser, output: output, options: options,
 		origins: make(map[string]struct{}), contexts: make(map[string]authorresult.Context),
-		candidates: make(map[string]candidateRecord), phase: "awaiting_start",
+		candidates: make(map[string]candidateRecord), diagnosticSet: make(map[string]struct{}), phase: "awaiting_start",
 	}
 	if err := s.write(ServerMessage{
 		Type: "hello", Capabilities: []string{"chromium", "human_credentials", "reviewed_mfa_kind", "reviewed_outputs", "reduced_observation", "popup", "frame", "typed_goal"},
@@ -493,7 +498,7 @@ func (s *server) focus(candidateID string) error {
 	}
 	s.pendingInput = &pendingHumanInput{candidateID: candidateID, record: record, phase: s.phase, kinds: challengeKinds}
 	s.phase = "human_input"
-	return s.write(ServerMessage{Type: "human_checkpoint", Checkpoint: &Checkpoint{Kind: checkpoint, CandidateID: candidateID, ChallengeKinds: challengeKinds}})
+	return s.write(ServerMessage{Type: "human_checkpoint", Checkpoint: &Checkpoint{Kind: checkpoint, CandidateID: candidateID, InputKind: record.raw.InputKind, ChallengeKinds: challengeKinds}})
 }
 
 func (s *server) completeHumanInput(candidateID, challengeKind string) error {
@@ -735,7 +740,7 @@ func (s *server) reviewOutputs(requests []OutputRequest) ([]authorresult.OutputS
 		return nil, fmt.Errorf("re-enumerate output candidates")
 	}
 	origin, err := exactOrigin(raw.Origin)
-	if err != nil || origin != s.goalProof.Origin || !cleanPath(raw.Path) || raw.Path != s.goalProof.Path || normalizedContext(raw.Context) != contextID || len(raw.Candidates) > s.bounds.MaxCandidates {
+	if err != nil || origin != s.goalProof.Origin || disclosurepath.Validate(raw.Path) != nil || raw.Path != s.goalProof.Path || normalizedContext(raw.Context) != contextID || len(raw.Candidates) > s.bounds.MaxCandidates {
 		return nil, fmt.Errorf("output observation changed")
 	}
 	selections := make([]authorresult.OutputSelection, 0, len(requests))
@@ -779,7 +784,7 @@ func (s *server) closeWithoutResult() error {
 	if err != nil {
 		return errors.Join(err, s.write(ServerMessage{Type: "diagnostic", Diagnostic: &Diagnostic{Code: "teardown_failure"}}))
 	}
-	return s.write(ServerMessage{Type: "state", Phase: "closed"})
+	return s.write(ServerMessage{Type: "state", Phase: "closed", Context: "main"})
 }
 
 func (s *server) cancel(cause error) error {
@@ -844,7 +849,7 @@ func (s *server) reduceObservation(raw RawObservation, requestedContext string) 
 	if _, ok := s.origins[origin]; !ok {
 		return Observation{}, nil, fmt.Errorf("observation escaped approved origins")
 	}
-	if !cleanPath(raw.Path) {
+	if disclosurepath.Validate(raw.Path) != nil {
 		return Observation{}, nil, fmt.Errorf("observation path is not clean")
 	}
 	contextID := raw.Context
@@ -890,7 +895,13 @@ func (s *server) reduceObservation(raw RawObservation, requestedContext string) 
 			return Observation{}, nil, fmt.Errorf("backend diagnostic is invalid")
 		}
 		result.Diagnostics = append(result.Diagnostics, code)
-		s.diagnostics = append(s.diagnostics, code)
+		if _, exists := s.diagnosticSet[code]; !exists {
+			if len(s.diagnosticSet) >= MaxUniqueDiagnostics {
+				return Observation{}, nil, fmt.Errorf("diagnostic limit exceeded")
+			}
+			s.diagnosticSet[code] = struct{}{}
+			s.diagnostics = append(s.diagnostics, code)
+		}
 	}
 	sort.Strings(result.Diagnostics)
 	return result, records, nil
@@ -925,11 +936,13 @@ func (s *server) addContext(id string, context authorresult.Context) error {
 			return fmt.Errorf("frame context name is not canonical disclosure-safe text")
 		}
 	}
-	if context.Path != "" && !cleanPath(context.Path) {
+	if context.Path != "" && disclosurepath.Validate(context.Path) != nil {
 		return fmt.Errorf("context path is unsafe")
 	}
 	if existing, ok := s.contexts[id]; ok && existing != context {
 		return fmt.Errorf("context identity changed")
+	} else if !ok && len(s.contexts) >= MaxContexts {
+		return fmt.Errorf("context limit exceeded")
 	}
 	depth := 1
 	for parent := context.Parent; parent != "main"; depth++ {
@@ -1070,7 +1083,7 @@ func validateStart(message ClientMessage) error {
 	if _, err := exactOrigin(message.GoalPredicate.Origin); err != nil {
 		return err
 	}
-	if !cleanPath(message.GoalPredicate.Path) || !portableRoles[message.GoalPredicate.Role] || len(message.GoalPredicate.Label) > 256 {
+	if disclosurepath.Validate(message.GoalPredicate.Path) != nil || !portableRoles[message.GoalPredicate.Role] || len(message.GoalPredicate.Label) > 256 {
 		return fmt.Errorf("goal predicate is invalid")
 	}
 	if err := validateBounds(message.Bounds); err != nil {
@@ -1148,6 +1161,15 @@ func authenticationSuccessProof(observation Observation, goal authorresult.GoalP
 	for _, candidate := range candidates {
 		if candidate.Matches != 1 || candidate.Label == "[redacted]" || candidate.Label == "[untrusted-label]" {
 			continue
+		}
+		matches := 0
+		for _, other := range observation.Candidates {
+			if other.Role == candidate.Role && other.Label == candidate.Label {
+				matches += other.Matches
+			}
+		}
+		if matches != 1 {
+			return nil
 		}
 		return &authorresult.GoalProof{
 			Origin: observation.Origin, Path: observation.Path, Context: observation.Context,
@@ -1275,30 +1297,14 @@ func cleanAbsoluteURL(raw string) (*url.URL, error) {
 	if _, err := exactOrigin(parsed.Scheme + "://" + parsed.Host); err != nil {
 		return nil, err
 	}
-	if !cleanPath(parsed.EscapedPath()) {
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	if disclosurepath.Validate(path) != nil {
 		return nil, fmt.Errorf("URL path must be clean")
 	}
 	return parsed, nil
-}
-
-func cleanPath(raw string) bool {
-	if raw == "" {
-		raw = "/"
-	}
-	if !strings.HasPrefix(raw, "/") || strings.ContainsAny(raw, "?#\\") {
-		return false
-	}
-	parts := strings.Split(raw, "/")
-	for i, part := range parts[1:] {
-		if part == "" && i != len(parts)-2 && raw != "/" {
-			return false
-		}
-		decoded, err := url.PathUnescape(part)
-		if err != nil || decoded == "." || decoded == ".." || strings.Contains(decoded, "/") {
-			return false
-		}
-	}
-	return true
 }
 
 func cleanProtocolURL(raw string) string {

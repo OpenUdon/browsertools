@@ -145,7 +145,8 @@ Server output types are:
 - `approval_required`: one exact origin, action, or POST decision.
 - `human_checkpoint`: credential, OTP/MFA, CAPTCHA, or completion attention.
   MFA checkpoints expose only the `challengeKinds` compatible with the
-  observed input/non-input checkpoint.
+  observed input/non-input checkpoint, and credential/MFA checkpoints carry
+  the exact closed `inputKind` that the producer observed.
 - `diagnostic`: one fixed public code and closed metadata.
 - `result`: the completed private envelope after teardown.
 
@@ -198,6 +199,13 @@ One observation contains only:
 - observation-generation-scoped candidate IDs;
 - each candidate's accessibility role and redacted accessible label;
 - bounded match counts and closed diagnostic codes.
+
+Observation, goal, popup, and frame paths pass the same bounded disclosure
+validator before stdout or result construction. It rejects dot or empty
+interior segments, encoded separators, controls, overlong segments, and
+secret-, credential-, PII-, or prompt-injection-shaped text without returning
+the rejected value. A session may publish at most 64 contexts and 256 unique
+diagnostic codes; exceeding either limit fails capture without an artifact.
 
 `authorsession.ReduceAccessibilityLabel` owns the canonical label policy. It
 collapses Unicode whitespace and controls, replaces values over 256 bytes and
