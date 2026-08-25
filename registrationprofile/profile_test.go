@@ -28,6 +28,9 @@ func TestParseAndLifecycle(t *testing.T) {
 	if err := ValidateAt(value, time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expiry error = %v", err)
 	}
+	if err := ValidateAt(value, time.Date(2026, 8, 24, 23, 59, 59, 0, time.UTC)); err == nil || !strings.Contains(err.Error(), "after assessment") {
+		t.Fatalf("future verification error = %v", err)
+	}
 	first, err := Digest(value)
 	if err != nil {
 		t.Fatal(err)

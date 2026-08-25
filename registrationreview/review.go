@@ -34,6 +34,9 @@ func Build(value *registrationprofile.Profile, at time.Time) (*Bundle, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := registrationprofile.ValidateVerificationAt(value, at); err != nil {
+		return nil, err
+	}
 	expires, err := registrationprofile.ExpiresAt(value)
 	if err != nil {
 		return nil, err
@@ -69,6 +72,9 @@ func Verify(value *Bundle, at time.Time) error {
 	}
 	if assessed.After(at) {
 		return fmt.Errorf("registration review assessment time is in the future")
+	}
+	if err := registrationprofile.ValidateVerificationAt(&value.Profile, assessed); err != nil {
+		return err
 	}
 	digest, err := registrationprofile.Digest(&value.Profile)
 	if err != nil {

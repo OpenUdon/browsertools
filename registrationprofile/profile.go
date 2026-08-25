@@ -134,12 +134,31 @@ func ValidateAt(value *Profile, at time.Time) error {
 	if _, err := MarshalJSON(value); err != nil {
 		return err
 	}
+	if err := ValidateVerificationAt(value, at); err != nil {
+		return err
+	}
 	expires, err := ExpiresAt(value)
 	if err != nil {
 		return err
 	}
 	if !at.Before(expires) {
 		return fmt.Errorf("registration profile expired at %s", expires.Format(time.RFC3339))
+	}
+	return nil
+}
+
+// ValidateVerificationAt rejects verification metadata dated after the
+// assessment instant. Future verification must not extend profile freshness.
+func ValidateVerificationAt(value *Profile, at time.Time) error {
+	if value == nil || at.IsZero() {
+		return fmt.Errorf("registration profile and assessment time are required")
+	}
+	verified, err := time.Parse(time.RFC3339, value.Verification.LastVerifiedAt)
+	if err != nil {
+		return fmt.Errorf("verification.lastVerifiedAt: %w", err)
+	}
+	if verified.After(at) {
+		return fmt.Errorf("verification.lastVerifiedAt %s is after assessment time %s", verified.UTC().Format(time.RFC3339), at.UTC().Format(time.RFC3339))
 	}
 	return nil
 }

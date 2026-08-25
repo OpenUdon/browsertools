@@ -35,9 +35,12 @@ func TestBuildVerifyExpiryAndTamper(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*Bundle){
 		"assessment": func(value *Bundle) { value.AssessedAt = "2026-08-26T00:00:00Z" },
-		"expiry":     func(value *Bundle) { value.ExpiresAt = "2026-09-23T00:00:00Z" },
-		"promotion":  func(value *Bundle) { value.Promotable = false },
-		"gaps":       func(value *Bundle) { value.Gaps = []string{"profile_expired"} },
+		"assessment before verification": func(value *Bundle) {
+			value.AssessedAt = "2026-08-24T23:59:59Z"
+		},
+		"expiry":    func(value *Bundle) { value.ExpiresAt = "2026-09-23T00:00:00Z" },
+		"promotion": func(value *Bundle) { value.Promotable = false },
+		"gaps":      func(value *Bundle) { value.Gaps = []string{"profile_expired"} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := *bundle
@@ -54,5 +57,10 @@ func TestBuildVerifyExpiryAndTamper(t *testing.T) {
 	}
 	if expired.Promotable || len(expired.Gaps) != 1 {
 		t.Fatalf("expired bundle = %#v", expired)
+	}
+	future := *value
+	future.Verification.LastVerifiedAt = "2099-08-25T00:00:00Z"
+	if _, err := Build(&future, current); err == nil {
+		t.Fatal("future-dated verification unexpectedly produced a review bundle")
 	}
 }
