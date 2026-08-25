@@ -90,6 +90,25 @@ The corresponding user-facing procedure and failure posture are in OpenUdon's
 [Authenticated Browser Authoring operator
 guide](https://github.com/OpenUdon/openudon/blob/main/docs/authenticated-browser-authoring.md).
 
+### No-submit registration candidate contract
+
+Registration does not reuse the live authenticated integration. The separate
+`browsertools.registration-author-session.v1` Go contract admits only
+preapproved exact-origin GET/HEAD navigation and reduced accessibility
+observation. After current-generation review and clean network-accounted
+teardown, `browsertools.registration-authoring.v1` binds one exact BRP source,
+its existing registration-review v1 bundle, symbolic slots, one inert submit
+description, checkpoints/success, and fixed duplicate/ambiguity/cleanup
+posture. It establishes no session and carries no runtime authority.
+
+The registration session never sends a private result path over NDJSON.
+OpenUdon obtains the owner-readable result through a separately protected local
+channel, verifies its exact result/source/review digests and freshness, and
+copies only canonical source plus value-free digest/lifecycle facts into its
+transaction. The current contract packages do not add a Browsertools CLI or
+worker implementation; registration runtime remains unsupported and must fail
+before executor invocation.
+
 ## Offline review artifact
 
 A `review.Bundle` is a JSON-serializable Browsertools review artifact produced

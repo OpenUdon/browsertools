@@ -100,6 +100,17 @@ func TestAuthorSessionChromiumSharedWorkerPreservesMissingRootUsageFailure(t *te
 	}
 }
 
+func TestRegistrationAuthoringContractDoesNotChangeCLIRegistry(t *testing.T) {
+	if _, ok := findCommand("author-session", "chromium"); !ok {
+		t.Fatal("existing authenticated author-session command is missing")
+	}
+	for _, group := range []string{"registration-author-session", "registration-author", "registration-runtime"} {
+		if _, ok := findCommand(group, "chromium"); ok {
+			t.Fatalf("contract-only milestone unexpectedly enabled %s chromium", group)
+		}
+	}
+}
+
 func TestAuthorSessionChromiumReturnsNonzeroOnTeardownFailure(t *testing.T) {
 	privateRoot := t.TempDir()
 	if err := os.Chmod(privateRoot, 0o700); err != nil {

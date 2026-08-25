@@ -1,0 +1,12 @@
+{
+  "authenticated": {
+    "session": "browsertools.author-session.v2",
+    "result": "browsertools.authenticated-authoring.v2"
+  },
+  "registration": {
+    "session": "browsertools.registration-author-session.v1",
+    "result": "browsertools.registration-authoring.v1",
+    "review": "browsertools.registration-review.v1",
+    "profile": "uws.browser-registration.1.0"
+  }
+}

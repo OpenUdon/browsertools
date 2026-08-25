@@ -305,6 +305,9 @@ func normalizeOrigins(values []string) ([]string, error) {
 	if len(values) == 0 || len(values) > 32 {
 		return nil, errors.New("one to 32 approved origins are required")
 	}
+	if !sort.StringsAreSorted(values) {
+		return nil, errors.New("approved origins are not in canonical order")
+	}
 	result := make([]string, len(values))
 	for index, value := range values {
 		canonical, err := exactOrigin(value)
@@ -313,7 +316,6 @@ func normalizeOrigins(values []string) ([]string, error) {
 		}
 		result[index] = canonical
 	}
-	sort.Strings(result)
 	for index := 1; index < len(result); index++ {
 		if result[index] == result[index-1] {
 			return nil, errors.New("approved origins are duplicated")

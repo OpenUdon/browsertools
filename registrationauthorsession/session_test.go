@@ -227,6 +227,11 @@ func TestStartAuthorityValidationPrecedesBrowserOpen(t *testing.T) {
 			value.Bounds = &Bounds{NavigationTimeoutMS: 1, TotalTimeoutMS: 1, MaxRequests: 0, MaxResponseBytes: 1, MaxObservations: 1, MaxCandidates: 1}
 			return value
 		}(),
+		"unsorted origins": func() ClientMessage {
+			value := startMessage("https://app.example.test/register")
+			value.Origins = []string{"https://other.example.test", "https://app.example.test"}
+			return value
+		}(),
 	}
 	for name, message := range tests {
 		t.Run(name, func(t *testing.T) {

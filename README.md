@@ -43,6 +43,14 @@ up to 16 final accessibility outputs produce one private
 credential, page value, cookie, or browser state. See [Authenticated
 goal-directed browser authoring](docs/authenticated-goal-authoring.md).
 
+Registration authoring has separate browser-independent contracts:
+`browsertools.registration-author-session.v1` admits only exact-origin
+GET/HEAD observation, and its private
+`browsertools.registration-authoring.v1` result binds one reviewed inert BRP
+without claiming a submit, account attempt, session, or supported runtime.
+No live registration CLI or Chromium producer is enabled by these contracts.
+See [Browser registration profiles](docs/browser-registration.md).
+
 Page-controlled frame names cross the same canonical reduction boundary as
 candidate labels. Exact backend-reported MFA subsets are preserved, and the
 finite total timeout charges browser work rather than human credential/MFA

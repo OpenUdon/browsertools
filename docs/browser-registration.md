@@ -62,6 +62,98 @@ would also violate that result's fixed BAP+BCP and named-session composition.
 Separate v1 discriminators make unsupported cross-use fail during negotiation
 or strict decoding.
 
+M26 publishes the browser-independent Go contracts only. It does not add a
+live registration command or change `authorworker`; the existing
+`browsertools author-session chromium` command still speaks authenticated
+author-session v2. A guarded Chromium implementation must satisfy these
+contracts independently before a live registration producer is available.
+
+### Registration author-session v1
+
+`registrationauthorsession.Serve` exchanges newline-delimited JSON. Every
+message carries `protocol: "browsertools.registration-author-session.v1"`.
+Input is limited to 256 KiB per line and 32 JSON nesting levels; duplicate
+names, unknown or message-inappropriate fields, invalid UTF-8, and trailing
+JSON fail closed.
+
+| Client type | Additional fields | Valid phase |
+|---|---|---|
+| `start` | `profileId`, canonical query-free `url`, sorted exact `origins`, optional finite `bounds` | `awaiting_start` |
+| `navigate` | `method` (`GET` or `HEAD`), canonical query-free `url` on an already approved origin | `observing` |
+| `observe` | none | `observing` |
+| `review` | complete `profile`, sorted current `candidateIds`, selected `flow`, explicit `cleanupDisposition` | `observing` |
+| `finish` | none | `reviewed` |
+| `close` | none | any open phase |
+
+The server emits only `hello`, `state`, `observation`, and fixed-code
+`diagnostic` messages. An observation contains an exact origin, a
+disclosure-checked path, a monotonically increasing generation, and reduced
+accessibility candidates. Backend node IDs and raw labels remain in process.
+The only backend session methods are `Observe`, `Navigate`, and `Close`;
+`Navigate` accepts the closed `GET`/`HEAD` enum. There is no API or message for
+typing, focus, click, submit, POST approval, origin expansion, script, DOM or
+page content, capture, cookie/storage access, or session export.
+
+`review` accepts the whole schema-valid, current BRP rather than fragments. It
+also selects one existing profile flow and one of the UWS cleanup dispositions.
+Credential bindings and an approval claim are deliberately not review-message
+fields. Candidate IDs must belong to the latest observation generation and
+must resolve to unique, non-redacted accessibility names.
+
+`finish` first closes the backend and validates that its request count is the
+sum of bounded GET and HEAD counts. It writes no result and discloses no
+private path on the protocol. Only then does `Serve` return an in-process
+`Completion` to the caller. EOF, cancellation, invalid network accounting, or
+teardown failure returns no completion.
+
+### Registration-authoring result v1
+
+`registrationauthorresult.Build` converts that clean completion into one
+private `browsertools.registration-authoring.v1` envelope. It contains:
+
+- exact `browsertools`/result/session provenance and canonical
+  `createdAt`/`observedAt`/`expiresAt` lifecycle times;
+- the canonical `uws.browser-registration.1.0` source, its SHA-256 digest, and
+  the existing `browsertools.registration-review.v1` bundle and digest;
+- sorted exact origins, symbolic credential-slot inventory, and the selected
+  flow's sorted effects, checkpoints, and success condition;
+- exactly one reviewed current-generation, accessibility-name submit
+  description with `executed: false`;
+- fixed `registration_approval`, `operator_attestation`, `fail`, and
+  `stop_without_retry` call controls plus the explicitly reviewed cleanup
+  disposition; and
+- finite bounds, observation and GET/HEAD accounting, closed diagnostics, zero
+  mutation requests, and false submit/account/session/runtime claims.
+
+Source and review digests cover compact JSON without a trailing newline. The
+result digest returned by `registrationauthorresult.Digest` covers the exact
+deterministic result bytes including their final newline. OpenUdon must verify
+all three independently and use the result digest in transaction provenance.
+
+`registrationauthorresult.Decode` rejects oversized, deeply nested,
+duplicate-name, unknown-field, trailing, non-UTF-8, stale, noncanonical, and
+digest-inconsistent results. `WritePrivateExclusive` accepts only an existing
+owner-only, non-symlink directory and creates a mode-0600 digest-named file
+without replacement. Its returned path is process-private and must never be
+copied to protocol output, a prompt, a package, a report, or goal state.
+
+The supported typed entry points are:
+
+```go
+completion, err := registrationauthorsession.Serve(ctx, in, out, browser,
+    registrationauthorsession.ServeOptions{Clock: clock})
+createdAt := clock().UTC().Truncate(time.Second)
+result, err := registrationauthorresult.Build(
+    registrationauthorresult.BuildRequest{Completion: completion, CreatedAt: createdAt})
+resultDigest, err := registrationauthorresult.Digest(result)
+written, err := registrationauthorresult.WritePrivateExclusive(privateRoot, result)
+```
+
+`Browser` in this example is an implementation of the deliberately narrow
+registration interface, not the authenticated author-session browser. The
+caller retains `written.Path` privately; a cross-process consumer exchanges a
+separately protected result and its digest, never the path.
+
 ## Portable safety contract
 
 Credential slots are symbolic `identifier` or `password` names. Their values
