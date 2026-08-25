@@ -80,6 +80,8 @@ type registrationReview struct {
 	profile    registrationProfile
 	bytes      []byte
 	candidates []ReviewedCandidate
+	flow       string
+	cleanup    string
 }
 
 // These aliases keep the state machine declarations compact while retaining
@@ -300,6 +302,15 @@ func (s *server) review(message ClientMessage) error {
 	if !equalStrings(registrationprofile.Origins(profileValue), s.origins) {
 		return s.fail("origin_mismatch")
 	}
+	if !identifierPattern.MatchString(message.Flow) {
+		return s.fail("invalid_flow")
+	}
+	if _, ok := profileValue.Flows[message.Flow]; !ok {
+		return s.fail("invalid_flow")
+	}
+	if message.CleanupDisposition != "delete_separately" && message.CleanupDisposition != "retain_dedicated_test_identity" {
+		return s.fail("invalid_cleanup")
+	}
 	if len(message.CandidateIDs) == 0 || len(message.CandidateIDs) > s.bounds.MaxCandidates || !sort.StringsAreSorted(message.CandidateIDs) {
 		return s.fail("invalid_candidate")
 	}
@@ -321,6 +332,7 @@ func (s *server) review(message ClientMessage) error {
 	}
 	s.reviewedProfile = &registrationReview{
 		profile: *profileValue, bytes: append([]byte(nil), profileBytes...), candidates: reviewed,
+		flow: message.Flow, cleanup: message.CleanupDisposition,
 	}
 	s.phase = "reviewed"
 	return s.write(ServerMessage{Type: "state", Phase: s.phase})
@@ -347,6 +359,8 @@ func (s *server) finish() (*Completion, error) {
 		Protocol: Protocol, ProfileID: s.profileID, Profile: review.profile,
 		ProfileBytes:       append([]byte(nil), review.bytes...),
 		ReviewedCandidates: append([]ReviewedCandidate(nil), review.candidates...),
+		Flow:               review.flow,
+		CleanupDisposition: review.cleanup,
 		Origins:            append([]string(nil), s.origins...), ObservedAt: s.observedAt,
 		Bounds: s.bounds, Observations: s.observations,
 		Diagnostics: append([]string(nil), s.diagnostics...), Network: summary,
@@ -411,7 +425,7 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 	}
 	seenThisObservation := make(map[string]struct{}, len(raw.Diagnostics))
 	for _, code := range raw.Diagnostics {
-		if !diagnosticPattern.MatchString(code) {
+		if !ValidDiagnostic(code) {
 			return Observation{}, nil, errors.New("backend diagnostic is invalid")
 		}
 		if _, duplicate := seenThisObservation[code]; duplicate {

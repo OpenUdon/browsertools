@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"regexp"
@@ -23,10 +22,18 @@ import (
 
 	"github.com/OpenUdon/browsertools/authorsession"
 	"github.com/OpenUdon/browsertools/disclosurepath"
+	"github.com/OpenUdon/browsertools/internal/strictjson"
 	"github.com/OpenUdon/browsertools/registrationprofile"
 )
 
 const Protocol = "browsertools.registration-author-session.v1"
+
+const (
+	DiagnosticAccessibilitySnapshotPartial = "accessibility_snapshot_partial"
+	DiagnosticCrossOriginFrameOmitted      = "cross_origin_frame_omitted"
+	DiagnosticUnsupportedAccessibleControl = "unsupported_accessible_control"
+	DiagnosticSyntheticFixture             = "synthetic_fixture"
+)
 
 const (
 	DefaultNavigationTimeout = 20 * time.Second
@@ -53,15 +60,17 @@ type Bounds struct {
 // ClientMessage is the closed NDJSON input union. Profile is admitted only on
 // review and must be one complete, secret-free UWS registration profile.
 type ClientMessage struct {
-	Protocol     string          `json:"protocol"`
-	Type         string          `json:"type"`
-	ProfileID    string          `json:"profileId,omitempty"`
-	URL          string          `json:"url,omitempty"`
-	Origins      []string        `json:"origins,omitempty"`
-	Bounds       *Bounds         `json:"bounds,omitempty"`
-	Method       string          `json:"method,omitempty"`
-	Profile      json.RawMessage `json:"profile,omitempty"`
-	CandidateIDs []string        `json:"candidateIds,omitempty"`
+	Protocol           string          `json:"protocol"`
+	Type               string          `json:"type"`
+	ProfileID          string          `json:"profileId,omitempty"`
+	URL                string          `json:"url,omitempty"`
+	Origins            []string        `json:"origins,omitempty"`
+	Bounds             *Bounds         `json:"bounds,omitempty"`
+	Method             string          `json:"method,omitempty"`
+	Profile            json.RawMessage `json:"profile,omitempty"`
+	CandidateIDs       []string        `json:"candidateIds,omitempty"`
+	Flow               string          `json:"flow,omitempty"`
+	CleanupDisposition string          `json:"cleanupDisposition,omitempty"`
 }
 
 // RawObservation is backend-only evidence. BackendID and raw labels never
@@ -142,6 +151,8 @@ type Completion struct {
 	Profile            registrationprofile.Profile
 	ProfileBytes       []byte
 	ReviewedCandidates []ReviewedCandidate
+	Flow               string
+	CleanupDisposition string
 	Origins            []string
 	ObservedAt         time.Time
 	Bounds             Bounds
@@ -157,16 +168,7 @@ type candidateRecord struct {
 }
 
 func decodeClientMessage(line []byte) (ClientMessage, error) {
-	if len(line) == 0 {
-		return ClientMessage{}, errors.New("empty protocol message")
-	}
-	if len(line) > MaxProtocolLineBytes {
-		return ClientMessage{}, fmt.Errorf("protocol message exceeds %d bytes", MaxProtocolLineBytes)
-	}
-	if !utf8.Valid(line) {
-		return ClientMessage{}, errors.New("protocol message must be valid UTF-8")
-	}
-	if err := rejectDuplicateJSONNames(line); err != nil {
+	if err := strictjson.Validate(line, MaxProtocolLineBytes, maxJSONDepth); err != nil {
 		return ClientMessage{}, err
 	}
 	var header struct {
@@ -195,73 +197,6 @@ func decodeClientMessage(line []byte) (ClientMessage, error) {
 		return ClientMessage{}, err
 	}
 	return message, nil
-}
-
-func rejectDuplicateJSONNames(data []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	if err := scanJSONValue(decoder, 0); err != nil {
-		return err
-	}
-	if token, err := decoder.Token(); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("contains trailing JSON token %v", token)
-		}
-		return err
-	}
-	return nil
-}
-
-func scanJSONValue(decoder *json.Decoder, depth int) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	if depth >= maxJSONDepth {
-		return fmt.Errorf("JSON nesting exceeds %d levels", maxJSONDepth)
-	}
-	switch delimiter {
-	case '{':
-		seen := map[string]bool{}
-		for decoder.More() {
-			nameToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			name, ok := nameToken.(string)
-			if !ok {
-				return errors.New("JSON object member name is not a string")
-			}
-			if seen[name] {
-				return fmt.Errorf("duplicate JSON field %q", name)
-			}
-			seen[name] = true
-			if err := scanJSONValue(decoder, depth+1); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim('}') {
-			return errors.New("JSON object is not closed")
-		}
-	case '[':
-		for decoder.More() {
-			if err := scanJSONValue(decoder, depth+1); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim(']') {
-			return errors.New("JSON array is not closed")
-		}
-	default:
-		return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
-	}
-	return nil
 }
 
 func validateBounds(value *Bounds) error {
@@ -411,7 +346,6 @@ func safeCandidateLabel(value string) bool {
 
 var (
 	identifierPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	diagnosticPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 	portableRoles     = map[string]bool{
 		"button": true, "link": true, "textbox": true, "checkbox": true, "radio": true,
 		"dialog": true, "status": true, "alert": true, "heading": true, "img": true,
@@ -420,11 +354,17 @@ var (
 		"cell": true, "region": true, "navigation": true, "article": true, "form": true,
 		"search": true, "switch": true, "group": true,
 	}
+	allowedDiagnostics = map[string]bool{
+		DiagnosticAccessibilitySnapshotPartial: true,
+		DiagnosticCrossOriginFrameOmitted:      true,
+		DiagnosticUnsupportedAccessibleControl: true,
+		DiagnosticSyntheticFixture:             true,
+	}
 	clientFields = map[string]map[string]bool{
 		"start":    fields("protocol", "type", "profileId", "url", "origins", "bounds"),
 		"observe":  fields("protocol", "type"),
 		"navigate": fields("protocol", "type", "method", "url"),
-		"review":   fields("protocol", "type", "profile", "candidateIds"),
+		"review":   fields("protocol", "type", "profile", "candidateIds", "flow", "cleanupDisposition"),
 		"finish":   fields("protocol", "type"),
 		"close":    fields("protocol", "type"),
 		"unknown":  fields("protocol", "type"),
@@ -435,6 +375,12 @@ var (
 		"reviewed":       fields("finish", "close"),
 	}
 )
+
+// ValidDiagnostic reports whether code is in the closed, value-free backend
+// diagnostic vocabulary.
+func ValidDiagnostic(code string) bool {
+	return allowedDiagnostics[code]
+}
 
 func fields(names ...string) map[string]bool {
 	result := make(map[string]bool, len(names))

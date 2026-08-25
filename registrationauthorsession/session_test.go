@@ -103,7 +103,7 @@ func TestServeCompletesReviewedNoSubmitSession(t *testing.T) {
 		startMessage("https://app.example.test/register"),
 		ClientMessage{Protocol: Protocol, Type: "navigate", Method: "HEAD", URL: "https://app.example.test/register"},
 		ClientMessage{Protocol: Protocol, Type: "observe"},
-		ClientMessage{Protocol: Protocol, Type: "review", Profile: profile, CandidateIDs: candidateIDs},
+		reviewMessage(profile, candidateIDs),
 		ClientMessage{Protocol: Protocol, Type: "finish"},
 	)
 	var output bytes.Buffer
@@ -119,6 +119,9 @@ func TestServeCompletesReviewedNoSubmitSession(t *testing.T) {
 	}
 	if len(completion.ReviewedCandidates) != 1 || completion.ReviewedCandidates[0].ID != registerID || completion.ReviewedCandidates[0].Generation != 1 {
 		t.Fatalf("reviewed candidates = %#v", completion.ReviewedCandidates)
+	}
+	if completion.Flow != "create_dedicated_test_user" || completion.CleanupDisposition != "delete_separately" {
+		t.Fatalf("reviewed call controls = %q %q", completion.Flow, completion.CleanupDisposition)
 	}
 	if got := registrationprofile.Origins(&completion.Profile); len(got) != 1 || got[0] != "https://app.example.test" {
 		t.Fatalf("completion origins = %#v", got)
@@ -151,6 +154,7 @@ func TestMessageSpecificFieldsFailBeforeBrowserOpen(t *testing.T) {
 	for _, field := range []string{
 		"credentialValue", "selector", "script", "pageContent", "capture",
 		"storage", "storageState", "session", "cookies", "submit", "postBudget",
+		"credentialBindings", "approval", "duplicatePrevention", "onDuplicate", "ambiguousOutcome",
 	} {
 		t.Run(field, func(t *testing.T) {
 			browser := &fakeBrowser{}
@@ -192,7 +196,7 @@ func TestProtocolAndPhaseMismatchesFailClosed(t *testing.T) {
 		{name: "protocol", messages: []ClientMessage{{Protocol: "browsertools.author-session.v2", Type: "close"}}, diagnostic: "protocol_mismatch"},
 		{name: "unknown", messages: []ClientMessage{{Protocol: Protocol, Type: "submit"}}, diagnostic: "unknown_message"},
 		{name: "observe before start", messages: []ClientMessage{{Protocol: Protocol, Type: "observe"}}, diagnostic: "invalid_state"},
-		{name: "review before observation", messages: []ClientMessage{startMessage("https://app.example.test/register"), {Protocol: Protocol, Type: "review", Profile: validProfileJSON(t), CandidateIDs: []string{"candidate"}}}, diagnostic: "invalid_review"},
+		{name: "review before observation", messages: []ClientMessage{startMessage("https://app.example.test/register"), reviewMessage(validProfileJSON(t), []string{"candidate"})}, diagnostic: "invalid_review"},
 		{name: "finish before review", messages: []ClientMessage{startMessage("https://app.example.test/register"), {Protocol: Protocol, Type: "finish"}}, diagnostic: "invalid_state"},
 	}
 	for _, test := range tests {
@@ -365,7 +369,7 @@ func TestReviewRequiresCurrentPromotableCandidatesAndMatchingProfile(t *testing.
 			input := ndjson(t,
 				startMessage("https://app.example.test/register"),
 				ClientMessage{Protocol: Protocol, Type: "observe"},
-				ClientMessage{Protocol: Protocol, Type: "review", Profile: test.profile, CandidateIDs: test.candidates},
+				reviewMessage(test.profile, test.candidates),
 			)
 			_, output, err := runSession(context.Background(), input, browser, test.clock)
 			assertFailure(t, err, output, test.diagnostic)
@@ -385,7 +389,7 @@ func TestReviewRequiresCurrentPromotableCandidatesAndMatchingProfile(t *testing.
 		input := ndjson(t,
 			startMessage("https://app.example.test/register"),
 			ClientMessage{Protocol: Protocol, Type: "observe"},
-			ClientMessage{Protocol: Protocol, Type: "review", Profile: profile, CandidateIDs: []string{redactedID}},
+			reviewMessage(profile, []string{redactedID}),
 		)
 		_, output, err := runSession(context.Background(), input, browser, fixedNow)
 		assertFailure(t, err, output, "invalid_candidate")
@@ -393,6 +397,38 @@ func TestReviewRequiresCurrentPromotableCandidatesAndMatchingProfile(t *testing.
 			t.Fatalf("raw label leaked: %s", output)
 		}
 	})
+}
+
+func TestReviewRequiresExistingFlowAndExplicitCleanupDisposition(t *testing.T) {
+	profile := validProfileJSON(t)
+	buttonID := candidateID(1, "button", "Register", 0)
+	observation := RawObservation{
+		Origin: "https://app.example.test", Path: "/register",
+		Candidates: []RawCandidate{{BackendID: "backend", Role: "button", Label: "Register", Matches: 1}},
+	}
+	for _, test := range []struct {
+		name       string
+		mutate     func(*ClientMessage)
+		diagnostic string
+	}{
+		{name: "missing flow", mutate: func(message *ClientMessage) { message.Flow = "missing" }, diagnostic: "invalid_flow"},
+		{name: "invalid flow identity", mutate: func(message *ClientMessage) { message.Flow = "../private" }, diagnostic: "invalid_flow"},
+		{name: "missing cleanup", mutate: func(message *ClientMessage) { message.CleanupDisposition = "" }, diagnostic: "invalid_cleanup"},
+		{name: "unsupported cleanup", mutate: func(message *ClientMessage) { message.CleanupDisposition = "automatic" }, diagnostic: "invalid_cleanup"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := &fakeSession{observations: []RawObservation{observation}}
+			browser := &fakeBrowser{session: session}
+			review := reviewMessage(profile, []string{buttonID})
+			test.mutate(&review)
+			input := ndjson(t, startMessage("https://app.example.test/register"), ClientMessage{Protocol: Protocol, Type: "observe"}, review)
+			_, output, err := runSession(context.Background(), input, browser, fixedNow)
+			assertFailure(t, err, output, test.diagnostic)
+			if session.closeCount != 1 {
+				t.Fatalf("close count = %d", session.closeCount)
+			}
+		})
+	}
 }
 
 func TestNavigationExpiresCandidateGeneration(t *testing.T) {
@@ -407,7 +443,7 @@ func TestNavigationExpiresCandidateGeneration(t *testing.T) {
 		startMessage("https://app.example.test/register"),
 		ClientMessage{Protocol: Protocol, Type: "observe"},
 		ClientMessage{Protocol: Protocol, Type: "navigate", Method: "GET", URL: "https://app.example.test/help"},
-		ClientMessage{Protocol: Protocol, Type: "review", Profile: profile, CandidateIDs: []string{oldID}},
+		reviewMessage(profile, []string{oldID}),
 	)
 	_, output, err := runSession(context.Background(), input, browser, fixedNow)
 	assertFailure(t, err, output, "invalid_review")
@@ -439,7 +475,7 @@ func TestFinishRequiresCleanBoundedNetworkSummary(t *testing.T) {
 			input := ndjson(t,
 				startMessage("https://app.example.test/register"),
 				ClientMessage{Protocol: Protocol, Type: "observe"},
-				ClientMessage{Protocol: Protocol, Type: "review", Profile: profile, CandidateIDs: []string{buttonID}},
+				reviewMessage(profile, []string{buttonID}),
 				ClientMessage{Protocol: Protocol, Type: "finish"},
 			)
 			completion, output, err := runSession(context.Background(), input, browser, fixedNow)
@@ -543,6 +579,13 @@ func startMessage(url string) ClientMessage {
 	return ClientMessage{
 		Protocol: Protocol, Type: "start", ProfileID: "synthetic_registration",
 		URL: url, Origins: []string{"https://app.example.test"},
+	}
+}
+
+func reviewMessage(profile json.RawMessage, candidateIDs []string) ClientMessage {
+	return ClientMessage{
+		Protocol: Protocol, Type: "review", Profile: profile, CandidateIDs: candidateIDs,
+		Flow: "create_dedicated_test_user", CleanupDisposition: "delete_separately",
 	}
 }
 
