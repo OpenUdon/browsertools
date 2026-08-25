@@ -122,10 +122,12 @@ exposes no Playwright type or in-process browser handle.
 
 On Linux hosts where AppArmor disables Chromium's unprivileged user-namespace
 sandbox, Browsertools may forward `CHROME_DEVEL_SANDBOX` to Chromium only when
-it identifies a root-owned, setuid, non-symlink regular helper in a root-owned
-non-writable directory. User-controlled, linked, writable, relative, or
-unsupported-platform helper paths are omitted. Chromium sandbox enforcement
-remains mandatory; Browsertools never supplies a sandbox-disable flag.
+it identifies a root-owned, single-link, mode-4755 regular helper on a setuid
+filesystem whose resolved path is unchanged and whose complete ancestor chain
+is root-owned and non-writable (apart from root-owned sticky directories).
+User-controlled, linked, writable, relative, or unsupported-platform helper
+paths are omitted. Chromium sandbox enforcement remains mandatory;
+Browsertools never supplies a sandbox-disable flag.
 
 The standalone entry is:
 

@@ -75,8 +75,9 @@ independently reconstructed result only after clean teardown. Its API and CLI
 return no result path or digest. A re-executing parent owns executable hashing,
 minimal child environment, and process-group termination.
 On Linux, an administrator-provisioned `CHROME_DEVEL_SANDBOX` is forwarded to
-Chromium only after root ownership, setuid mode, link count, and parent-directory
-control checks; sandbox disabling is never supported.
+Chromium only after exact mode, root ownership, link count, setuid-filesystem,
+resolved-path, and complete ancestor-control checks; sandbox disabling is never
+supported.
 
 Accessibility-label reduction is a useful heuristic, not data loss
 prevention. Ordinary names, identifiers, and order numbers can remain in
