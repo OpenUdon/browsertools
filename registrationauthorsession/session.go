@@ -257,7 +257,7 @@ func (s *server) observe() error {
 	if err != nil {
 		return s.fail("invalid_observation")
 	}
-	observedAt := s.clock().UTC().Round(0)
+	observedAt := s.clock().UTC().Truncate(time.Second)
 	if observedAt.IsZero() || (!s.observedAt.IsZero() && observedAt.Before(s.observedAt)) {
 		return s.fail("clock_unavailable")
 	}

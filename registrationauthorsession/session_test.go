@@ -218,6 +218,30 @@ func TestCompletionUsesAcceptedObservationTime(t *testing.T) {
 	}
 }
 
+func TestCompletionCanonicalizesRealClockPrecision(t *testing.T) {
+	profile := validProfileJSON(t)
+	registerID := candidateID(1, "button", "Register", 0)
+	rawNow := fixedNow.Add(987654321 * time.Nanosecond)
+	input := ndjson(t,
+		startMessage("https://app.example.test/register"),
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		reviewMessage(profile, []string{registerID}),
+		ClientMessage{Protocol: Protocol, Type: "finish"},
+	)
+	completion, _, err := runSession(context.Background(), input, &fakeBrowser{session: &fakeSession{
+		observations: []RawObservation{{
+			Origin: "https://app.example.test", Path: "/register",
+			Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}},
+		}},
+	}}, rawNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion.ObservedAt != fixedNow || completion.ObservedAt.Nanosecond() != 0 {
+		t.Fatalf("canonical observation time=%v", completion.ObservedAt)
+	}
+}
+
 func TestMessageSpecificFieldsFailBeforeBrowserOpen(t *testing.T) {
 	for _, field := range []string{
 		"credentialValue", "selector", "script", "pageContent", "capture",
