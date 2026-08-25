@@ -105,9 +105,12 @@ The registration session never sends a private result path over NDJSON.
 OpenUdon obtains the owner-readable result through a separately protected local
 channel, verifies its exact result/source/review digests and freshness, and
 copies only canonical source plus value-free digest/lifecycle facts into its
-transaction. The current contract packages do not add a Browsertools CLI or
-worker implementation; registration runtime remains unsupported and must fail
-before executor invocation.
+transaction. Browsertools exposes the separate
+`registrationauthorworker.Run` process entry and
+`registration-author-session chromium` standalone command; OpenUdon must
+re-execute its reviewed worker image with a minimal environment and own
+process-group cancellation. Registration runtime remains unsupported and must
+fail before executor invocation.
 
 ## Offline review artifact
 

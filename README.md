@@ -49,8 +49,10 @@ GET/HEAD observation, and its private
 `browsertools.registration-authoring.v1` result binds one reviewed inert BRP
 without claiming a submit, account attempt, session, or supported runtime.
 A guarded typed Chromium backend and deterministic explicit candidate builder
-now implement those contracts, but no live registration CLI or worker is
-enabled yet.
+implement those contracts. The importable `registrationauthorworker` and
+`browsertools registration-author-session chromium` expose that backend through
+the same closed no-submit wire and finalize the result only under an explicit
+owner-only private root.
 See [Browser registration profiles](docs/browser-registration.md).
 
 Page-controlled frame names cross the same canonical reduction boundary as
@@ -65,6 +67,13 @@ and stdout. SIGINT/SIGTERM or parent cancellation closes protocol input, then
 waits for browser teardown; failed close negotiation or teardown exits
 nonzero. Embedding it does not move Playwright into the iCoT engine or HTTP
 server process.
+
+The separate `registrationauthorworker` is the supported process entry for
+no-submit BRP production. It performs read-only pinned-driver preflight, owns
+the closeable NDJSON input and headed browser lifetime, and creates an
+independently reconstructed result only after clean teardown. Its API and CLI
+return no result path or digest. A re-executing parent owns executable hashing,
+minimal child environment, and process-group termination.
 
 Accessibility-label reduction is a useful heuristic, not data loss
 prevention. Ordinary names, identifiers, and order numbers can remain in
@@ -349,6 +358,19 @@ After clean session teardown,
 `registrationauthorresult.FinalizePrivate` independently reconstructs and
 strict-decodes the M26 result before and after an anchored owner-only,
 create-once write; its path remains process-private.
+
+The standalone producer uses that complete path:
+
+```bash
+browsertools registration-author-session chromium \
+  --private-root ./private-registration-results \
+  --driver-dir "$PLAYWRIGHT_DRIVER_PATH"
+```
+
+Stdin and stdout are reserved for
+`browsertools.registration-author-session.v1` NDJSON. The private root must
+already be a mode-0700 directory. The command never prints the resulting file
+name or digest, and it provides no registration runtime or submit command.
 
 Caller-supplied raw captures and derived artifacts can be kept in an explicit
 private local cache. Raw entries can never be publication eligible:

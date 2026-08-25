@@ -36,6 +36,7 @@ import (
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/guide"
 	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/registrationauthorworker"
 	"github.com/OpenUdon/browsertools/registrationdraft"
 	"github.com/OpenUdon/browsertools/registrationprofile"
 	"github.com/OpenUdon/browsertools/registrationreview"
@@ -112,6 +113,46 @@ func runAuthorSessionChromiumWith(
 		Clock:       clock,
 	}); err != nil {
 		fmt.Fprintln(stderr, "author-session chromium: session failed closed")
+		return exitRejected
+	}
+	return exitOK
+}
+
+func runRegistrationAuthorSessionChromium(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return runRegistrationAuthorSessionChromiumWith(args, stdin, stdout, stderr, registrationauthorworker.Run)
+}
+
+func runRegistrationAuthorSessionChromiumWith(
+	args []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	runWorker func(context.Context, registrationauthorworker.Options) error,
+) int {
+	fs := flag.NewFlagSet("registration-author-session chromium", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	privateRoot := fs.String("private-root", "", "existing mode-0700 directory for the private registration result")
+	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "registration-author-session chromium: unexpected positional arguments")
+		return exitUsageOrIO
+	}
+	if *privateRoot == "" || runWorker == nil {
+		fmt.Fprintln(stderr, "registration-author-session chromium: --private-root and browser dependencies are required")
+		return exitUsageOrIO
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	input, ok := stdin.(io.ReadCloser)
+	if !ok {
+		input = io.NopCloser(stdin)
+	}
+	if err := runWorker(ctx, registrationauthorworker.Options{
+		PrivateRoot: *privateRoot, DriverDirectory: *driverDirectory, Stdin: input, Stdout: stdout,
+	}); err != nil {
+		fmt.Fprintln(stderr, "registration-author-session chromium: session failed closed")
 		return exitRejected
 	}
 	return exitOK

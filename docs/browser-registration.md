@@ -62,11 +62,10 @@ would also violate that result's fixed BAP+BCP and named-session composition.
 Separate v1 discriminators make unsupported cross-use fail during negotiation
 or strict decoding.
 
-M26 publishes the browser-independent Go contracts only. It does not add a
-live registration command or change `authorworker`; the existing
-`browsertools author-session chromium` command still speaks authenticated
-author-session v2. A guarded Chromium implementation must satisfy these
-contracts independently before a live registration producer is available.
+The existing `browsertools author-session chromium` command continues to speak
+authenticated author-session v2. The separate guarded Chromium producer is
+available only as `browsertools registration-author-session chromium`; its
+name, package, wire, browser interface, and result remain independent.
 
 ### Registration author-session v1
 
@@ -109,9 +108,30 @@ bytes, obtains candidates only from bounded ARIA snapshots, omits child-frame
 content with fixed diagnostics, and never calls a Playwright input, click,
 page-value, capture, cookie, or storage API. Explicit HEAD uses the context's
 request client with redirects and retries disabled and is admitted/accounted by
-the same exact-origin guard before the request starts. A08.1 adds this typed
-backend only; the registration CLI and reusable isolated worker remain absent
-until A08.4.
+the same exact-origin guard before the request starts.
+
+`registrationauthorworker.Run` is the reusable isolated process entry. It
+performs read-only exact-version driver preflight, serves the closed protocol,
+waits for clean browser teardown, and then calls `FinalizePrivate`. It returns
+only success or failure: the digest-named result is discovered through the
+separately protected owner-only root and its path never crosses NDJSON or
+stderr. Cancellation closes the owned input and synchronously tears down the
+session. A re-executing parent is responsible for stable executable hashing,
+minimal environment construction, and process-group cleanup; the worker
+exposes no Playwright type or in-process browser handle.
+
+The standalone entry is:
+
+```bash
+browsertools registration-author-session chromium \
+  --private-root PRIVATE_ROOT [--driver-dir INSTALLED_DRIVER_DIRECTORY]
+```
+
+`PRIVATE_ROOT` must already be a non-symlink mode-0700 directory. Stdin and
+stdout carry only `browsertools.registration-author-session.v1` NDJSON.
+SIGINT/SIGTERM follows the same cancellation path. No path, digest, backend
+error detail, credential value, account value, or raw observation is printed.
+There is no registration submit or runtime command.
 
 `registrationauthor.Build` is the deterministic bridge from that reduced
 protocol observation to an explicit profile review. Its request contains the

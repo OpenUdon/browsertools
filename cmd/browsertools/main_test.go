@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"github.com/OpenUdon/browsertools/capture"
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/registrationauthorworker"
 	"github.com/OpenUdon/browsertools/registrationprofile"
 	"github.com/OpenUdon/browsertools/registrationreview"
 	"github.com/OpenUdon/browsertools/registry"
@@ -100,16 +102,81 @@ func TestAuthorSessionChromiumSharedWorkerPreservesMissingRootUsageFailure(t *te
 	}
 }
 
-func TestRegistrationAuthoringContractDoesNotChangeCLIRegistry(t *testing.T) {
+func TestRegistrationAuthoringCLIRegistryKeepsRuntimeAbsent(t *testing.T) {
 	if _, ok := findCommand("author-session", "chromium"); !ok {
 		t.Fatal("existing authenticated author-session command is missing")
 	}
-	for _, group := range []string{"registration-author-session", "registration-author", "registration-runtime"} {
+	if _, ok := findCommand("registration-author-session", "chromium"); !ok {
+		t.Fatal("no-submit registration author-session command is missing")
+	}
+	for _, group := range []string{"registration-author", "registration-runtime"} {
 		if _, ok := findCommand(group, "chromium"); ok {
-			t.Fatalf("contract-only milestone unexpectedly enabled %s chromium", group)
+			t.Fatalf("unsupported registration command unexpectedly enabled %s chromium", group)
 		}
 	}
 }
+
+func TestRegistrationAuthorSessionChromiumCLIUsesWorkerBoundary(t *testing.T) {
+	privateRoot := t.TempDir()
+	if err := os.Chmod(privateRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	input := &trackingCLIReader{Reader: strings.NewReader("closed protocol\n")}
+	var stdout, stderr bytes.Buffer
+	called := 0
+	code := runRegistrationAuthorSessionChromiumWith(
+		[]string{"--private-root", privateRoot, "--driver-dir", "/installed/driver"},
+		input, &stdout, &stderr,
+		func(ctx context.Context, options registrationauthorworker.Options) error {
+			called++
+			if ctx == nil || options.PrivateRoot != privateRoot || options.DriverDirectory != "/installed/driver" {
+				t.Fatalf("worker options=%#v", options)
+			}
+			data, err := io.ReadAll(options.Stdin)
+			if err != nil || string(data) != "closed protocol\n" || options.Stdout != &stdout {
+				t.Fatalf("worker streams data=%q error=%v", data, err)
+			}
+			return options.Stdin.Close()
+		},
+	)
+	if code != exitOK || called != 1 || !input.closed || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("code=%d called=%d closed=%v stdout=%q stderr=%q", code, called, input.closed, stdout.String(), stderr.String())
+	}
+
+	privateDetail := filepath.Join(privateRoot, "registration-authoring-private.json")
+	code = runRegistrationAuthorSessionChromiumWith(
+		[]string{"--private-root", privateRoot}, strings.NewReader(""), &stdout, &stderr,
+		func(context.Context, registrationauthorworker.Options) error { return errors.New(privateDetail) },
+	)
+	if code != exitRejected || !strings.HasSuffix(stderr.String(), "registration-author-session chromium: session failed closed\n") ||
+		strings.Contains(stderr.String(), privateDetail) {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestRegistrationAuthorSessionChromiumCLIRejectsUsageBeforeWorker(t *testing.T) {
+	for _, args := range [][]string{nil, {"unexpected"}, {"--private-root", "/private", "unexpected"}} {
+		var stdout, stderr bytes.Buffer
+		calls := 0
+		code := runRegistrationAuthorSessionChromiumWith(args, strings.NewReader(""), &stdout, &stderr,
+			func(context.Context, registrationauthorworker.Options) error { calls++; return nil })
+		if code != exitUsageOrIO || calls != 0 || stdout.Len() != 0 || stderr.Len() == 0 {
+			t.Fatalf("args=%v code=%d calls=%d stdout=%q stderr=%q", args, code, calls, stdout.String(), stderr.String())
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"registration-author-session", "chromium", "--help"}, strings.NewReader(""), &stdout, &stderr); code != exitOK ||
+		!strings.Contains(stdout.String(), "private-root") || stderr.Len() != 0 {
+		t.Fatalf("help code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+type trackingCLIReader struct {
+	io.Reader
+	closed bool
+}
+
+func (r *trackingCLIReader) Close() error { r.closed = true; return nil }
 
 func TestAuthorSessionChromiumReturnsNonzeroOnTeardownFailure(t *testing.T) {
 	privateRoot := t.TempDir()

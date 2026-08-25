@@ -44,6 +44,7 @@ var commandRegistry = []commandSpec{
 	{group: "registration-review", name: "bundle", summary: "build a registration review bundle", run: withInput(runRegistrationReviewBundle)},
 	{group: "auth-assist", name: "chromium", summary: "observe explicit headed authentication flows", run: withInput(runAuthAssistChromium)},
 	{group: "author-session", name: "chromium", summary: "serve a bounded headed authoring session", run: withInput(runAuthorSessionChromium)},
+	{group: "registration-author-session", name: "chromium", summary: "serve bounded no-submit registration authoring", run: withInput(runRegistrationAuthorSessionChromium)},
 	{group: "evidence", name: "import", summary: "import reviewed adapter evidence", run: withInput(runEvidenceImport)},
 	{group: "draft", name: "build", summary: "build a browser profile draft", run: withInput(runDraftBuild)},
 	{group: "review", name: "bundle", summary: "build a profile review bundle", run: withInput(runReviewBundle)},
