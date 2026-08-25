@@ -686,6 +686,17 @@ func TestSessionInterfaceHasNoMutationOrStateExportSurface(t *testing.T) {
 	}
 }
 
+func TestAccessibilityLabelDisclosureMakesHeuristicBoundaryExplicit(t *testing.T) {
+	if AccessibilityLabelDisclosure != authorsession.AccessibilityLabelDisclosure {
+		t.Fatal("registration label disclosure drifted from the canonical reducer")
+	}
+	for _, phrase := range []string{"heuristic", "not data loss prevention", "Ordinary names", "identifiers", "reviewed traces"} {
+		if !strings.Contains(AccessibilityLabelDisclosure, phrase) {
+			t.Fatalf("label disclosure is missing %q", phrase)
+		}
+	}
+}
+
 func startMessage(url string) ClientMessage {
 	return ClientMessage{
 		Protocol: Protocol, Type: "start", ProfileID: "synthetic_registration",

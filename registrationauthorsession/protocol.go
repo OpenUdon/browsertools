@@ -28,6 +28,10 @@ import (
 
 const Protocol = "browsertools.registration-author-session.v1"
 
+// AccessibilityLabelDisclosure must be shown anywhere registration
+// observations or reviewed candidates are displayed or retained.
+const AccessibilityLabelDisclosure = authorsession.AccessibilityLabelDisclosure
+
 const (
 	DiagnosticAccessibilitySnapshotPartial = "accessibility_snapshot_partial"
 	DiagnosticCrossOriginFrameOmitted      = "cross_origin_frame_omitted"

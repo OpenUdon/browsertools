@@ -90,11 +90,18 @@ JSON fail closed.
 The server emits only `hello`, `state`, `observation`, and fixed-code
 `diagnostic` messages. An observation contains an exact origin, a
 disclosure-checked path, a monotonically increasing generation, and reduced
-accessibility candidates. Backend node IDs and raw labels remain in process.
+accessibility candidates. The contract has no backend node-ID field; raw
+labels remain only in the browser process long enough to be reduced.
 The only backend session methods are `Observe`, `Navigate`, and `Close`;
 `Navigate` accepts the closed `GET`/`HEAD` enum. There is no API or message for
 typing, focus, click, submit, POST approval, origin expansion, script, DOM or
 page content, capture, cookie/storage access, or session export.
+
+Reduction is heuristic, not data loss prevention: ordinary names,
+identifiers, and order numbers can remain in accessibility labels. Every UI or
+terminal that displays or retains registration candidates must show
+`registrationauthorsession.AccessibilityLabelDisclosure` and obtain human
+review before result creation.
 
 `review` accepts the whole schema-valid, current BRP rather than fragments. It
 also selects one existing profile flow and one of the UWS cleanup dispositions.
