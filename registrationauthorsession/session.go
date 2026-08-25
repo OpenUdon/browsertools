@@ -11,6 +11,7 @@ import (
 	"io"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/OpenUdon/browsertools/authorsession"
 	"github.com/OpenUdon/browsertools/disclosurepath"
@@ -33,6 +34,8 @@ type Session interface {
 
 // BrowserRequest fixes all authority before a browser can be opened.
 type BrowserRequest struct {
+	// URL is the initial GET navigation. Implementations must apply the same
+	// exact-origin and network guard used for later Navigation values.
 	URL               string
 	ApprovedOrigins   []string
 	NavigationTimeout time.Duration
@@ -394,6 +397,9 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 	if len(raw.Candidates) > s.bounds.MaxCandidates {
 		return Observation{}, nil, errors.New("candidate limit exceeded")
 	}
+	if len(raw.Diagnostics) > MaxUniqueDiagnostics {
+		return Observation{}, nil, errors.New("diagnostic limit exceeded")
+	}
 	s.generation++
 	sort.Slice(raw.Candidates, func(i, j int) bool {
 		left, right := raw.Candidates[i], raw.Candidates[j]
@@ -410,14 +416,23 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 		Candidates: []Candidate{}, Diagnostics: []string{},
 	}
 	records := make(map[string]candidateRecord, len(raw.Candidates))
+	reducedLocators := make(map[string]struct{}, len(raw.Candidates))
 	for index, rawCandidate := range raw.Candidates {
-		if rawCandidate.BackendID == "" || !portableRoles[rawCandidate.Role] || rawCandidate.Matches < 1 || rawCandidate.Matches > s.bounds.MaxCandidates {
+		if rawCandidate.BackendID == "" || len(rawCandidate.BackendID) > MaxBackendIDBytes ||
+			!utf8.ValidString(rawCandidate.BackendID) || len(rawCandidate.Label) > MaxRawCandidateLabelBytes ||
+			!utf8.ValidString(rawCandidate.Label) || !portableRoles[rawCandidate.Role] ||
+			rawCandidate.Matches < 1 || rawCandidate.Matches > s.bounds.MaxCandidates {
 			return Observation{}, nil, errors.New("backend candidate is invalid")
 		}
 		label := authorsession.ReduceAccessibilityLabel(rawCandidate.Label).Value
 		if !safeCandidateLabel(label) {
 			return Observation{}, nil, errors.New("reduced candidate label is invalid")
 		}
+		locatorKey := rawCandidate.Role + "\x00" + label
+		if _, duplicate := reducedLocators[locatorKey]; duplicate {
+			return Observation{}, nil, errors.New("reduced candidate locator is duplicated")
+		}
+		reducedLocators[locatorKey] = struct{}{}
 		id := candidateID(s.generation, rawCandidate.Role, label, index)
 		candidate := Candidate{ID: id, Role: rawCandidate.Role, Label: label, Matches: rawCandidate.Matches}
 		observation.Candidates = append(observation.Candidates, candidate)
@@ -517,8 +532,11 @@ func (s *server) write(message ServerMessage) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.output.Write(append(data, '\n'))
-	return err
+	written, err := s.output.Write(append(data, '\n'))
+	if err != nil || written != len(data)+1 {
+		return errors.New("registration author-session output failed")
+	}
+	return nil
 }
 
 func candidateID(generation int, role, label string, index int) string {

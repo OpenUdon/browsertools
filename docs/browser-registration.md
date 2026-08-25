@@ -119,7 +119,8 @@ private `browsertools.registration-authoring.v1` envelope. It contains:
   flow's sorted effects, checkpoints, and success condition;
 - exactly one reviewed current-generation, accessibility-name submit
   description with `executed: false`;
-- fixed `registration_approval`, `operator_attestation`, `fail`, and
+- fixed symbolic `approvalSymbol: registration_approval`,
+  `operator_attestation`, `fail`, and
   `stop_without_retry` call controls plus the explicitly reviewed cleanup
   disposition; and
 - finite bounds, observation and GET/HEAD accounting, closed diagnostics, zero

@@ -100,7 +100,7 @@ type FlowReview struct {
 // CallPolicy records only fixed or explicitly selected value-free call
 // controls. It is not approval and cannot invoke a runtime.
 type CallPolicy struct {
-	Approval            string `json:"approval"`
+	ApprovalSymbol      string `json:"approvalSymbol"`
 	DuplicatePrevention string `json:"duplicatePrevention"`
 	OnDuplicate         string `json:"onDuplicate"`
 	AmbiguousOutcome    string `json:"ambiguousOutcome"`
@@ -236,7 +236,7 @@ func Build(request BuildRequest) (*Envelope, error) {
 		ReviewedCandidates: reviewedCandidates,
 		Flow:               flowReview,
 		CallPolicy: CallPolicy{
-			Approval: approvalSymbol, DuplicatePrevention: duplicatePrevention,
+			ApprovalSymbol: approvalSymbol, DuplicatePrevention: duplicatePrevention,
 			OnDuplicate: onDuplicate, AmbiguousOutcome: ambiguousOutcome,
 			CleanupDisposition: completion.CleanupDisposition,
 		},
@@ -341,13 +341,13 @@ func Digest(value *Envelope) (string, error) {
 // lifecycle assessment instant.
 func Decode(data []byte, at time.Time) (*Envelope, error) {
 	if err := strictjson.Validate(data, MaxResultBytes, maxResultDepth); err != nil {
-		return nil, err
+		return nil, errors.New("registration authoring result JSON is invalid")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var result Envelope
 	if err := decoder.Decode(&result); err != nil {
-		return nil, err
+		return nil, errors.New("registration authoring result fields are invalid")
 	}
 	if err := Verify(&result, at); err != nil {
 		return nil, err

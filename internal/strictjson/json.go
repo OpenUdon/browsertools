@@ -32,7 +32,8 @@ func Validate(data []byte, maximumBytes, maximumDepth int) error {
 	}
 	if token, err := decoder.Token(); err != io.EOF {
 		if err == nil {
-			return fmt.Errorf("JSON value contains trailing token %v", token)
+			_ = token
+			return errors.New("JSON value contains trailing data")
 		}
 		return err
 	}
@@ -64,7 +65,7 @@ func scanValue(decoder *json.Decoder, depth, maximumDepth int) error {
 				return errors.New("JSON object member name is not a string")
 			}
 			if _, duplicate := seen[name]; duplicate {
-				return fmt.Errorf("duplicate JSON field %q", name)
+				return errors.New("JSON object contains a duplicate field")
 			}
 			seen[name] = struct{}{}
 			if err := scanValue(decoder, depth+1, maximumDepth); err != nil {

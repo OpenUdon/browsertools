@@ -36,15 +36,17 @@ const (
 )
 
 const (
-	DefaultNavigationTimeout = 20 * time.Second
-	DefaultTotalTimeout      = 5 * time.Minute
-	DefaultMaxRequests       = 256
-	DefaultMaxResponseBytes  = int64(32 << 20)
-	DefaultMaxObservations   = 64
-	DefaultMaxCandidates     = 128
-	MaxUniqueDiagnostics     = 256
-	MaxProtocolLineBytes     = 256 << 10
-	maxJSONDepth             = 32
+	DefaultNavigationTimeout  = 20 * time.Second
+	DefaultTotalTimeout       = 5 * time.Minute
+	DefaultMaxRequests        = 256
+	DefaultMaxResponseBytes   = int64(32 << 20)
+	DefaultMaxObservations    = 64
+	DefaultMaxCandidates      = 128
+	MaxUniqueDiagnostics      = 256
+	MaxProtocolLineBytes      = 256 << 10
+	MaxRawCandidateLabelBytes = 4 << 10
+	MaxBackendIDBytes         = 256
+	maxJSONDepth              = 32
 )
 
 // Bounds fixes all finite browser-work and protocol collection limits.
@@ -83,6 +85,8 @@ type RawObservation struct {
 }
 
 // RawCandidate identifies one backend-owned accessible semantic target.
+// Matches is the complete count for the reduced role/name locator; a backend
+// must not split the same reduced locator across multiple candidates.
 type RawCandidate struct {
 	BackendID string
 	Role      string

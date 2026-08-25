@@ -308,6 +308,13 @@ func TestObservationFailuresAreValueFreeAndFailClosed(t *testing.T) {
 		{name: "origin", raw: RawObservation{Origin: "https://other.example.test", Path: "/register"}},
 		{name: "path", raw: RawObservation{Origin: "https://app.example.test", Path: "/password=do-not-retain"}},
 		{name: "candidate", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{BackendID: "private-do-not-retain", Role: "button", Label: "Register", Matches: 0}}}},
+		{name: "duplicate reduced locator", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{
+			{BackendID: "first", Role: "button", Label: "Register", Matches: 1},
+			{BackendID: "second", Role: "button", Label: "Register", Matches: 1},
+		}}},
+		{name: "invalid UTF-8 label", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{BackendID: "backend", Role: "button", Label: string([]byte{0xff}), Matches: 1}}}},
+		{name: "oversized raw label", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{BackendID: "backend", Role: "button", Label: strings.Repeat("x", MaxRawCandidateLabelBytes+1), Matches: 1}}}},
+		{name: "diagnostic count", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Diagnostics: repeatDiagnostic(DiagnosticSyntheticFixture, MaxUniqueDiagnostics+1)}},
 		{name: "diagnostic", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Diagnostics: []string{"backend do-not-retain"}}},
 	}
 	for _, test := range tests {
@@ -528,6 +535,9 @@ func TestOpenPartialFailureAndOutputFailureCloseSession(t *testing.T) {
 		if err == nil || session.closeCount != 1 {
 			t.Fatalf("close=%d error=%v", session.closeCount, err)
 		}
+		if strings.Contains(err.Error(), "synthetic output failure") {
+			t.Fatalf("output writer detail leaked: %v", err)
+		}
 	})
 }
 
@@ -592,6 +602,14 @@ func reviewMessage(profile json.RawMessage, candidateIDs []string) ClientMessage
 		Protocol: Protocol, Type: "review", Profile: profile, CandidateIDs: candidateIDs,
 		Flow: "create_dedicated_test_user", CleanupDisposition: "delete_separately",
 	}
+}
+
+func repeatDiagnostic(code string, count int) []string {
+	result := make([]string, count)
+	for index := range result {
+		result[index] = code
+	}
+	return result
 }
 
 func validProfileJSON(t *testing.T) json.RawMessage {

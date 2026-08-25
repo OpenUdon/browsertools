@@ -57,7 +57,7 @@ func TestBuildVerifyAndDeterministicDigest(t *testing.T) {
 		t.Fatalf("checkpoints = %#v", result.Flow.Checkpoints)
 	}
 	if result.CallPolicy != (CallPolicy{
-		Approval: approvalSymbol, DuplicatePrevention: duplicatePrevention, OnDuplicate: onDuplicate,
+		ApprovalSymbol: approvalSymbol, DuplicatePrevention: duplicatePrevention, OnDuplicate: onDuplicate,
 		AmbiguousOutcome: ambiguousOutcome, CleanupDisposition: cleanupDelete,
 	}) {
 		t.Fatalf("call policy = %#v", result.CallPolicy)
@@ -128,7 +128,7 @@ func TestVerifyRejectsEveryBoundIdentityAndSafetyMutation(t *testing.T) {
 		"submit execution":  func(value *Envelope) { value.Flow.Submit.Executed = true },
 		"checkpoint":        func(value *Envelope) { value.Flow.Checkpoints[0].Kind = "captcha" },
 		"success":           func(value *Envelope) { value.Flow.Success.Path = "/other" },
-		"approval":          func(value *Envelope) { value.CallPolicy.Approval = "other" },
+		"approval":          func(value *Envelope) { value.CallPolicy.ApprovalSymbol = "other" },
 		"duplicate policy":  func(value *Envelope) { value.CallPolicy.OnDuplicate = "continue" },
 		"cleanup":           func(value *Envelope) { value.CallPolicy.CleanupDisposition = "automatic" },
 		"bounds":            func(value *Envelope) { value.Bounds.MaxRequests = 0 },
@@ -252,7 +252,7 @@ func TestDecodeRejectsUnclosedDuplicateUnknownDeepAndSensitiveInput(t *testing.T
 		"trailing":         []byte(compact + `{}`),
 		"duplicate":        []byte(strings.Replace(compact, `"schema":"`+Schema+`"`, `"schema":"`+Schema+`","schema":"`+Schema+`"`, 1)),
 		"unknown":          []byte(strings.TrimSuffix(compact, "}") + `,"privatePath":"do-not-retain"}`),
-		"nested unknown":   []byte(strings.Replace(compact, `"approval":"`+approvalSymbol+`"`, `"approval":"`+approvalSymbol+`","credentialValue":"do-not-retain"`, 1)),
+		"nested unknown":   []byte(strings.Replace(compact, `"approvalSymbol":"`+approvalSymbol+`"`, `"approvalSymbol":"`+approvalSymbol+`","credentialValue":"do-not-retain"`, 1)),
 		"deep":             []byte(`{"schema":"` + Schema + `","nested":` + strings.Repeat("[", maxResultDepth+1) + `0` + strings.Repeat("]", maxResultDepth+1) + `}`),
 		"sensitive source": []byte(strings.Replace(compact, "Synthetic dedicated test registration", "operator@example.test", 1)),
 	}
@@ -260,8 +260,14 @@ func TestDecodeRejectsUnclosedDuplicateUnknownDeepAndSensitiveInput(t *testing.T
 		t.Run(name, func(t *testing.T) {
 			if _, err := Decode(input, createdAt.Add(time.Hour)); err == nil {
 				t.Fatal("invalid result unexpectedly decoded")
+			} else if strings.Contains(err.Error(), "do-not-retain") || strings.Contains(err.Error(), "privatePath") || strings.Contains(err.Error(), "credentialValue") {
+				t.Fatalf("invalid input detail leaked through decoder error: %v", err)
 			}
 		})
+	}
+	privateDuplicate := []byte(`{"operator@example.test":1,"operator@example.test":2}`)
+	if _, err := Decode(privateDuplicate, createdAt); err == nil || strings.Contains(err.Error(), "operator@example.test") {
+		t.Fatalf("duplicate-field error leaked private field name: %v", err)
 	}
 	oversized := bytes.Repeat([]byte{' '}, MaxResultBytes+1)
 	if _, err := Decode(oversized, createdAt); err == nil {
