@@ -27,8 +27,10 @@ available for experts and maintainers.
 
 Browsertools owns Playwright-based acquisition, browser safety policy, profile
 synthesis, and the shared validation library for browser capability and
-authentication profiles. Its CLI is primarily a machine-facing protocol plus
-maintainer and offline tooling, not a parallel end-user authoring product.
+authentication profiles, plus offline validation/draft/review tooling for the
+separate UWS browser-registration profile. Its CLI is primarily a machine-
+facing protocol plus maintainer and offline tooling, not a parallel end-user
+authoring product.
 Browsertools is not the production runtime; runtime replay belongs to Udon and
 Browserdriver. See the [canonical OpenUdon integration
 reference](docs/openudon-integration.md) for the two integration paths and full
@@ -305,6 +307,28 @@ excluded from static registry publication. Actual credentials, MFA responses,
 OAuth state, cookies, storage, and sessions stay in the browser or downstream
 private runtime. See [Browser authentication profiles](docs/browser-authentication.md).
 
+Account registration uses a separate explicitly mutating contract. Browsertools
+can validate, deterministically build, and digest-review only the inert recipe:
+
+```bash
+go run ./cmd/browsertools registration-draft build \
+  --spec ./registration-spec.yaml \
+  --out ./browser-registration/dedicated-test-user.yaml
+go run ./cmd/browsertools registration-profile validate \
+  --input ./browser-registration/dedicated-test-user.yaml \
+  --at 2026-08-25T00:00:00Z
+go run ./cmd/browsertools registration-review bundle \
+  --profile ./browser-registration/dedicated-test-user.yaml \
+  --at 2026-08-25T00:00:00Z \
+  --out ./browser-registration/dedicated-test-user.review.json
+```
+
+These commands are file-only and never launch a browser, contact a target,
+resolve a symbolic credential, submit a registration, handle CAPTCHA/MFA/email
+verification, approve a run, or perform cleanup. Registration profiles and
+reviews remain package-local and are excluded from the browser capability
+registry. See [Browser registration profiles](docs/browser-registration.md).
+
 Caller-supplied raw captures and derived artifacts can be kept in an explicit
 private local cache. Raw entries can never be publication eligible:
 
@@ -327,6 +351,9 @@ go run ./cmd/browsertools cache delete \
   documents.
 - Typed validation, deterministic drafting, digest-bound review, freshness,
   and local discovery for package-local `uws.browser-authentication.1.0`
+  recipes.
+- Typed offline validation, deterministic explicit drafting, digest-bound
+  review, and freshness for package-local `uws.browser-registration.1.0`
   recipes.
 - Secret-free evidence records from browser and scraper tooling.
 - Draft profile generation from reviewed evidence.
@@ -375,6 +402,8 @@ go run ./cmd/browsertools cache delete \
   repository/hosting workflows.
 - Publication of authentication recipes through the static browser capability
   registry.
+- Publication of registration recipes through the static browser capability
+  registry, or live registration/account cleanup of any kind.
 
 ## Why Not Just OpenAPI?
 
@@ -411,6 +440,7 @@ website UI
 - [Publishable capability bundles](docs/capability-bundles.md)
 - [Static registry and contribution workflow](docs/static-registry.md)
 - [Browser authentication profiles](docs/browser-authentication.md)
+- [Browser registration profiles](docs/browser-registration.md)
 - [Safe live capture](docs/live-capture.md)
 - [Private rich evidence and cross-engine portability](docs/advanced-evidence.md)
 - [Guided capability authoring and live checks](docs/guided-authoring.md)

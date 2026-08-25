@@ -36,6 +36,9 @@ import (
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/guide"
 	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/registrationdraft"
+	"github.com/OpenUdon/browsertools/registrationprofile"
+	"github.com/OpenUdon/browsertools/registrationreview"
 	"github.com/OpenUdon/browsertools/registry"
 	"github.com/OpenUdon/browsertools/revalidate"
 	"github.com/OpenUdon/browsertools/review"
@@ -1579,6 +1582,152 @@ func runAuthReviewBundle(args []string, stdin io.Reader, stdout, stderr io.Write
 	return exitOK
 }
 
+func runRegistrationProfileValidate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("registration-profile validate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	input := fs.String("input", "", "registration profile JSON/YAML path or -")
+	at := fs.String("at", "", "optional RFC3339 freshness assessment time")
+	format := fs.String("format", "text", "text or json")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if *input == "" {
+		fmt.Fprintln(stderr, "registration-profile validate: --input is required")
+		return exitUsageOrIO
+	}
+	if !validFormat(*format, "text", "json") {
+		fmt.Fprintln(stderr, "registration-profile validate: --format must be text or json")
+		return exitUsageOrIO
+	}
+	var when time.Time
+	if *at != "" {
+		var parseErr error
+		when, parseErr = time.Parse(time.RFC3339, *at)
+		if parseErr != nil {
+			fmt.Fprintln(stderr, "registration-profile validate: invalid --at:", parseErr)
+			return exitUsageOrIO
+		}
+	}
+	value, err := loadRegistrationProfileInput(*input, stdin)
+	if err == nil && *at != "" {
+		err = registrationprofile.ValidateAt(value, when)
+	}
+	if err != nil {
+		if *format == "json" {
+			if encodeErr := json.NewEncoder(stdout).Encode(map[string]any{"valid": false, "errors": []string{err.Error()}}); encodeErr != nil {
+				fmt.Fprintln(stderr, "registration-profile validate:", encodeErr)
+				return exitUsageOrIO
+			}
+		} else {
+			fmt.Fprintln(stderr, err)
+		}
+		return exitRejected
+	}
+	if *format == "json" {
+		fmt.Fprintln(stdout, `{"valid":true,"errors":[]}`)
+	} else {
+		fmt.Fprintln(stdout, "valid")
+	}
+	return exitOK
+}
+
+func runRegistrationDraftBuild(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("registration-draft build", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	specPath := fs.String("spec", "", "explicit registration draft spec JSON/YAML path or -")
+	out := fs.String("out", "-", "registration profile output path or -")
+	format := fs.String("format", "yaml", "yaml or json")
+	force := fs.Bool("force", false, "overwrite an existing output")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if *specPath == "" {
+		fmt.Fprintln(stderr, "registration-draft build: --spec is required")
+		return exitUsageOrIO
+	}
+	if !validFormat(*format, "yaml", "json") {
+		fmt.Fprintln(stderr, "registration-draft build: --format must be yaml or json")
+		return exitUsageOrIO
+	}
+	data, err := readInput(*specPath, stdin)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	var spec registrationdraft.Spec
+	if err := decodeJSONOrYAML(data, filepath.Ext(*specPath), &spec); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	value, err := registrationdraft.Build(spec)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	var encoded []byte
+	switch *format {
+	case "yaml":
+		encoded, err = registrationprofile.MarshalYAML(value)
+	case "json":
+		encoded, err = json.MarshalIndent(value, "", "  ")
+	}
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	encoded = append(encoded, '\n')
+	if err := writeOutput(*out, encoded, *force, stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	return exitOK
+}
+
+func runRegistrationReviewBundle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("registration-review bundle", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	profilePath := fs.String("profile", "", "registration profile JSON/YAML path or -")
+	at := fs.String("at", "", "RFC3339 assessment time")
+	out := fs.String("out", "-", "review bundle JSON path or -")
+	force := fs.Bool("force", false, "overwrite an existing output")
+	if err := fs.Parse(args); err != nil {
+		return exitUsageOrIO
+	}
+	if *profilePath == "" || *at == "" {
+		fmt.Fprintln(stderr, "registration-review bundle: --profile and --at are required")
+		return exitUsageOrIO
+	}
+	when, err := time.Parse(time.RFC3339, *at)
+	if err != nil {
+		fmt.Fprintln(stderr, "registration-review bundle: invalid --at:", err)
+		return exitUsageOrIO
+	}
+	value, err := loadRegistrationProfileInput(*profilePath, stdin)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	bundle, err := registrationreview.Build(value, when)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitRejected
+	}
+	encoded, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	encoded = append(encoded, '\n')
+	if err := writeOutput(*out, encoded, *force, stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return exitUsageOrIO
+	}
+	if !bundle.Promotable {
+		return exitRejected
+	}
+	return exitOK
+}
+
 func runEvidenceImport(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("evidence import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1960,6 +2109,17 @@ func loadAuthProfileInput(path string, stdin io.Reader) (*authprofile.Profile, e
 		return nil, err
 	}
 	return authprofile.Parse(data)
+}
+
+func loadRegistrationProfileInput(path string, stdin io.Reader) (*registrationprofile.Profile, error) {
+	if path != "-" {
+		return registrationprofile.LoadFile(path)
+	}
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		return nil, err
+	}
+	return registrationprofile.Parse(data)
 }
 
 func stdinCount(paths ...string) int {

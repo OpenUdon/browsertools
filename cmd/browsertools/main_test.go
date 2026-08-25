@@ -25,6 +25,8 @@ import (
 	"github.com/OpenUdon/browsertools/capture"
 	"github.com/OpenUdon/browsertools/evidence"
 	"github.com/OpenUdon/browsertools/profile"
+	"github.com/OpenUdon/browsertools/registrationprofile"
+	"github.com/OpenUdon/browsertools/registrationreview"
 	"github.com/OpenUdon/browsertools/registry"
 	"github.com/OpenUdon/browsertools/review"
 	"github.com/OpenUdon/uws/browserauthentication"
@@ -680,6 +682,65 @@ func TestAuthenticationProfileDraftReviewCLI(t *testing.T) {
 	}
 }
 
+func TestRegistrationProfileDraftReviewCLI(t *testing.T) {
+	fixture, err := os.ReadFile("../../registrationprofile/testdata/valid-registration.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"registration-profile", "validate", "--input", "-", "--at", "2026-08-25T00:00:00Z"}, bytes.NewReader(fixture), &stdout, &stderr)
+	if code != exitOK || strings.TrimSpace(stdout.String()) != "valid" {
+		t.Fatalf("validate code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+
+	tmp := t.TempDir()
+	specPath := filepath.Join(tmp, "spec.yaml")
+	profilePath := filepath.Join(tmp, "registration.yaml")
+	reviewPath := filepath.Join(tmp, "review.json")
+	spec := strings.Replace(string(fixture), "profile: uws.browser-registration.1.0\n", "", 1)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"registration-draft", "build", "--spec", specPath, "--out", profilePath}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("draft code=%d stderr=%q", code, stderr.String())
+	}
+	value, err := registrationprofile.LoadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Profile != "uws.browser-registration.1.0" {
+		t.Fatalf("profile = %q", value.Profile)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"registration-review", "bundle", "--profile", profilePath, "--at", "2026-08-25T00:00:00Z", "--out", reviewPath}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("review code=%d stderr=%q", code, stderr.String())
+	}
+	data, err := os.ReadFile(reviewPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewed registrationreview.Bundle
+	if err := json.Unmarshal(data, &reviewed); err != nil {
+		t.Fatal(err)
+	}
+	if err := registrationreview.Verify(&reviewed, mustTime(t, "2026-08-25T00:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"registration-profile", "validate", "--input", profilePath, "--at", "2026-09-24T00:00:00Z", "--format", "json"}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitRejected || !strings.Contains(stdout.String(), `"valid":false`) {
+		t.Fatalf("stale code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestAssistedAuthenticationCLIWritesOnlyClosedLocalBundle(t *testing.T) {
 	t.Setenv("MEMBER_PASSWORD", "actual-password-must-not-cross")
 	tmp := t.TempDir()
@@ -1170,6 +1231,7 @@ func TestCommandRegistryAndHelp(t *testing.T) {
 		{args: []string{"help", "registry"}, want: "registry <command>"},
 		{args: []string{"registry", "--help"}, want: "registry <command>"},
 		{args: []string{"registry", "search", "--help"}, want: "-location"},
+		{args: []string{"help", "registration-profile"}, want: "registration-profile <command>"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := run(test.args, strings.NewReader(""), &stdout, &stderr); code != exitOK || !strings.Contains(stdout.String(), test.want) {
