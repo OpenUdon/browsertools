@@ -41,6 +41,7 @@ type fakeSession struct {
 	observeErr   error
 	navigateErr  error
 	closeErr     error
+	closeBlocked bool
 	summary      NetworkSummary
 	navigations  []Navigation
 	observeCount int
@@ -107,8 +108,12 @@ func (session *fakeSession) Navigate(_ context.Context, navigation Navigation) e
 	return session.navigateErr
 }
 
-func (session *fakeSession) Close() (NetworkSummary, error) {
+func (session *fakeSession) Close(ctx context.Context) (NetworkSummary, error) {
 	session.closeCount++
+	if session.closeBlocked {
+		<-ctx.Done()
+		return NetworkSummary{}, ctx.Err()
+	}
 	return session.summary, session.closeErr
 }
 
@@ -598,6 +603,35 @@ func TestFinishRequiresCleanBoundedNetworkSummary(t *testing.T) {
 				t.Fatalf("completion=%#v close=%d error=%v output=%s", completion, session.closeCount, err, output)
 			}
 		})
+	}
+}
+
+func TestFinishBoundsBlockingTeardownWithFreshCleanupContext(t *testing.T) {
+	profile := validProfileJSON(t)
+	buttonID := candidateID(1, "button", "Register", 0)
+	session := &fakeSession{
+		observations: []RawObservation{{
+			Origin: "https://app.example.test", Path: "/register",
+			Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}},
+		}},
+		closeBlocked: true,
+	}
+	start := startMessage("https://app.example.test/register")
+	start.Bounds = &Bounds{
+		NavigationTimeoutMS: 20, TotalTimeoutMS: 1000, MaxRequests: 8,
+		MaxResponseBytes: 1 << 20, MaxObservations: 8, MaxCandidates: 8,
+	}
+	input := ndjson(t,
+		start,
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		reviewMessage(profile, []string{buttonID}),
+		ClientMessage{Protocol: Protocol, Type: "finish"},
+	)
+	started := time.Now()
+	completion, output, err := runSession(context.Background(), input, &fakeBrowser{session: session}, fixedNow)
+	assertFailure(t, err, output, "teardown_failure")
+	if completion != nil || session.closeCount != 1 || time.Since(started) > time.Second {
+		t.Fatalf("completion=%#v close=%d elapsed=%s", completion, session.closeCount, time.Since(started))
 	}
 }
 

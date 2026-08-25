@@ -93,7 +93,9 @@ disclosure-checked path, a monotonically increasing generation, and reduced
 accessibility candidates. The contract has no backend node-ID field; raw
 labels remain only in the browser process long enough to be reduced.
 The only backend session methods are `Observe`, `Navigate`, and `Close`;
-`Navigate` accepts the closed `GET`/`HEAD` enum. There is no API or message for
+all accept bounded contexts, and `Close` receives a fresh cleanup context even
+when the parent session is canceled. `Navigate` accepts the closed `GET`/`HEAD`
+enum. There is no API or message for
 typing, focus, click, submit, POST approval, origin expansion, script, DOM or
 page content, capture, cookie/storage access, or session export.
 
@@ -109,8 +111,9 @@ Credential bindings and an approval claim are deliberately not review-message
 fields. Candidate IDs must belong to the latest observation generation and
 must resolve to unique, non-redacted accessibility names.
 
-`finish` first closes the backend and validates that its request count is the
-sum of bounded GET and HEAD counts. It writes no result and discloses no
+`finish` first closes the backend within the declared navigation timeout and
+validates that its request count is the sum of bounded GET and HEAD counts. It
+writes no result and discloses no
 private path on the protocol. Only then does `Serve` return an in-process
 `Completion` to the caller. EOF, cancellation, invalid network accounting, or
 teardown failure returns no completion.

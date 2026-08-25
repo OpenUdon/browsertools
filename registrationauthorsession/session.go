@@ -30,7 +30,7 @@ type Browser interface {
 type Session interface {
 	Observe(context.Context) (RawObservation, error)
 	Navigate(context.Context, Navigation) error
-	Close() (NetworkSummary, error)
+	Close(context.Context) (NetworkSummary, error)
 }
 
 // BrowserRequest fixes all authority before a browser can be opened.
@@ -528,7 +528,13 @@ func (s *server) closeSession() (NetworkSummary, error) {
 	}
 	session := s.session
 	s.session = nil
-	return session.Close()
+	timeout := DefaultNavigationTimeout
+	if s.bounds.NavigationTimeoutMS > 0 {
+		timeout = time.Duration(s.bounds.NavigationTimeoutMS) * time.Millisecond
+	}
+	closeCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return session.Close(closeCtx)
 }
 
 func (s *server) cancel() error {
