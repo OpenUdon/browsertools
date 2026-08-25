@@ -370,6 +370,143 @@ func TestWritePrivateExclusiveUsesOwnerOnlyNonOverwritingArtifact(t *testing.T) 
 	}
 }
 
+func TestFinalizePrivateReconstructsWritesAndReopensExactly(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	finalized, err := FinalizePrivate(FinalizeRequest{
+		Completion: validCompletion(t), CreatedAt: createdAt,
+		AssessmentAt: createdAt.Add(time.Hour), PrivateRoot: root,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalized == nil || finalized.Result == nil || finalized.Written.Path == "" || finalized.Written.Digest == "" {
+		t.Fatalf("finalized=%#v", finalized)
+	}
+	data, err := os.ReadFile(finalized.Written.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalized.Written.Digest != testDigest(data) {
+		t.Fatalf("written digest=%q", finalized.Written.Digest)
+	}
+	promotable, err := json.Marshal(finalized.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(promotable, []byte(root)) || bytes.Contains(promotable, []byte(filepath.Base(finalized.Written.Path))) {
+		t.Fatal("private path entered the result envelope")
+	}
+	decoded, err := Decode(data, createdAt.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := MarshalDeterministic(finalized.Result)
+	if err != nil || !bytes.Equal(data, want) || !reflectDeepEnvelope(decoded, finalized.Result) {
+		t.Fatalf("finalized reconstruction changed: %v", err)
+	}
+	if _, err := FinalizePrivate(FinalizeRequest{
+		Completion: validCompletion(t), CreatedAt: createdAt,
+		AssessmentAt: createdAt.Add(time.Hour), PrivateRoot: root,
+	}); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
+		t.Fatalf("repeat finalization error=%v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("private entries=%#v err=%v", entries, err)
+	}
+}
+
+func TestFinalizePrivateFailsBeforeWriteForInvalidLifecycleOrContent(t *testing.T) {
+	tests := map[string]func(*FinalizeRequest){
+		"teardown accounting": func(value *FinalizeRequest) { value.Completion.Network.Requests++ },
+		"expired assessment":  func(value *FinalizeRequest) { value.AssessmentAt = time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC) },
+		"future creation":     func(value *FinalizeRequest) { value.AssessmentAt = value.CreatedAt.Add(-time.Second) },
+		"missing root":        func(value *FinalizeRequest) { value.PrivateRoot = "" },
+		"sensitive title": func(value *FinalizeRequest) {
+			value.Completion.Profile.Info.Title = "operator@example.test"
+			value.Completion.ProfileBytes, _ = registrationprofile.MarshalJSON(&value.Completion.Profile)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Chmod(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			request := FinalizeRequest{
+				Completion: validCompletion(t), CreatedAt: createdAt,
+				AssessmentAt: createdAt.Add(time.Hour), PrivateRoot: root,
+			}
+			mutate(&request)
+			if _, err := FinalizePrivate(request); err == nil {
+				t.Fatal("invalid finalization unexpectedly succeeded")
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("failed finalization retained artifacts: %#v err=%v", entries, err)
+			}
+		})
+	}
+}
+
+func TestReadPrivateExactRejectsSymlinkModeAndTamper(t *testing.T) {
+	result, err := Build(BuildRequest{Completion: validCompletion(t), CreatedAt: createdAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := MarshalDeterministic(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPath := t.TempDir()
+	if err := os.Chmod(rootPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := openPrivateRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	name := resultName(testDigest(data))
+	if err := root.WriteFile(name, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readPrivateExact(root, name); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("exact read failed: %v", err)
+	}
+	if err := root.Chmod(name, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPrivateExact(root, name); err == nil {
+		t.Fatal("public result mode unexpectedly accepted")
+	}
+	if err := root.Remove(name); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Symlink("target", name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPrivateExact(root, name); err == nil {
+		t.Fatal("symlink result unexpectedly accepted")
+	}
+	if err := root.Remove(name); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.WriteFile(name, append(append([]byte(nil), data...), 'x'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tampered, err := readPrivateExact(root, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(tampered, createdAt.Add(time.Hour)); err == nil {
+		t.Fatal("tampered private result unexpectedly decoded")
+	}
+}
+
 func validCompletion(t *testing.T) *registrationauthorsession.Completion {
 	t.Helper()
 	data, err := os.ReadFile("../registrationprofile/testdata/valid-registration.yaml")
@@ -417,4 +554,10 @@ func cloneEnvelope(t *testing.T, value *Envelope) *Envelope {
 func testDigest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func reflectDeepEnvelope(left, right *Envelope) bool {
+	leftBytes, leftErr := json.Marshal(left)
+	rightBytes, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && bytes.Equal(leftBytes, rightBytes)
 }

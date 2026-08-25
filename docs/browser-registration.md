@@ -177,21 +177,33 @@ owner-only, non-symlink directory and creates a mode-0600 digest-named file
 without replacement. Its returned path is process-private and must never be
 copied to protocol output, a prompt, a package, a report, or goal state.
 
+`registrationauthorresult.FinalizePrivate` is the complete supported
+post-teardown path. It builds from the clean in-process completion, marshals and
+strict-decodes an independent reconstruction at the requested assessment time,
+creates the digest-named file through one anchored owner-only root, reopens it
+through that same root, and repeats byte/digest/lifecycle validation before
+returning. The final file must remain a mode-0600 regular file and the root path
+must still identify the anchored mode-0700 directory. Any post-create failure
+removes only the exact newly created member. The returned path remains
+process-private; only the reconstructed envelope and exact digest are eligible
+for a separately protected consumer channel.
+
 The supported typed entry points are:
 
 ```go
 completion, err := registrationauthorsession.Serve(ctx, in, out, browser,
     registrationauthorsession.ServeOptions{Clock: clock})
 createdAt := clock().UTC().Truncate(time.Second)
-result, err := registrationauthorresult.Build(
-    registrationauthorresult.BuildRequest{Completion: completion, CreatedAt: createdAt})
-resultDigest, err := registrationauthorresult.Digest(result)
-written, err := registrationauthorresult.WritePrivateExclusive(privateRoot, result)
+finalized, err := registrationauthorresult.FinalizePrivate(
+    registrationauthorresult.FinalizeRequest{
+        Completion: completion, CreatedAt: createdAt,
+        AssessmentAt: createdAt, PrivateRoot: privateRoot,
+    })
 ```
 
 `Browser` in this example is an implementation of the deliberately narrow
 registration interface, not the authenticated author-session browser. The
-caller retains `written.Path` privately; a cross-process consumer exchanges a
+caller retains `finalized.Written.Path` privately; a cross-process consumer exchanges a
 separately protected result and its digest, never the path.
 
 ## Portable safety contract

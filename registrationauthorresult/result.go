@@ -156,6 +156,23 @@ type Written struct {
 	Digest string
 }
 
+// FinalizeRequest contains the complete clean session handoff and the one
+// explicit private persistence boundary. AssessmentAt is used for the
+// independent post-build and post-write lifecycle checks.
+type FinalizeRequest struct {
+	Completion   *registrationauthorsession.Completion
+	CreatedAt    time.Time
+	AssessmentAt time.Time
+	PrivateRoot  string
+}
+
+// Finalized returns the independently reconstructed result and its in-process
+// private location. Path must never cross a protocol, log, package, or report.
+type Finalized struct {
+	Result  *Envelope
+	Written Written
+}
+
 // Build constructs one deterministic, reviewed BRP result without browser or
 // runtime access.
 func Build(request BuildRequest) (*Envelope, error) {
@@ -370,12 +387,78 @@ func WritePrivateExclusive(root string, value *Envelope) (*Written, error) {
 		return nil, err
 	}
 	resultDigest := digest(data)
-	name := "registration-authoring-" + strings.TrimPrefix(resultDigest, "sha256:")[:16] + ".json"
+	name := resultName(resultDigest)
 	path := filepath.Join(root, name)
 	if err := writeExclusive(privateRoot, name, data); err != nil {
 		return nil, err
 	}
+	if err := validateOpenedPrivateRoot(root, privateRoot); err != nil {
+		_ = privateRoot.Remove(name)
+		return nil, err
+	}
 	return &Written{Path: path, Digest: resultDigest}, nil
+}
+
+// FinalizePrivate performs the complete post-teardown lifecycle: construct,
+// strict-decode independently, create once under one anchored private root,
+// reopen through that root, and verify exact bytes, digest, and freshness.
+func FinalizePrivate(request FinalizeRequest) (_ *Finalized, resultErr error) {
+	if request.PrivateRoot == "" || request.AssessmentAt.IsZero() {
+		return nil, errors.New("private registration finalization inputs are required")
+	}
+	result, err := Build(BuildRequest{Completion: request.Completion, CreatedAt: request.CreatedAt})
+	if err != nil {
+		return nil, err
+	}
+	data, err := MarshalDeterministic(result)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := Decode(data, request.AssessmentAt)
+	if err != nil {
+		return nil, err
+	}
+	decodedBytes, err := MarshalDeterministic(decoded)
+	if err != nil || !bytes.Equal(data, decodedBytes) {
+		return nil, errors.New("registration authoring reconstruction changed canonical bytes")
+	}
+	resultDigest := digest(data)
+	name := resultName(resultDigest)
+	privateRoot, err := openPrivateRoot(request.PrivateRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer privateRoot.Close()
+	created := false
+	defer func() {
+		if resultErr != nil && created {
+			_ = privateRoot.Remove(name)
+		}
+	}()
+	if err := writeExclusive(privateRoot, name, data); err != nil {
+		return nil, err
+	}
+	created = true
+	readBack, err := readPrivateExact(privateRoot, name)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(readBack, data) || digest(readBack) != resultDigest {
+		return nil, errors.New("private registration result changed after creation")
+	}
+	verified, err := Decode(readBack, request.AssessmentAt)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateOpenedPrivateRoot(request.PrivateRoot, privateRoot); err != nil {
+		return nil, err
+	}
+	return &Finalized{
+		Result: verified,
+		Written: Written{
+			Path: filepath.Join(request.PrivateRoot, name), Digest: resultDigest,
+		},
+	}, nil
 }
 
 func buildFlowReview(completion *registrationauthorsession.Completion, flow browserregistration.Flow) (FlowReview, error) {
@@ -524,6 +607,46 @@ func openPrivateRoot(root string) (*os.Root, error) {
 	return opened, nil
 }
 
+func validateOpenedPrivateRoot(path string, opened *os.Root) error {
+	if opened == nil {
+		return errors.New("private result root is unavailable")
+	}
+	anchored, anchorErr := opened.Stat(".")
+	current, pathErr := os.Lstat(path)
+	if anchorErr != nil || pathErr != nil || !current.IsDir() || current.Mode()&os.ModeSymlink != 0 ||
+		current.Mode().Perm()&0o077 != 0 || !os.SameFile(anchored, current) {
+		return errors.New("private result root changed during finalization")
+	}
+	return nil
+}
+
+func readPrivateExact(root *os.Root, name string) ([]byte, error) {
+	before, err := root.Lstat(name)
+	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 ||
+		before.Mode().Perm() != 0o600 || before.Size() <= 0 || before.Size() > MaxResultBytes {
+		return nil, errors.New("private registration result identity is invalid")
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, errors.New("open private registration result")
+	}
+	defer file.Close()
+	opened, statErr := file.Stat()
+	if statErr != nil || !opened.Mode().IsRegular() || opened.Mode().Perm() != 0o600 || !os.SameFile(before, opened) {
+		return nil, errors.New("private registration result changed during open")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, MaxResultBytes+1))
+	if err != nil || len(data) == 0 || len(data) > MaxResultBytes {
+		return nil, errors.New("read private registration result")
+	}
+	after, pathErr := root.Lstat(name)
+	if pathErr != nil || !after.Mode().IsRegular() || after.Mode().Perm() != 0o600 ||
+		!os.SameFile(opened, after) || after.Size() != int64(len(data)) {
+		return nil, errors.New("private registration result changed during read")
+	}
+	return data, nil
+}
+
 func writeExclusive(root *os.Root, name string, data []byte) (resultErr error) {
 	temporaryName := ".browsertools-registration-author-" + strings.ToLower(rand.Text()) + ".tmp"
 	temporary, err := root.OpenFile(temporaryName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -554,6 +677,10 @@ func writeExclusive(root *os.Root, name string, data []byte) (resultErr error) {
 		return errors.New("publish private registration result")
 	}
 	return nil
+}
+
+func resultName(resultDigest string) string {
+	return "registration-authoring-" + strings.TrimPrefix(resultDigest, "sha256:")[:16] + ".json"
 }
 
 func promotableLabel(value string) bool {

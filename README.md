@@ -345,6 +345,10 @@ reviewed candidate IDs, selected submit candidate and flow, approved origins,
 and explicit fixed call controls. It reconstructs the current-generation
 candidate IDs, binds the one accessibility-name submit, and emits the exact M26
 review message without inferring any profile or cleanup field.
+After clean session teardown,
+`registrationauthorresult.FinalizePrivate` independently reconstructs and
+strict-decodes the M26 result before and after an anchored owner-only,
+create-once write; its path remains process-private.
 
 Caller-supplied raw captures and derived artifacts can be kept in an explicit
 private local cache. Raw entries can never be publication eligible:
