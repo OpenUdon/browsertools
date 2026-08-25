@@ -48,7 +48,9 @@ Registration authoring has separate browser-independent contracts:
 GET/HEAD observation, and its private
 `browsertools.registration-authoring.v1` result binds one reviewed inert BRP
 without claiming a submit, account attempt, session, or supported runtime.
-No live registration CLI or Chromium producer is enabled by these contracts.
+A guarded typed Chromium backend and deterministic explicit candidate builder
+now implement those contracts, but no live registration CLI or worker is
+enabled yet.
 See [Browser registration profiles](docs/browser-registration.md).
 
 Page-controlled frame names cross the same canonical reduction boundary as
@@ -336,6 +338,13 @@ resolve a symbolic credential, submit a registration, handle CAPTCHA/MFA/email
 verification, approve a run, or perform cleanup. Registration profiles and
 reviews remain package-local and are excluded from the browser capability
 registry. See [Browser registration profiles](docs/browser-registration.md).
+
+The typed `registrationauthor.Build` path combines one current reduced
+registration observation with a complete `registrationdraft.Spec`, exact
+reviewed candidate IDs, selected submit candidate and flow, approved origins,
+and explicit fixed call controls. It reconstructs the current-generation
+candidate IDs, binds the one accessibility-name submit, and emits the exact M26
+review message without inferring any profile or cleanup field.
 
 Caller-supplied raw captures and derived artifacts can be kept in an explicit
 private local cache. Raw entries can never be publication eligible:

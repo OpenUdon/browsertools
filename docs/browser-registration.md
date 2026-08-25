@@ -113,6 +113,19 @@ the same exact-origin guard before the request starts. A08.1 adds this typed
 backend only; the registration CLI and reusable isolated worker remain absent
 until A08.4.
 
+`registrationauthor.Build` is the deterministic bridge from that reduced
+protocol observation to an explicit profile review. Its request contains the
+complete `registrationdraft.Spec`, whole-second assessment time, canonical
+approved origins, exact flow, sorted reviewed candidate IDs, exact submit
+candidate ID, and explicit fixed call controls. The builder reconstructs every
+candidate ID from generation/role/name/order, rejects stale or fabricated
+generations, ambiguity, noncanonical labels, origin/time drift, and a submit
+locator that is not the exact selected accessibility role/name. It does not
+fill any missing locator, credential slot, step, checkpoint, success condition,
+duplicate/ambiguity behavior, or cleanup choice. The returned object exposes
+defensive copies and produces the exact M26 `review` message; it is not a
+result, approval, runtime request, or private artifact.
+
 Reduction is heuristic, not data loss prevention: ordinary names,
 identifiers, and order numbers can remain in accessibility labels. Every UI or
 terminal that displays or retains registration candidates must show
