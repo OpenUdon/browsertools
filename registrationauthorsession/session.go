@@ -406,10 +406,7 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 		if left.Role != right.Role {
 			return left.Role < right.Role
 		}
-		if left.Label != right.Label {
-			return left.Label < right.Label
-		}
-		return left.BackendID < right.BackendID
+		return left.Label < right.Label
 	})
 	observation := Observation{
 		Generation: s.generation, Origin: origin, Path: raw.Path,
@@ -418,8 +415,7 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 	records := make(map[string]candidateRecord, len(raw.Candidates))
 	reducedLocators := make(map[string]struct{}, len(raw.Candidates))
 	for index, rawCandidate := range raw.Candidates {
-		if rawCandidate.BackendID == "" || len(rawCandidate.BackendID) > MaxBackendIDBytes ||
-			!utf8.ValidString(rawCandidate.BackendID) || len(rawCandidate.Label) > MaxRawCandidateLabelBytes ||
+		if len(rawCandidate.Label) > MaxRawCandidateLabelBytes ||
 			!utf8.ValidString(rawCandidate.Label) || !portableRoles[rawCandidate.Role] ||
 			rawCandidate.Matches < 1 || rawCandidate.Matches > s.bounds.MaxCandidates {
 			return Observation{}, nil, errors.New("backend candidate is invalid")
@@ -436,7 +432,7 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 		id := candidateID(s.generation, rawCandidate.Role, label, index)
 		candidate := Candidate{ID: id, Role: rawCandidate.Role, Label: label, Matches: rawCandidate.Matches}
 		observation.Candidates = append(observation.Candidates, candidate)
-		records[id] = candidateRecord{protocol: candidate, backendID: rawCandidate.BackendID, generation: s.generation}
+		records[id] = candidateRecord{protocol: candidate, generation: s.generation}
 	}
 	seenThisObservation := make(map[string]struct{}, len(raw.Diagnostics))
 	for _, code := range raw.Diagnostics {

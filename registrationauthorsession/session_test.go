@@ -91,8 +91,8 @@ func TestServeCompletesReviewedNoSubmitSession(t *testing.T) {
 		observations: []RawObservation{{
 			Origin: "https://app.example.test", Path: "/register",
 			Candidates: []RawCandidate{
-				{BackendID: "private-node-2", Role: "textbox", Label: "password=hunter2", Matches: 1},
-				{BackendID: "private-node-1", Role: "button", Label: "Register", Matches: 1},
+				{Role: "textbox", Label: "password=hunter2", Matches: 1},
+				{Role: "button", Label: "Register", Matches: 1},
 			},
 			Diagnostics: []string{"synthetic_fixture", "synthetic_fixture"},
 		}},
@@ -307,13 +307,13 @@ func TestObservationFailuresAreValueFreeAndFailClosed(t *testing.T) {
 	}{
 		{name: "origin", raw: RawObservation{Origin: "https://other.example.test", Path: "/register"}},
 		{name: "path", raw: RawObservation{Origin: "https://app.example.test", Path: "/password=do-not-retain"}},
-		{name: "candidate", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{BackendID: "private-do-not-retain", Role: "button", Label: "Register", Matches: 0}}}},
+		{name: "candidate", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 0}}}},
 		{name: "duplicate reduced locator", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{
-			{BackendID: "first", Role: "button", Label: "Register", Matches: 1},
-			{BackendID: "second", Role: "button", Label: "Register", Matches: 1},
+			{Role: "button", Label: "Register", Matches: 1},
+			{Role: "button", Label: "Register", Matches: 1},
 		}}},
-		{name: "invalid UTF-8 label", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{BackendID: "backend", Role: "button", Label: string([]byte{0xff}), Matches: 1}}}},
-		{name: "oversized raw label", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{BackendID: "backend", Role: "button", Label: strings.Repeat("x", MaxRawCandidateLabelBytes+1), Matches: 1}}}},
+		{name: "invalid UTF-8 label", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{Role: "button", Label: string([]byte{0xff}), Matches: 1}}}},
+		{name: "oversized raw label", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{Role: "button", Label: strings.Repeat("x", MaxRawCandidateLabelBytes+1), Matches: 1}}}},
 		{name: "diagnostic count", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Diagnostics: repeatDiagnostic(DiagnosticSyntheticFixture, MaxUniqueDiagnostics+1)}},
 		{name: "diagnostic", raw: RawObservation{Origin: "https://app.example.test", Path: "/register", Diagnostics: []string{"backend do-not-retain"}}},
 	}
@@ -360,7 +360,7 @@ func TestReviewRequiresCurrentPromotableCandidatesAndMatchingProfile(t *testing.
 	buttonID := candidateID(1, "button", "Register", 0)
 	baseObservation := RawObservation{
 		Origin: "https://app.example.test", Path: "/register",
-		Candidates: []RawCandidate{{BackendID: "backend", Role: "button", Label: "Register", Matches: 1}},
+		Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}},
 	}
 	tests := []struct {
 		name       string
@@ -395,7 +395,7 @@ func TestReviewRequiresCurrentPromotableCandidatesAndMatchingProfile(t *testing.
 		redactedID := candidateID(1, "textbox", authorsession.RedactedLabel, 0)
 		session := &fakeSession{observations: []RawObservation{{
 			Origin: "https://app.example.test", Path: "/register",
-			Candidates: []RawCandidate{{BackendID: "backend", Role: "textbox", Label: "password=do-not-retain", Matches: 1}},
+			Candidates: []RawCandidate{{Role: "textbox", Label: "password=do-not-retain", Matches: 1}},
 		}}}
 		browser := &fakeBrowser{session: session}
 		input := ndjson(t,
@@ -416,7 +416,7 @@ func TestReviewRequiresExistingFlowAndExplicitCleanupDisposition(t *testing.T) {
 	buttonID := candidateID(1, "button", "Register", 0)
 	observation := RawObservation{
 		Origin: "https://app.example.test", Path: "/register",
-		Candidates: []RawCandidate{{BackendID: "backend", Role: "button", Label: "Register", Matches: 1}},
+		Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}},
 	}
 	for _, test := range []struct {
 		name       string
@@ -448,7 +448,7 @@ func TestNavigationExpiresCandidateGeneration(t *testing.T) {
 	oldID := candidateID(1, "button", "Register", 0)
 	session := &fakeSession{observations: []RawObservation{{
 		Origin: "https://app.example.test", Path: "/register",
-		Candidates: []RawCandidate{{BackendID: "old", Role: "button", Label: "Register", Matches: 1}},
+		Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}},
 	}}}
 	browser := &fakeBrowser{session: session}
 	input := ndjson(t,
@@ -480,7 +480,7 @@ func TestFinishRequiresCleanBoundedNetworkSummary(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			session := &fakeSession{
-				observations: []RawObservation{{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{BackendID: "backend", Role: "button", Label: "Register", Matches: 1}}}},
+				observations: []RawObservation{{Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}}}},
 				summary:      test.summary, closeErr: test.closeErr,
 			}
 			browser := &fakeBrowser{session: session}

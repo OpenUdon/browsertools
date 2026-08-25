@@ -45,7 +45,6 @@ const (
 	MaxUniqueDiagnostics      = 256
 	MaxProtocolLineBytes      = 256 << 10
 	MaxRawCandidateLabelBytes = 4 << 10
-	MaxBackendIDBytes         = 256
 	maxJSONDepth              = 32
 )
 
@@ -75,8 +74,8 @@ type ClientMessage struct {
 	CleanupDisposition string          `json:"cleanupDisposition,omitempty"`
 }
 
-// RawObservation is backend-only evidence. BackendID and raw labels never
-// cross the protocol boundary.
+// RawObservation is backend-only evidence. Raw labels never cross the
+// protocol boundary.
 type RawObservation struct {
 	Origin      string
 	Path        string
@@ -88,10 +87,9 @@ type RawObservation struct {
 // Matches is the complete count for the reduced role/name locator; a backend
 // must not split the same reduced locator across multiple candidates.
 type RawCandidate struct {
-	BackendID string
-	Role      string
-	Label     string
-	Matches   int
+	Role    string
+	Label   string
+	Matches int
 }
 
 // Candidate is one reduced current-generation protocol candidate.
@@ -167,7 +165,6 @@ type Completion struct {
 
 type candidateRecord struct {
 	protocol   Candidate
-	backendID  string
 	generation int
 }
 
