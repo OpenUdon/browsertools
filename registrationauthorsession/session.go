@@ -294,6 +294,9 @@ func (s *server) review(message ClientMessage) error {
 	if err != nil {
 		return s.fail("invalid_profile")
 	}
+	if profileValue.ObservationKind != "accessibility_snapshot" {
+		return s.fail("invalid_profile")
+	}
 	now := s.clock().UTC().Round(0)
 	if now.IsZero() || registrationprofile.ValidateAt(profileValue, now) != nil {
 		return s.fail("invalid_profile")
@@ -333,12 +336,45 @@ func (s *server) review(message ClientMessage) error {
 			Label: record.protocol.Label, Matches: record.protocol.Matches,
 		})
 	}
+	if err := validateReviewedSubmit(profileValue, message.Flow, reviewed); err != nil {
+		return s.fail("invalid_submit")
+	}
 	s.reviewedProfile = &registrationReview{
 		profile: *profileValue, bytes: append([]byte(nil), profileBytes...), candidates: reviewed,
 		flow: message.Flow, cleanup: message.CleanupDisposition,
 	}
 	s.phase = "reviewed"
 	return s.write(ServerMessage{Type: "state", Phase: s.phase})
+}
+
+func validateReviewedSubmit(profileValue *registrationprofile.Profile, flowName string, reviewed []ReviewedCandidate) error {
+	flow, ok := profileValue.Flows[flowName]
+	if !ok {
+		return errors.New("reviewed registration flow is missing")
+	}
+	submitCount := 0
+	matchingCandidates := 0
+	for _, step := range flow.Sequence {
+		if step.Submit == nil {
+			continue
+		}
+		submitCount++
+		locator := step.Submit.Locator
+		if locator.Role == "" || locator.Text != "" || locator.Value != "" ||
+			locator.Name == "" || !safeCandidateLabel(locator.Name) ||
+			locator.Name == authorsession.RedactedLabel || locator.Name == authorsession.UntrustedLabel {
+			return errors.New("reviewed submit locator is not accessibility-name portable")
+		}
+		for _, candidate := range reviewed {
+			if candidate.Role == locator.Role && candidate.Label == locator.Name && candidate.Matches == 1 {
+				matchingCandidates++
+			}
+		}
+	}
+	if submitCount != 1 || matchingCandidates != 1 {
+		return errors.New("reviewed submit does not bind one exact current candidate")
+	}
+	return nil
 }
 
 func (s *server) finish() (*Completion, error) {

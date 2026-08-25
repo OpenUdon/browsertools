@@ -443,6 +443,45 @@ func TestReviewRequiresExistingFlowAndExplicitCleanupDisposition(t *testing.T) {
 	}
 }
 
+func TestReviewBindsAccessibilityProfileSubmitBeforeCompletion(t *testing.T) {
+	profile := validProfileJSON(t)
+	for _, test := range []struct {
+		name        string
+		profile     json.RawMessage
+		candidate   RawCandidate
+		candidateID string
+		diagnostic  string
+	}{
+		{
+			name: "unrelated candidate", profile: profile,
+			candidate:   RawCandidate{Role: "button", Label: "Continue", Matches: 1},
+			candidateID: candidateID(1, "button", "Continue", 0), diagnostic: "invalid_submit",
+		},
+		{
+			name: "unsupported observation kind", profile: profileWithObservationKind(t, "dom_text"),
+			candidate:   RawCandidate{Role: "button", Label: "Register", Matches: 1},
+			candidateID: candidateID(1, "button", "Register", 0), diagnostic: "invalid_profile",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := &fakeSession{observations: []RawObservation{{
+				Origin: "https://app.example.test", Path: "/register", Candidates: []RawCandidate{test.candidate},
+			}}}
+			browser := &fakeBrowser{session: session}
+			input := ndjson(t,
+				startMessage("https://app.example.test/register"),
+				ClientMessage{Protocol: Protocol, Type: "observe"},
+				reviewMessage(test.profile, []string{test.candidateID}),
+			)
+			completion, output, err := runSession(context.Background(), input, browser, fixedNow)
+			assertFailure(t, err, output, test.diagnostic)
+			if completion != nil || session.closeCount != 1 {
+				t.Fatalf("completion=%#v close=%d", completion, session.closeCount)
+			}
+		})
+	}
+}
+
 func TestNavigationExpiresCandidateGeneration(t *testing.T) {
 	profile := validProfileJSON(t)
 	oldID := candidateID(1, "button", "Register", 0)
@@ -623,6 +662,21 @@ func validProfileJSON(t *testing.T) json.RawMessage {
 		t.Fatal(err)
 	}
 	data, err = registrationprofile.MarshalJSON(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func profileWithObservationKind(t *testing.T, kind string) json.RawMessage {
+	t.Helper()
+	data := validProfileJSON(t)
+	profileValue, err := registrationprofile.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileValue.ObservationKind = kind
+	data, err = registrationprofile.MarshalJSON(profileValue)
 	if err != nil {
 		t.Fatal(err)
 	}
