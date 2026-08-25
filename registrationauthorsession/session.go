@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -94,13 +95,18 @@ type registrationProfile = registrationprofile.Profile
 // Serve processes one no-submit authoring session until finish, close, or a
 // fail-closed terminal condition. A Completion is returned only after a
 // reviewed profile and clean, policy-conforming browser teardown.
-func Serve(ctx context.Context, input io.Reader, output io.Writer, browser Browser, options ServeOptions) (*Completion, error) {
+func Serve(ctx context.Context, input io.ReadCloser, output io.Writer, browser Browser, options ServeOptions) (*Completion, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if input == nil || output == nil || browser == nil {
 		return nil, errors.New("registration author-session input, output, and browser are required")
 	}
+	var closeInputOnce sync.Once
+	closeInput := func() { closeInputOnce.Do(func() { _ = input.Close() }) }
+	defer closeInput()
+	stopCancelClose := context.AfterFunc(ctx, closeInput)
+	defer stopCancelClose()
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}

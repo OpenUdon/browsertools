@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,6 +49,34 @@ type fakeSession struct {
 
 type failAfterWriter struct {
 	remaining int
+}
+
+type stagedBlockingInput struct {
+	data      []byte
+	position  int
+	readAgain chan struct{}
+	closed    chan struct{}
+	once      sync.Once
+}
+
+func (input *stagedBlockingInput) Read(destination []byte) (int, error) {
+	if input.position < len(input.data) {
+		count := copy(destination, input.data[input.position:])
+		input.position += count
+		return count, nil
+	}
+	input.once.Do(func() { close(input.readAgain) })
+	<-input.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (input *stagedBlockingInput) Close() error {
+	select {
+	case <-input.closed:
+	default:
+		close(input.closed)
+	}
+	return nil
 }
 
 func (writer *failAfterWriter) Write(data []byte) (int, error) {
@@ -107,7 +137,7 @@ func TestServeCompletesReviewedNoSubmitSession(t *testing.T) {
 		ClientMessage{Protocol: Protocol, Type: "finish"},
 	)
 	var output bytes.Buffer
-	completion, err := Serve(context.Background(), strings.NewReader(input), &output, browser, ServeOptions{Clock: func() time.Time { return fixedNow }})
+	completion, err := Serve(context.Background(), io.NopCloser(strings.NewReader(input)), &output, browser, ServeOptions{Clock: func() time.Time { return fixedNow }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,7 +596,7 @@ func TestOpenPartialFailureAndOutputFailureCloseSession(t *testing.T) {
 		writer := &failAfterWriter{remaining: 1}
 		_, err := Serve(
 			context.Background(),
-			strings.NewReader(ndjson(t, startMessage("https://app.example.test/register"))),
+			io.NopCloser(strings.NewReader(ndjson(t, startMessage("https://app.example.test/register")))),
 			writer,
 			browser,
 			ServeOptions{Clock: func() time.Time { return fixedNow }},
@@ -578,6 +608,33 @@ func TestOpenPartialFailureAndOutputFailureCloseSession(t *testing.T) {
 			t.Fatalf("output writer detail leaked: %v", err)
 		}
 	})
+}
+
+func TestCancellationInterruptsBlockedOwnedInputAndClosesBrowser(t *testing.T) {
+	input := &stagedBlockingInput{
+		data:      []byte(ndjson(t, startMessage("https://app.example.test/register"))),
+		readAgain: make(chan struct{}), closed: make(chan struct{}),
+	}
+	session := &fakeSession{}
+	browser := &fakeBrowser{session: session}
+	ctx, cancel := context.WithCancel(context.Background())
+	var output bytes.Buffer
+	result := make(chan error, 1)
+	go func() {
+		_, err := Serve(ctx, input, &output, browser, ServeOptions{Clock: func() time.Time { return fixedNow }})
+		result <- err
+	}()
+	<-input.readAgain
+	cancel()
+	select {
+	case err := <-result:
+		assertFailure(t, err, output.String(), "canceled")
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not interrupt blocked protocol input")
+	}
+	if browser.openCount != 1 || session.closeCount != 1 {
+		t.Fatalf("opens=%d close=%d", browser.openCount, session.closeCount)
+	}
 }
 
 func TestOversizedProtocolLineFailsWithoutEcho(t *testing.T) {
@@ -699,7 +756,7 @@ func ndjson(t *testing.T, messages ...ClientMessage) string {
 
 func runSession(ctx context.Context, input string, browser Browser, now time.Time) (*Completion, string, error) {
 	var output bytes.Buffer
-	completion, err := Serve(ctx, strings.NewReader(input), &output, browser, ServeOptions{Clock: func() time.Time { return now }})
+	completion, err := Serve(ctx, io.NopCloser(strings.NewReader(input)), &output, browser, ServeOptions{Clock: func() time.Time { return now }})
 	return completion, output.String(), err
 }
 

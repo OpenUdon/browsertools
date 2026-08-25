@@ -70,7 +70,9 @@ contracts independently before a live registration producer is available.
 
 ### Registration author-session v1
 
-`registrationauthorsession.Serve` exchanges newline-delimited JSON. Every
+`registrationauthorsession.Serve` takes ownership of a closeable input and
+exchanges newline-delimited JSON. Context cancellation closes that input so a
+blocked read cannot keep the browser session alive. Every
 message carries `protocol: "browsertools.registration-author-session.v1"`.
 Input is limited to 256 KiB per line and 32 JSON nesting levels; duplicate
 names, unknown or message-inappropriate fields, invalid UTF-8, and trailing
