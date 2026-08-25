@@ -346,6 +346,13 @@ func TestWritePrivateExclusiveUsesOwnerOnlyNonOverwritingArtifact(t *testing.T) 
 	if _, err := WritePrivateExclusive(root, result); err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
 		t.Fatalf("second write error = %v", err)
 	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(written.Path) {
+		t.Fatalf("private root retained temporary artifacts: %#v", entries)
+	}
 
 	publicRoot := t.TempDir()
 	if err := os.Chmod(publicRoot, 0o755); err != nil {

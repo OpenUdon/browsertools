@@ -5,11 +5,13 @@ package registrationauthorresult
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -358,9 +360,11 @@ func Decode(data []byte, at time.Time) (*Envelope, error) {
 // WritePrivateExclusive creates one owner-only result without replacing an
 // existing digest-named artifact.
 func WritePrivateExclusive(root string, value *Envelope) (*Written, error) {
-	if err := validatePrivateRoot(root); err != nil {
+	privateRoot, err := openPrivateRoot(root)
+	if err != nil {
 		return nil, err
 	}
+	defer privateRoot.Close()
 	data, err := MarshalDeterministic(value)
 	if err != nil {
 		return nil, err
@@ -368,7 +372,7 @@ func WritePrivateExclusive(root string, value *Envelope) (*Written, error) {
 	resultDigest := digest(data)
 	name := "registration-authoring-" + strings.TrimPrefix(resultDigest, "sha256:")[:16] + ".json"
 	path := filepath.Join(root, name)
-	if err := writeExclusive(path, data); err != nil {
+	if err := writeExclusive(privateRoot, name, data); err != nil {
 		return nil, err
 	}
 	return &Written{Path: path, Digest: resultDigest}, nil
@@ -498,36 +502,43 @@ func parseCanonicalTime(value string) (time.Time, error) {
 	return parsed, nil
 }
 
-func validatePrivateRoot(root string) error {
+func openPrivateRoot(root string) (*os.Root, error) {
 	if !filepath.IsAbs(root) || strings.TrimSpace(root) != root {
-		return errors.New("private result root must be an absolute path")
+		return nil, errors.New("private result root must be an absolute path")
 	}
-	info, err := os.Lstat(root)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("private result root must be an existing non-symlink owner-only directory")
+	before, err := os.Lstat(root)
+	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 || before.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("private result root must be an existing non-symlink owner-only directory")
 	}
-	return nil
+	opened, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, errors.New("open private result root")
+	}
+	anchored, anchorErr := opened.Stat(".")
+	after, pathErr := os.Lstat(root)
+	if anchorErr != nil || pathErr != nil || !after.IsDir() || after.Mode()&os.ModeSymlink != 0 ||
+		after.Mode().Perm()&0o077 != 0 || !os.SameFile(before, anchored) || !os.SameFile(anchored, after) {
+		_ = opened.Close()
+		return nil, errors.New("private result root changed during validation")
+	}
+	return opened, nil
 }
 
-func writeExclusive(path string, data []byte) (resultErr error) {
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".browsertools-registration-author-")
+func writeExclusive(root *os.Root, name string, data []byte) (resultErr error) {
+	temporaryName := ".browsertools-registration-author-" + strings.ToLower(rand.Text()) + ".tmp"
+	temporary, err := root.OpenFile(temporaryName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return errors.New("create private result temporary file")
 	}
-	temporaryPath := temporary.Name()
 	closed := false
 	defer func() {
 		if !closed {
 			_ = temporary.Close()
 		}
-		_ = os.Remove(temporaryPath)
+		_ = root.Remove(temporaryName)
 	}()
-	if err := temporary.Chmod(0o600); err != nil {
-		return errors.New("restrict private result temporary file")
-	}
-	written, err := temporary.Write(data)
-	if err != nil || written != len(data) {
+	written, err := io.Copy(temporary, bytes.NewReader(data))
+	if err != nil || written != int64(len(data)) {
 		return errors.New("write private result temporary file")
 	}
 	if err := temporary.Sync(); err != nil {
@@ -537,7 +548,7 @@ func writeExclusive(path string, data []byte) (resultErr error) {
 		return errors.New("close private result temporary file")
 	}
 	closed = true
-	if err := os.Link(temporaryPath, path); errors.Is(err, os.ErrExist) {
+	if err := root.Link(temporaryName, name); errors.Is(err, os.ErrExist) {
 		return errors.New("refusing to overwrite private registration result")
 	} else if err != nil {
 		return errors.New("publish private registration result")
