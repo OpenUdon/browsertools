@@ -104,6 +104,25 @@ func TestBuildVerifyAndDeterministicDigest(t *testing.T) {
 	}
 }
 
+func TestBuildCanonicalizesEmptyDiagnosticsAsArray(t *testing.T) {
+	completion := validCompletion(t)
+	completion.Diagnostics = nil
+	result, err := Build(BuildRequest{Completion: completion, CreatedAt: createdAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := MarshalDeterministic(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"diagnostics":[]`)) || bytes.Contains(data, []byte(`"diagnostics":null`)) {
+		t.Fatalf("empty diagnostics are not canonical: %s", data)
+	}
+	if _, err := Decode(data, createdAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestVerifyRejectsEveryBoundIdentityAndSafetyMutation(t *testing.T) {
 	base, err := Build(BuildRequest{Completion: validCompletion(t), CreatedAt: createdAt})
 	if err != nil {

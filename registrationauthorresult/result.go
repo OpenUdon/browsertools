@@ -473,7 +473,8 @@ func canonicalDiagnostics(values []string) ([]string, error) {
 	if len(values) > registrationauthorsession.MaxUniqueDiagnostics || !sort.StringsAreSorted(values) {
 		return nil, errors.New("registration diagnostics are not canonical")
 	}
-	result := append([]string(nil), values...)
+	result := make([]string, len(values))
+	copy(result, values)
 	for index, value := range result {
 		if !registrationauthorsession.ValidDiagnostic(value) || index > 0 && result[index-1] == value {
 			return nil, errors.New("registration diagnostic is invalid")
