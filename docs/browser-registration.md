@@ -120,6 +120,13 @@ session. A re-executing parent is responsible for stable executable hashing,
 minimal environment construction, and process-group cleanup; the worker
 exposes no Playwright type or in-process browser handle.
 
+On Linux hosts where AppArmor disables Chromium's unprivileged user-namespace
+sandbox, Browsertools may forward `CHROME_DEVEL_SANDBOX` to Chromium only when
+it identifies a root-owned, setuid, non-symlink regular helper in a root-owned
+non-writable directory. User-controlled, linked, writable, relative, or
+unsupported-platform helper paths are omitted. Chromium sandbox enforcement
+remains mandatory; Browsertools never supplies a sandbox-disable flag.
+
 The standalone entry is:
 
 ```bash

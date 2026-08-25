@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -252,6 +253,7 @@ func TestNetworkGuardBoundsAndClosedEvents(t *testing.T) {
 func TestCaptureBrowserEnvironmentExcludesCredentialVariables(t *testing.T) {
 	t.Setenv("BROWSERTOOLS_TEST_SECRET", "must-not-pass")
 	t.Setenv("OPENAI_API_KEY", "must-not-pass")
+	t.Setenv("CHROME_DEVEL_SANDBOX", filepath.Join(t.TempDir(), "user-controlled-helper"))
 	t.Setenv("LANG", "en_US.UTF-8")
 	t.Setenv("DISPLAY", ":99")
 	t.Setenv("XAUTHORITY", "/tmp/browsertools-test-xauthority")
@@ -267,6 +269,9 @@ func TestCaptureBrowserEnvironmentExcludesCredentialVariables(t *testing.T) {
 	}
 	if _, ok := environment["OPENAI_API_KEY"]; ok {
 		t.Fatal("API key environment variable was inherited")
+	}
+	if _, ok := environment["CHROME_DEVEL_SANDBOX"]; ok {
+		t.Fatal("unvalidated Chromium sandbox helper was inherited")
 	}
 }
 

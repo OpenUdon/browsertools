@@ -433,5 +433,8 @@ func captureBrowserEnvironment() map[string]string {
 			result[name] = value
 		}
 	}
+	if value, ok := os.LookupEnv("CHROME_DEVEL_SANDBOX"); ok && validChromeSandboxHelper(value) {
+		result["CHROME_DEVEL_SANDBOX"] = value
+	}
 	return result
 }
