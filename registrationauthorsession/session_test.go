@@ -180,6 +180,39 @@ func TestServeCompletesReviewedNoSubmitSession(t *testing.T) {
 	assertClosedServerMessages(t, transcript)
 }
 
+func TestCompletionUsesAcceptedObservationTime(t *testing.T) {
+	profile := validProfileJSON(t)
+	registerID := candidateID(1, "button", "Register", 0)
+	session := &fakeSession{
+		observations: []RawObservation{{
+			Origin: "https://app.example.test", Path: "/register",
+			Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}},
+		}},
+		summary: NetworkSummary{Requests: 1, GETRequests: 1},
+	}
+	times := []time.Time{fixedNow.Add(time.Minute), fixedNow.Add(2 * time.Minute)}
+	clockCalls := 0
+	clock := func() time.Time {
+		value := times[clockCalls]
+		clockCalls++
+		return value
+	}
+	input := ndjson(t,
+		startMessage("https://app.example.test/register"),
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		reviewMessage(profile, []string{registerID}),
+		ClientMessage{Protocol: Protocol, Type: "finish"},
+	)
+	var output bytes.Buffer
+	completion, err := Serve(context.Background(), io.NopCloser(strings.NewReader(input)), &output, &fakeBrowser{session: session}, ServeOptions{Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion.ObservedAt != times[0] || clockCalls != 2 {
+		t.Fatalf("observation time = %v, clock calls = %d", completion.ObservedAt, clockCalls)
+	}
+}
+
 func TestMessageSpecificFieldsFailBeforeBrowserOpen(t *testing.T) {
 	for _, field := range []string{
 		"credentialValue", "selector", "script", "pageContent", "capture",

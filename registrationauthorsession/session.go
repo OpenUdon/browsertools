@@ -209,17 +209,12 @@ func (s *server) start(message ClientMessage) error {
 		return s.fail("invalid_bounds")
 	}
 	bounds := normalizedBounds(message.Bounds)
-	now := s.clock().UTC().Round(0)
-	if now.IsZero() {
-		return s.fail("clock_unavailable")
-	}
 	s.bounds = bounds
 	s.profileID = message.ProfileID
 	s.origins = origins
 	for _, origin := range origins {
 		s.originSet[origin] = struct{}{}
 	}
-	s.observedAt = now
 	s.activeRemaining = time.Duration(bounds.TotalTimeoutMS) * time.Millisecond
 	var session Session
 	err = s.withActiveContext(func(callCtx context.Context) error {
@@ -262,11 +257,16 @@ func (s *server) observe() error {
 	if err != nil {
 		return s.fail("invalid_observation")
 	}
+	observedAt := s.clock().UTC().Round(0)
+	if observedAt.IsZero() || (!s.observedAt.IsZero() && observedAt.Before(s.observedAt)) {
+		return s.fail("clock_unavailable")
+	}
 	clear(s.candidates)
 	for id, record := range records {
 		s.candidates[id] = record
 	}
 	s.reviewedProfile = nil
+	s.observedAt = observedAt
 	return s.write(ServerMessage{Type: "observation", Observation: &observation})
 }
 
