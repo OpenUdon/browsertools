@@ -99,6 +99,20 @@ enum. There is no API or message for
 typing, focus, click, submit, POST approval, origin expansion, script, DOM or
 page content, capture, cookie/storage access, or session export.
 
+`capture.NewPlaywrightRegistrationBrowser` is the headed Chromium
+implementation of that narrow interface. It launches one sandbox-required,
+non-persistent context with the established sanitized browser environment,
+blocks service workers, popups, downloads, dialogs, file choosers, WebSockets,
+event streams, spontaneous navigations, unapproved origins, and every method
+other than GET or HEAD before continuation. It accounts completed response
+bytes, obtains candidates only from bounded ARIA snapshots, omits child-frame
+content with fixed diagnostics, and never calls a Playwright input, click,
+page-value, capture, cookie, or storage API. Explicit HEAD uses the context's
+request client with redirects and retries disabled and is admitted/accounted by
+the same exact-origin guard before the request starts. A08.1 adds this typed
+backend only; the registration CLI and reusable isolated worker remain absent
+until A08.4.
+
 Reduction is heuristic, not data loss prevention: ordinary names,
 identifiers, and order numbers can remain in accessibility labels. Every UI or
 terminal that displays or retains registration candidates must show
