@@ -93,10 +93,12 @@ guide](https://github.com/OpenUdon/openudon/blob/main/docs/authenticated-browser
 ### No-submit registration candidate contract
 
 Registration does not reuse the live authenticated integration. The separate
-`browsertools.registration-author-session.v1` Go contract admits only
-preapproved exact-origin GET/HEAD navigation and reduced accessibility
-observation. After current-generation review and clean network-accounted
-teardown, `browsertools.registration-authoring.v1` binds one exact BRP source,
+v1 Go contract admits only query-free preapproved exact-origin GET/HEAD
+navigation and reduced accessibility observation. Additive author-session v2
+admits only bounded, canonical, unique-key, non-secret literal structural
+queries and rechecks the same rule on every retained BRP navigation. After
+current-generation review and clean network-accounted teardown, matching
+registration-authoring v1 or v2 binds one exact BRP source,
 its existing registration-review v1 bundle, symbolic slots, one inert submit
 description, checkpoints/success, and fixed duplicate/ambiguity/cleanup
 posture. It establishes no session and carries no runtime authority.
@@ -109,8 +111,10 @@ transaction. Browsertools exposes the separate
 `registrationauthorworker.Run` process entry and
 `registration-author-session chromium` standalone command; OpenUdon must
 re-execute its reviewed worker image with a minimal environment and own
-process-group cancellation. Registration runtime remains unsupported and must
-fail before executor invocation.
+process-group cancellation. OpenUdon must select v2 deliberately when it needs
+structural-query retention; queries never enter observation, diagnostics,
+logs, filenames, result paths, or qualification evidence. Registration runtime
+remains unsupported at this producer boundary.
 
 ## Offline review artifact
 

@@ -1,0 +1,8 @@
+{
+  "sessionV1": "browsertools.registration-author-session.v1",
+  "resultV1": "browsertools.registration-authoring.v1",
+  "sessionV2": "browsertools.registration-author-session.v2",
+  "resultV2": "browsertools.registration-authoring.v2",
+  "review": "browsertools.registration-review.v1",
+  "profile": "uws.browser-registration.1.0"
+}

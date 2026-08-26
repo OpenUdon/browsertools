@@ -40,10 +40,12 @@ human credential/MFA checkpoints, approved clicks and POST windows, a named
 authentication session, and a paired authentication/capability result. Those
 semantics remain immutable for existing consumers.
 
-The registration producer instead uses the separate
-`browsertools.registration-author-session.v1` protocol and emits a private
-`browsertools.registration-authoring.v1` result. The version split is a safety
-boundary:
+The registration producer uses separate v1 and v2 contracts. V1 remains
+`browsertools.registration-author-session.v1` with private result
+`browsertools.registration-authoring.v1`; it still rejects every query. V2 is
+`browsertools.registration-author-session.v2` with private result
+`browsertools.registration-authoring.v2`; it adds only reviewed literal
+structural-query retention. The version split is a safety boundary:
 
 - the registration session admits exact-origin GET/HEAD observation only;
 - no message can focus or type a credential, click or submit a control,
@@ -61,6 +63,16 @@ authority. Returning a registration candidate from authenticated-authoring v2
 would also violate that result's fixed BAP+BCP and named-session composition.
 Separate v1 discriminators make unsupported cross-use fail during negotiation
 or strict decoding.
+
+V2 accepts an absolute, fragment-free URL with a query only when the URL and
+query are already canonical and bounded. Query keys are unique and nonempty;
+credential-shaped keys, secret/PII-shaped values, templates, userinfo,
+malformed encoding, empty query items, repeated keys, and origin escape are
+rejected before browser work. The same validator covers `start`, later
+GET/HEAD `navigate`, and every retained BRP `navigate` step. The query remains
+only in the reviewed canonical URL/profile source. Observations, diagnostics,
+logs, filenames, result paths, and safe lifecycle evidence expose only exact
+origin and disclosure-safe path.
 
 The existing `browsertools author-session chromium` command continues to speak
 authenticated author-session v2. The separate guarded Chromium producer is
@@ -85,6 +97,11 @@ JSON fail closed.
 | `review` | complete `profile`, sorted current `candidateIds`, selected `flow`, explicit `cleanupDisposition` | `observing` |
 | `finish` | none | `reviewed` |
 | `close` | none | any open phase |
+
+Registration author-session v2 has the same message union, phases, authority,
+and bounds. Its only semantic difference is the strict retained-query rule
+above. Callers select the v2 protocol explicitly; an omitted selection remains
+v1.
 
 The server emits only `hello`, `state`, `observation`, and fixed-code
 `diagnostic` messages. An observation contains an exact origin, a
@@ -234,6 +251,11 @@ finalized, err := registrationauthorresult.FinalizePrivate(
 registration interface, not the authenticated author-session browser. The
 caller retains `finalized.Written.Path` privately; a cross-process consumer exchanges a
 separately protected result and its digest, never the path.
+
+Registration-authoring result v2 has the same value-free shape and lifecycle
+as v1, with v2 result/session provenance and independently revalidated safe
+literal BRP navigation queries. Result filenames remain digest-derived and
+never contain a URL or query.
 
 ## Portable safety contract
 

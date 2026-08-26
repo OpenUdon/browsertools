@@ -43,10 +43,13 @@ up to 16 final accessibility outputs produce one private
 credential, page value, cookie, or browser state. See [Authenticated
 goal-directed browser authoring](docs/authenticated-goal-authoring.md).
 
-Registration authoring has separate browser-independent contracts:
-`browsertools.registration-author-session.v1` admits only exact-origin
-GET/HEAD observation, and its private
-`browsertools.registration-authoring.v1` result binds one reviewed inert BRP
+Registration authoring has separate browser-independent contracts. V1
+(`browsertools.registration-author-session.v1` and private
+`browsertools.registration-authoring.v1`) remains query-free. Additive v2
+(`browsertools.registration-author-session.v2` and private
+`browsertools.registration-authoring.v2`) admits only bounded canonical
+literal structural queries and validates them on all session and retained BRP
+navigations. Both admit only exact-origin GET/HEAD observation and bind one reviewed inert BRP
 without claiming a submit, account attempt, session, or supported runtime.
 A guarded typed Chromium backend and deterministic explicit candidate builder
 implement those contracts. The importable `registrationauthorworker` and
@@ -371,8 +374,9 @@ browsertools registration-author-session chromium \
   --driver-dir "$PLAYWRIGHT_DRIVER_PATH"
 ```
 
-Stdin and stdout are reserved for
-`browsertools.registration-author-session.v1` NDJSON. The private root must
+Stdin and stdout are reserved for registration author-session NDJSON. The
+worker currently defaults to v1; A09 adds the explicit CLI protocol selector
+and guarded Chromium v2 routing. The private root must
 already be a mode-0700 directory. The command never prints the resulting file
 name or digest, and it provides no registration runtime or submit command.
 
