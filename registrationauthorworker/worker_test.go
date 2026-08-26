@@ -45,6 +45,9 @@ func TestRunCompletesProtocolAndFinalizesPrivateResult(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("private entries=%v error=%v", entries, err)
 	}
+	if strings.Contains(entries[0].Name(), "action") || strings.Contains(entries[0].Name(), "startnew") {
+		t.Fatalf("private result filename disclosed query: %q", entries[0].Name())
+	}
 	info, err := entries[0].Info()
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 		t.Fatalf("private result info=%v error=%v", info, err)
@@ -106,6 +109,9 @@ func TestRunV2CompletesWithExplicitProtocolAndResultIdentity(t *testing.T) {
 	entries, err := os.ReadDir(root)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("entries=%v error=%v", entries, err)
+	}
+	if strings.Contains(entries[0].Name(), "action") || strings.Contains(entries[0].Name(), "startnew") {
+		t.Fatalf("v2 private result filename disclosed query: %q", entries[0].Name())
 	}
 	data, err := os.ReadFile(filepath.Join(root, entries[0].Name()))
 	if err != nil {

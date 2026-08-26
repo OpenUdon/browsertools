@@ -286,3 +286,63 @@ func TestPlaywrightRegistrationLoopbackOptIn(t *testing.T) {
 		}
 	}
 }
+
+func TestPlaywrightRegistrationV2QueryLoopbackOptIn(t *testing.T) {
+	if os.Getenv("BROWSERTOOLS_REGISTRATION_LIVE_TEST") != "1" {
+		t.Skip("set BROWSERTOOLS_REGISTRATION_LIVE_TEST=1 from a desktop session with the pinned driver and Chromium installed")
+	}
+	var mu sync.Mutex
+	methods := []string{}
+	queries := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		mu.Lock()
+		methods = append(methods, request.Method)
+		queries = append(queries, request.URL.RawQuery)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<main><form method="post" action="/created"><label>Email<input autocomplete="email"></label><label>Password<input type="password"></label><button>Register</button></form></main>`))
+	}))
+	defer server.Close()
+	origin, err := canonicalAuthorOrigin(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryURL := server.URL + "/register?action=startnew"
+	browser := NewPlaywrightRegistrationBrowser(os.Getenv("PLAYWRIGHT_DRIVER_PATH"))
+	session, err := browser.Open(context.Background(), registrationauthorsession.BrowserRequest{
+		Protocol: registrationauthorsession.ProtocolV2,
+		URL:      queryURL, ApprovedOrigins: []string{origin},
+		NavigationTimeout: 20 * time.Second, TotalTimeout: time.Minute,
+		MaxRequests: 32, MaxResponseBytes: 1 << 20, MaxCandidates: 16,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, err := session.Observe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observation.Origin != origin || observation.Path != "/register" || strings.Contains(observation.Path, "action") {
+		t.Fatalf("observation disclosed or lost safe facts: %#v", observation)
+	}
+	if err := session.Navigate(context.Background(), registrationauthorsession.Navigation{Method: "HEAD", URL: queryURL}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := session.Close(context.Background())
+	if err != nil || summary.Requests != summary.GETRequests+summary.HEADRequests || summary.HEADRequests != 1 {
+		t.Fatalf("summary=%#v err=%v", summary, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(methods) < 2 || len(queries) < 2 {
+		t.Fatalf("loopback requests=%#v queries=%#v", methods, queries)
+	}
+	for index, method := range methods {
+		if method != http.MethodGet && method != http.MethodHead {
+			t.Fatalf("loopback observed mutation method %q in %#v", method, methods)
+		}
+		if queries[index] != "action=startnew" {
+			t.Fatalf("loopback query[%d]=%q", index, queries[index])
+		}
+	}
+}
