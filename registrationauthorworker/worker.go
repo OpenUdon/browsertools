@@ -36,6 +36,9 @@ type Options struct {
 // error. It deliberately does not return the private result path or digest.
 func Run(ctx context.Context, options Options) error {
 	if err := validateBoundary(ctx, options, time.Now, capture.NewPlaywrightRegistrationBrowser); err != nil {
+		if options.Stdin != nil {
+			_ = options.Stdin.Close()
+		}
 		return err
 	}
 	preflight, err := capture.PreflightPlaywrightDriver(options.DriverDirectory)

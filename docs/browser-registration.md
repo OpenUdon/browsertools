@@ -150,11 +150,13 @@ The standalone entry is:
 
 ```bash
 browsertools registration-author-session chromium \
-  --private-root PRIVATE_ROOT [--driver-dir INSTALLED_DRIVER_DIRECTORY]
+  --private-root PRIVATE_ROOT [--driver-dir INSTALLED_DRIVER_DIRECTORY] \
+  [--protocol v1|v2]
 ```
 
-`PRIVATE_ROOT` must already be a non-symlink mode-0700 directory. Stdin and
-stdout carry only `browsertools.registration-author-session.v1` NDJSON.
+`PRIVATE_ROOT` must already be a non-symlink mode-0700 directory. The
+`--protocol` selector defaults to `v1`; callers must choose `v2` deliberately,
+and stdin/stdout must use its exact matching discriminator.
 SIGINT/SIGTERM follows the same cancellation path. No path, digest, backend
 error detail, credential value, account value, or raw observation is printed.
 There is no registration submit or runtime command.
@@ -238,7 +240,9 @@ The supported typed entry points are:
 
 ```go
 completion, err := registrationauthorsession.Serve(ctx, in, out, browser,
-    registrationauthorsession.ServeOptions{Clock: clock})
+    registrationauthorsession.ServeOptions{
+        Clock: clock, Protocol: registrationauthorsession.ProtocolV2,
+    })
 createdAt := clock().UTC().Truncate(time.Second)
 finalized, err := registrationauthorresult.FinalizePrivate(
     registrationauthorresult.FinalizeRequest{

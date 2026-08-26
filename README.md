@@ -375,8 +375,8 @@ browsertools registration-author-session chromium \
 ```
 
 Stdin and stdout are reserved for registration author-session NDJSON. The
-worker currently defaults to v1; A09 adds the explicit CLI protocol selector
-and guarded Chromium v2 routing. The private root must
+worker defaults to v1; `--protocol v2` deliberately selects the additive
+retained-query contract and guarded Chromium routing. The private root must
 already be a mode-0700 directory. The command never prints the resulting file
 name or digest, and it provides no registration runtime or submit command.
 
