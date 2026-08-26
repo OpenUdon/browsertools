@@ -125,11 +125,11 @@ func TestRegistrationAuthorSessionChromiumCLIUsesWorkerBoundary(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	called := 0
 	code := runRegistrationAuthorSessionChromiumWith(
-		[]string{"--private-root", privateRoot, "--driver-dir", "/installed/driver"},
+		[]string{"--private-root", privateRoot, "--driver-dir", "/installed/driver", "--protocol", "v2"},
 		input, &stdout, &stderr,
 		func(ctx context.Context, options registrationauthorworker.Options) error {
 			called++
-			if ctx == nil || options.PrivateRoot != privateRoot || options.DriverDirectory != "/installed/driver" {
+			if ctx == nil || options.PrivateRoot != privateRoot || options.DriverDirectory != "/installed/driver" || options.Protocol != "v2" {
 				t.Fatalf("worker options=%#v", options)
 			}
 			data, err := io.ReadAll(options.Stdin)
@@ -155,7 +155,7 @@ func TestRegistrationAuthorSessionChromiumCLIUsesWorkerBoundary(t *testing.T) {
 }
 
 func TestRegistrationAuthorSessionChromiumCLIRejectsUsageBeforeWorker(t *testing.T) {
-	for _, args := range [][]string{nil, {"unexpected"}, {"--private-root", "/private", "unexpected"}} {
+	for _, args := range [][]string{nil, {"unexpected"}, {"--private-root", "/private", "unexpected"}, {"--private-root", "/private", "--protocol", "v3"}} {
 		var stdout, stderr bytes.Buffer
 		calls := 0
 		code := runRegistrationAuthorSessionChromiumWith(args, strings.NewReader(""), &stdout, &stderr,
@@ -166,7 +166,7 @@ func TestRegistrationAuthorSessionChromiumCLIRejectsUsageBeforeWorker(t *testing
 	}
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"registration-author-session", "chromium", "--help"}, strings.NewReader(""), &stdout, &stderr); code != exitOK ||
-		!strings.Contains(stdout.String(), "private-root") || stderr.Len() != 0 {
+		!strings.Contains(stdout.String(), "private-root") || !strings.Contains(stdout.String(), "protocol") || stderr.Len() != 0 {
 		t.Fatalf("help code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

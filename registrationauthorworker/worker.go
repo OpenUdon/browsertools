@@ -25,8 +25,10 @@ import (
 type Options struct {
 	PrivateRoot     string
 	DriverDirectory string
-	Stdin           io.ReadCloser
-	Stdout          io.Writer
+	// Protocol is "v1" (the default) or "v2".
+	Protocol string
+	Stdin    io.ReadCloser
+	Stdout   io.Writer
 }
 
 // Run verifies the installed driver and serves one Chromium registration
@@ -52,11 +54,19 @@ func run(
 	newBrowser func(string) registrationauthorsession.Browser,
 ) error {
 	if err := validateBoundary(ctx, options, clock, newBrowser); err != nil {
+		if options.Stdin != nil {
+			_ = options.Stdin.Close()
+		}
+		return err
+	}
+	protocol, err := resolveProtocol(options.Protocol)
+	if err != nil {
+		_ = options.Stdin.Close()
 		return err
 	}
 	completion, err := registrationauthorsession.Serve(
 		ctx, options.Stdin, options.Stdout, newBrowser(options.DriverDirectory),
-		registrationauthorsession.ServeOptions{Clock: clock},
+		registrationauthorsession.ServeOptions{Clock: clock, Protocol: protocol},
 	)
 	if err != nil {
 		return err
@@ -84,5 +94,19 @@ func validateBoundary(
 	if ctx == nil || options.PrivateRoot == "" || options.Stdin == nil || options.Stdout == nil || clock == nil || newBrowser == nil {
 		return fmt.Errorf("registration author worker private root, stdin, stdout, context, and browser dependencies are required")
 	}
+	if _, err := resolveProtocol(options.Protocol); err != nil {
+		return err
+	}
 	return nil
+}
+
+func resolveProtocol(value string) (string, error) {
+	switch value {
+	case "", "v1":
+		return registrationauthorsession.ProtocolV1, nil
+	case "v2":
+		return registrationauthorsession.ProtocolV2, nil
+	default:
+		return "", errors.New("registration author worker protocol is unsupported")
+	}
 }

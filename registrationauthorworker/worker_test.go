@@ -90,6 +90,36 @@ func TestRunCloseBeforeStartCreatesNoResult(t *testing.T) {
 	}
 }
 
+func TestRunV2CompletesWithExplicitProtocolAndResultIdentity(t *testing.T) {
+	root := privateRoot(t)
+	var output bytes.Buffer
+	browser := &workerBrowser{session: &workerSession{}}
+	err := run(context.Background(), Options{
+		PrivateRoot: root, Protocol: "v2", Stdin: io.NopCloser(bytes.NewReader(completeProtocolV2(t))), Stdout: &output,
+	}, func() time.Time { return workerTime }, func(string) registrationauthorsession.Browser { return browser })
+	if err != nil {
+		t.Fatalf("run() error = %v\n%s", err, output.String())
+	}
+	if browser.request.Protocol != registrationauthorsession.ProtocolV2 || !strings.Contains(browser.request.URL, "?action=startnew") || strings.Contains(output.String(), "action") {
+		t.Fatalf("request=%#v output=%q", browser.request, output.String())
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("entries=%v error=%v", entries, err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := registrationauthorresult.Decode(data, workerTime.Truncate(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Schema != registrationauthorresult.SchemaV2 || result.Provenance.SessionVersion != registrationauthorsession.ProtocolV2 {
+		t.Fatalf("result identity=%q %#v", result.Schema, result.Provenance)
+	}
+}
+
 func TestRunCancellationInterruptsReadAndClosesSession(t *testing.T) {
 	root := privateRoot(t)
 	input, writer := io.Pipe()
@@ -201,6 +231,13 @@ func TestRunRejectsMissingBoundaryBeforeBrowserConstruction(t *testing.T) {
 	if err := Run(context.Background(), Options{}); err == nil {
 		t.Fatal("Run() accepted missing boundary")
 	}
+	input := &trackingReadCloser{Reader: strings.NewReader("")}
+	if err := run(context.Background(), Options{PrivateRoot: "/private", Protocol: "v3", Stdin: input, Stdout: io.Discard}, func() time.Time { return workerTime }, func(string) registrationauthorsession.Browser {
+		calls++
+		return &workerBrowser{}
+	}); err == nil || !input.closed || calls != 0 {
+		t.Fatalf("unsupported protocol error=%v closed=%v calls=%d", err, input.closed, calls)
+	}
 }
 
 func TestWorkerSourceExposesNoPlaywrightOrEnvironmentSurface(t *testing.T) {
@@ -216,6 +253,14 @@ func TestWorkerSourceExposesNoPlaywrightOrEnvironmentSurface(t *testing.T) {
 }
 
 func completeProtocol(t *testing.T) []byte {
+	return completeProtocolFor(t, registrationauthorsession.ProtocolV1, false)
+}
+
+func completeProtocolV2(t *testing.T) []byte {
+	return completeProtocolFor(t, registrationauthorsession.ProtocolV2, true)
+}
+
+func completeProtocolFor(t *testing.T, protocol string, retainedQuery bool) []byte {
 	t.Helper()
 	profileData, err := os.ReadFile("../registrationprofile/testdata/valid-registration.yaml")
 	if err != nil {
@@ -225,6 +270,13 @@ func completeProtocol(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
+	startURL := "https://app.example.test/register"
+	if retainedQuery {
+		startURL += "?action=startnew"
+		flow := profileValue.Flows["create_dedicated_test_user"]
+		flow.Sequence[0].Navigate = startURL
+		profileValue.Flows["create_dedicated_test_user"] = flow
+	}
 	profileData, err = registrationprofile.MarshalJSON(profileValue)
 	if err != nil {
 		t.Fatal(err)
@@ -232,15 +284,15 @@ func completeProtocol(t *testing.T) []byte {
 	buttonID := candidateID(1, "button", "Register", 0)
 	return []byte(strings.Join([]string{
 		protocolLine(registrationauthorsession.ClientMessage{
-			Protocol: registrationauthorsession.Protocol, Type: "start", ProfileID: "synthetic_registration",
-			URL: "https://app.example.test/register", Origins: []string{"https://app.example.test"},
+			Protocol: protocol, Type: "start", ProfileID: "synthetic_registration",
+			URL: startURL, Origins: []string{"https://app.example.test"},
 		}),
-		protocolLine(registrationauthorsession.ClientMessage{Protocol: registrationauthorsession.Protocol, Type: "observe"}),
+		protocolLine(registrationauthorsession.ClientMessage{Protocol: protocol, Type: "observe"}),
 		protocolLine(registrationauthorsession.ClientMessage{
-			Protocol: registrationauthorsession.Protocol, Type: "review", Profile: profileData,
+			Protocol: protocol, Type: "review", Profile: profileData,
 			CandidateIDs: []string{buttonID}, Flow: "create_dedicated_test_user", CleanupDisposition: "delete_separately",
 		}),
-		protocolLine(registrationauthorsession.ClientMessage{Protocol: registrationauthorsession.Protocol, Type: "finish"}),
+		protocolLine(registrationauthorsession.ClientMessage{Protocol: protocol, Type: "finish"}),
 	}, ""))
 }
 
@@ -292,10 +344,12 @@ type workerBrowser struct {
 	session   *workerSession
 	opened    chan struct{}
 	openCalls int
+	request   registrationauthorsession.BrowserRequest
 }
 
-func (b *workerBrowser) Open(context.Context, registrationauthorsession.BrowserRequest) (registrationauthorsession.Session, error) {
+func (b *workerBrowser) Open(_ context.Context, request registrationauthorsession.BrowserRequest) (registrationauthorsession.Session, error) {
 	b.openCalls++
+	b.request = request
 	if b.opened != nil {
 		close(b.opened)
 	}
