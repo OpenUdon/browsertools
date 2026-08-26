@@ -83,6 +83,14 @@ operations:
     sourceOperationId: read_status
 ```
 
+UWS 1.9.1 also defines an explicit advisory content-trust pass. Browsertools'
+`contenttrust` package supplies the browser-profile resolver for that pass. It
+uses reviewed macro placement to distinguish data, instruction, and
+authority-bearing request parameters and uses each declared output shape to
+separate free text, constrained scalars, and composite values. All browser
+outputs default to untrusted provenance; this classification does not execute
+the profile or alter ordinary UWS validation and execution.
+
 The browser profile itself owns UI action metadata:
 
 - action name

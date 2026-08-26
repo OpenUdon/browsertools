@@ -36,6 +36,14 @@ Browserdriver. See the [canonical OpenUdon integration
 reference](docs/openudon-integration.md) for the two integration paths and full
 ownership split.
 
+For UWS 1.9.1 advisory integrity analysis, package
+`github.com/OpenUdon/browsertools/contenttrust` builds a resolver from reviewed
+profiles keyed by `sourceDescription` name. Browser-derived outputs default to
+untrusted while retaining their declared value shape. Navigation and option
+selection parameters are authority-bearing, confirmation prompts are
+instructions, and typed text remains data. The resolver performs no browser
+work and never changes validation or execution.
+
 Authenticated live authoring uses the strict
 `browsertools.author-session.v2` NDJSON boundary. Human-reviewed MFA kinds and
 up to 16 final accessibility outputs produce one private
