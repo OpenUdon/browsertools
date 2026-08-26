@@ -122,6 +122,30 @@ func TestCandidateReviewMessageCompletesM26Session(t *testing.T) {
 	}
 }
 
+func TestV2CandidateRetainsOnlySafeStructuralNavigationQuery(t *testing.T) {
+	request := validBuildRequest(t)
+	request.Protocol = registrationauthorsession.ProtocolV2
+	flow := request.Spec.Flows[request.Flow]
+	flow.Sequence[0].Navigate = "https://app.example.test/register?action=startnew"
+	request.Spec.Flows[request.Flow] = flow
+	candidate, err := Build(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message := candidate.ReviewMessage(); message.Protocol != registrationauthorsession.ProtocolV2 || !bytes.Contains(message.Profile, []byte(`?action=startnew`)) {
+		t.Fatalf("v2 review message = %#v", message)
+	}
+
+	request = validBuildRequest(t)
+	request.Protocol = registrationauthorsession.ProtocolV2
+	flow = request.Spec.Flows[request.Flow]
+	flow.Sequence[0].Navigate = "https://app.example.test/register?token=do-not-retain"
+	request.Spec.Flows[request.Flow] = flow
+	if _, err := Build(request); err == nil || strings.Contains(err.Error(), "do-not-retain") {
+		t.Fatalf("unsafe v2 navigation error = %v", err)
+	}
+}
+
 func TestBuildRejectsMissingOrInferredDecisions(t *testing.T) {
 	tests := map[string]func(*BuildRequest){
 		"profile identity":     func(value *BuildRequest) { value.ProfileID = "" },

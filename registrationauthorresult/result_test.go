@@ -146,6 +146,26 @@ func TestV2BuildDecodeAndVerifyUseAdditiveIdentity(t *testing.T) {
 	}
 }
 
+func TestV2BuildValidatesEveryRetainedProfileNavigation(t *testing.T) {
+	completion := validCompletion(t)
+	completion.Protocol = registrationauthorsession.ProtocolV2
+	flow := completion.Profile.Flows[completion.Flow]
+	flow.Sequence[0].Navigate = "https://app.example.test/register?action=startnew"
+	completion.Profile.Flows[completion.Flow] = flow
+	completion.ProfileBytes, _ = registrationprofile.MarshalJSON(&completion.Profile)
+	if _, err := Build(BuildRequest{Completion: completion, CreatedAt: createdAt}); err != nil {
+		t.Fatal(err)
+	}
+
+	flow = completion.Profile.Flows[completion.Flow]
+	flow.Sequence[0].Navigate = "https://other.example.test/register?action=startnew"
+	completion.Profile.Flows[completion.Flow] = flow
+	completion.ProfileBytes, _ = registrationprofile.MarshalJSON(&completion.Profile)
+	if _, err := Build(BuildRequest{Completion: completion, CreatedAt: createdAt}); err == nil || strings.Contains(err.Error(), "other.example") {
+		t.Fatalf("unsafe retained origin error = %v", err)
+	}
+}
+
 func TestVerifyRejectsEveryBoundIdentityAndSafetyMutation(t *testing.T) {
 	base, err := Build(BuildRequest{Completion: validCompletion(t), CreatedAt: createdAt})
 	if err != nil {

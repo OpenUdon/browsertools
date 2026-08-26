@@ -207,6 +207,9 @@ func Build(request BuildRequest) (*Envelope, error) {
 	if err := registrationprofile.ValidateAt(&completion.Profile, createdAt); err != nil {
 		return nil, errors.New("result profile is not current")
 	}
+	if completion.Protocol == registrationauthorsession.ProtocolV2 && registrationprofile.ValidateRetainedNavigationV2(&completion.Profile) != nil {
+		return nil, errors.New("result profile contains an unsafe navigation URL")
+	}
 	if completion.Profile.Profile != registrationProfileSchema || completion.Profile.ObservationKind != "accessibility_snapshot" {
 		return nil, errors.New("result candidate schema or observation kind is unsupported")
 	}

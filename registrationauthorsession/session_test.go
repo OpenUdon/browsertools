@@ -248,6 +248,46 @@ func TestV2RejectsUnsafeQueryBeforeBrowserWorkWithoutEcho(t *testing.T) {
 	}
 }
 
+func TestV2ReviewRejectsUnsafeRetainedProfileNavigationWithoutEcho(t *testing.T) {
+	profile := validProfileJSON(t)
+	profileValue, err := registrationprofile.Parse(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flow := profileValue.Flows["create_dedicated_test_user"]
+	flow.Sequence[0].Navigate = "https://app.example.test/register?state=opaque"
+	profileValue.Flows["create_dedicated_test_user"] = flow
+	profile, err = registrationprofile.MarshalJSON(profileValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerID := candidateID(1, "button", "Register", 0)
+	messages := []ClientMessage{
+		{Protocol: ProtocolV2, Type: "start", ProfileID: "synthetic_registration", URL: "https://app.example.test/register?action=startnew", Origins: []string{"https://app.example.test"}},
+		{Protocol: ProtocolV2, Type: "observe"},
+		{Protocol: ProtocolV2, Type: "review", Profile: profile, CandidateIDs: []string{registerID}, Flow: "create_dedicated_test_user", CleanupDisposition: "delete_separately"},
+	}
+	var input strings.Builder
+	for _, message := range messages {
+		data, marshalErr := json.Marshal(message)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		input.Write(data)
+		input.WriteByte('\n')
+	}
+	var output bytes.Buffer
+	browser := &fakeBrowser{session: &fakeSession{observations: []RawObservation{{
+		Origin: "https://app.example.test", Path: "/register",
+		Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}},
+	}}}}
+	_, err = Serve(context.Background(), io.NopCloser(strings.NewReader(input.String())), &output, browser, ServeOptions{Clock: func() time.Time { return fixedNow }, Protocol: ProtocolV2})
+	assertFailure(t, err, output.String(), "invalid_profile")
+	if strings.Contains(output.String(), "opaque") || strings.Contains(err.Error(), "opaque") {
+		t.Fatalf("retained query leaked: error=%v output=%s", err, output.String())
+	}
+}
+
 func TestServeRejectsUnsupportedConfiguredProtocolBeforeOutput(t *testing.T) {
 	var output bytes.Buffer
 	_, err := Serve(context.Background(), io.NopCloser(strings.NewReader("")), &output, &fakeBrowser{}, ServeOptions{Protocol: "browsertools.registration-author-session.v3"})

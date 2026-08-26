@@ -325,6 +325,9 @@ func (s *server) review(message ClientMessage) error {
 	if !equalStrings(registrationprofile.Origins(profileValue), s.origins) {
 		return s.fail("origin_mismatch")
 	}
+	if s.protocol == ProtocolV2 && registrationprofile.ValidateRetainedNavigationV2(profileValue) != nil {
+		return s.fail("invalid_profile")
+	}
 	if !identifierPattern.MatchString(message.Flow) {
 		return s.fail("invalid_flow")
 	}

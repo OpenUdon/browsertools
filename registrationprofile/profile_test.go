@@ -1,6 +1,7 @@
 package registrationprofile
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +79,44 @@ func TestRegistrationCallControlsValidateThroughUWS(t *testing.T) {
 	weakened := strings.Replace(string(call), "stop_without_retry", "retry", 1)
 	if err := schemas.ValidateBrowserRegistrationCallSupplement([]byte(weakened)); err == nil {
 		t.Fatal("weakened registration call unexpectedly validated")
+	}
+}
+
+func TestValidateRetainedNavigationV2(t *testing.T) {
+	base, err := Parse(readFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Flows["create_dedicated_test_user"].Sequence[0].Navigate = "https://app.example.test/register?action=startnew"
+	if err := ValidateRetainedNavigationV2(base); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{
+		"relative":      "/register?action=startnew",
+		"template":      "https://app.example.test/register?action={{flow}}",
+		"sensitive key": "https://app.example.test/register?token=value",
+		"secret value":  "https://app.example.test/register?action=sk-proj-abcdefghijklmnopqrstuvwxyz",
+		"repeated key":  "https://app.example.test/register?action=startnew&action=again",
+		"fragment":      "https://app.example.test/register?action=startnew#private",
+		"other origin":  "https://other.example.test/register?action=startnew",
+		"noncanonical":  "https://app.example.test/register?z=2&a=1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, marshalErr := json.Marshal(base)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			candidate, parseErr := Parse(data)
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			candidate.Flows["create_dedicated_test_user"].Sequence[0].Navigate = target
+			if err := ValidateRetainedNavigationV2(candidate); err == nil {
+				t.Fatal("unsafe retained navigation unexpectedly validated")
+			} else if strings.Contains(err.Error(), target) {
+				t.Fatalf("validation error disclosed URL: %v", err)
+			}
+		})
 	}
 }
 

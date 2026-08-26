@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/OpenUdon/browsertools/internal/profiledocument"
+	"github.com/OpenUdon/browsertools/internal/registrationurl"
 	"github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/uws/browserregistration"
 	"github.com/OpenUdon/uws/schemas"
@@ -195,4 +196,36 @@ func Origins(value *Profile) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// ValidateRetainedNavigationV2 applies the authoring v2 literal-query rule to
+// every retained navigate step and proves exact membership in the profile's
+// declared origin inventory. It does not change the public UWS schema.
+func ValidateRetainedNavigationV2(value *Profile) error {
+	if value == nil {
+		return fmt.Errorf("registration profile is required")
+	}
+	origins := Origins(value)
+	if len(origins) == 0 {
+		return fmt.Errorf("registration profile origins are required")
+	}
+	originSet := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		originSet[origin] = struct{}{}
+	}
+	for flowName, flow := range value.Flows {
+		for index, step := range flow.Sequence {
+			if step.Navigate == "" {
+				continue
+			}
+			facts, err := registrationurl.Parse(step.Navigate, true, profile.ParseOrigin)
+			if err != nil {
+				return fmt.Errorf("registration profile flow %q navigate[%d] is invalid", flowName, index)
+			}
+			if _, ok := originSet[facts.Origin]; !ok {
+				return fmt.Errorf("registration profile flow %q navigate[%d] origin is not declared", flowName, index)
+			}
+		}
+	}
+	return nil
 }

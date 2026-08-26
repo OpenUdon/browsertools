@@ -45,6 +45,7 @@ type CallControls struct {
 // BuildRequest binds one complete explicit draft to one current reduced
 // observation and exact operator selections.
 type BuildRequest struct {
+	Protocol             string
 	ProfileID            string
 	Spec                 registrationdraft.Spec
 	Observation          registrationauthorsession.Observation
@@ -68,10 +69,17 @@ type Candidate struct {
 	flow            string
 	controls        CallControls
 	approvedOrigins []string
+	protocol        string
 }
 
 // Build validates every explicit decision and constructs canonical UWS source.
 func Build(request BuildRequest) (*Candidate, error) {
+	if request.Protocol == "" {
+		request.Protocol = registrationauthorsession.ProtocolV1
+	}
+	if request.Protocol != registrationauthorsession.ProtocolV1 && request.Protocol != registrationauthorsession.ProtocolV2 {
+		return nil, errors.New("registration author protocol is unsupported")
+	}
 	if !identifierPattern.MatchString(request.ProfileID) || !identifierPattern.MatchString(request.Flow) {
 		return nil, errors.New("registration author identity is invalid")
 	}
@@ -109,6 +117,9 @@ func Build(request BuildRequest) (*Candidate, error) {
 	if err := registrationprofile.ValidateAt(profileValue, request.AssessedAt); err != nil {
 		return nil, errors.New("explicit registration draft is not current")
 	}
+	if request.Protocol == registrationauthorsession.ProtocolV2 && registrationprofile.ValidateRetainedNavigationV2(profileValue) != nil {
+		return nil, errors.New("explicit registration draft contains an unsafe navigation URL")
+	}
 	if !equalStrings(registrationprofile.Origins(profileValue), origins) {
 		return nil, errors.New("registration draft origins do not match approved origins")
 	}
@@ -129,6 +140,7 @@ func Build(request BuildRequest) (*Candidate, error) {
 		reviewedIDs: append([]string(nil), reviewedIDs...), submitID: request.SubmitCandidateID,
 		flow: request.Flow, controls: request.Controls,
 		approvedOrigins: append([]string(nil), origins...),
+		protocol:        request.Protocol,
 	}, nil
 }
 
@@ -174,7 +186,7 @@ func (c *Candidate) ReviewMessage() registrationauthorsession.ClientMessage {
 		return registrationauthorsession.ClientMessage{}
 	}
 	return registrationauthorsession.ClientMessage{
-		Protocol: registrationauthorsession.Protocol, Type: "review",
+		Protocol: c.protocol, Type: "review",
 		Profile:      append(json.RawMessage(nil), c.profileBytes...),
 		CandidateIDs: append([]string(nil), c.reviewedIDs...), Flow: c.flow,
 		CleanupDisposition: c.controls.CleanupDisposition,
