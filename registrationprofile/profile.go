@@ -213,7 +213,8 @@ func ValidateRetainedNavigationV2(value *Profile) error {
 	for _, origin := range origins {
 		originSet[origin] = struct{}{}
 	}
-	for flowName, flow := range value.Flows {
+	for _, flowName := range SortedFlowNames(value) {
+		flow := value.Flows[flowName]
 		for index, step := range flow.Sequence {
 			if step.Navigate == "" {
 				continue

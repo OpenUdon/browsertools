@@ -53,6 +53,9 @@ func Parse(raw string, allowQuery bool, canonicalOrigin func(string) (string, er
 	if disclosurepath.Validate(path) != nil {
 		return Facts{}, errors.New("registration URL path is not disclosure-safe")
 	}
+	if containsTemplate(parsed.Path) {
+		return Facts{}, errors.New("registration URL path contains a template")
+	}
 	query := ""
 	if parsed.RawQuery != "" {
 		if !allowQuery {
@@ -89,7 +92,7 @@ func canonicalQuery(raw string) (string, error) {
 		}
 	}
 	for key, items := range values {
-		if key == "" || len(key) > MaxQueryKeyBytes || !utf8.ValidString(key) || len(items) != 1 || sensitiveKey(key) || containsTemplate(key) {
+		if key == "" || len(key) > MaxQueryKeyBytes || !utf8.ValidString(key) || !portableQueryKey.MatchString(key) || len(items) != 1 || sensitiveKey(key) || containsTemplate(key) {
 			return "", errors.New("registration URL query key is invalid")
 		}
 		value := items[0]
@@ -123,6 +126,10 @@ func unsafeValue(value string) bool {
 	if redact.String(value) != value || emailPattern.MatchString(value) || phonePattern.MatchString(value) {
 		return true
 	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "secret", "password", "passwd", "token", "credential", "private_key":
+		return true
+	}
 	for _, character := range value {
 		if unicode.IsControl(character) {
 			return true
@@ -132,6 +139,7 @@ func unsafeValue(value string) bool {
 }
 
 var (
-	emailPattern = regexp.MustCompile(`(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`)
-	phonePattern = regexp.MustCompile(`(?:^|[^A-Za-z0-9])\+?[0-9][0-9 ()-]{8,}[0-9](?:$|[^A-Za-z0-9])`)
+	portableQueryKey = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._~-]{0,63}$`)
+	emailPattern     = regexp.MustCompile(`(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`)
+	phonePattern     = regexp.MustCompile(`(?:^|[^A-Za-z0-9])\+?[0-9][0-9 ()-]{8,}[0-9](?:$|[^A-Za-z0-9])`)
 )
