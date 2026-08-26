@@ -13,7 +13,6 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/OpenUdon/browsertools/disclosurepath"
 	"github.com/OpenUdon/browsertools/registrationauthorsession"
 	playwright "github.com/mxschmitt/playwright-go"
 )
@@ -141,7 +140,7 @@ func (s *playwrightRegistrationSession) Observe(ctx context.Context) (registrati
 	if err := s.health(ctx); err != nil {
 		return registrationauthorsession.RawObservation{}, err
 	}
-	origin, path, err := registrationURLFacts(s.page.URL(), s.guard.allowedOrigin)
+	origin, path, err := registrationURLFacts(s.page.URL(), s.request.Protocol, s.guard.allowedOrigin)
 	if err != nil {
 		return registrationauthorsession.RawObservation{}, err
 	}
@@ -197,7 +196,7 @@ func (s *playwrightRegistrationSession) Observe(ctx context.Context) (registrati
 			continue
 		}
 		diagnosticSet[registrationauthorsession.DiagnosticAccessibilitySnapshotPartial] = struct{}{}
-		frameOrigin, _, frameErr := registrationURLFacts(frame.URL(), s.guard.allowedOrigin)
+		frameOrigin, _, frameErr := registrationURLFacts(frame.URL(), s.request.Protocol, s.guard.allowedOrigin)
 		if frameErr != nil || frameOrigin != origin {
 			diagnosticSet[registrationauthorsession.DiagnosticCrossOriginFrameOmitted] = struct{}{}
 		}
@@ -231,7 +230,7 @@ func (s *playwrightRegistrationSession) Navigate(ctx context.Context, navigation
 	if err := s.health(ctx); err != nil {
 		return err
 	}
-	if _, _, err := registrationURLFacts(navigation.URL, s.guard.allowedOrigin); err != nil {
+	if _, _, err := registrationURLFacts(navigation.URL, s.request.Protocol, s.guard.allowedOrigin); err != nil {
 		return err
 	}
 	timeout, err := operationTimeout(ctx, s.request.NavigationTimeout)
@@ -322,6 +321,7 @@ func (s *playwrightRegistrationSession) installSurfacePolicy() {
 type registrationNetworkGuard struct {
 	mu               sync.Mutex
 	origins          map[string]struct{}
+	protocol         string
 	core             networkGuardCore
 	getRequests      int
 	headRequests     int
@@ -331,8 +331,9 @@ type registrationNetworkGuard struct {
 
 func newRegistrationNetworkGuard(request registrationauthorsession.BrowserRequest) *registrationNetworkGuard {
 	guard := &registrationNetworkGuard{
-		origins: make(map[string]struct{}, len(request.ApprovedOrigins)),
-		core:    newNetworkGuardCore(request.MaxRequests, request.MaxResponseBytes),
+		origins:  make(map[string]struct{}, len(request.ApprovedOrigins)),
+		core:     newNetworkGuardCore(request.MaxRequests, request.MaxResponseBytes),
+		protocol: normalizedRegistrationProtocol(request.Protocol),
 	}
 	for _, origin := range request.ApprovedOrigins {
 		guard.origins[origin] = struct{}{}
@@ -396,7 +397,11 @@ func (g *registrationNetworkGuard) allowBrowser(rawURL, method, resourceType str
 	if !g.core.beginRequest(registrationPolicyError("request_limit")) {
 		return false
 	}
-	if !g.allowedURLLocked(rawURL) {
+	allowed := g.allowedResourceURLLocked(rawURL)
+	if navigation {
+		allowed = g.allowedNavigationURLLocked(rawURL)
+	}
+	if !allowed {
 		g.violate("origin_escape")
 		return false
 	}
@@ -423,7 +428,7 @@ func (g *registrationNetworkGuard) allowBrowser(rawURL, method, resourceType str
 func (g *registrationNetworkGuard) beginNavigation(rawURL string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closing || g.navigationActive || g.core.result() != nil || !g.allowedURLLocked(rawURL) {
+	if g.closing || g.navigationActive || g.core.result() != nil || !g.allowedNavigationURLLocked(rawURL) {
 		return errors.New("registration navigation window unavailable")
 	}
 	g.navigationActive = true
@@ -439,7 +444,7 @@ func (g *registrationNetworkGuard) endNavigation() {
 func (g *registrationNetworkGuard) beginHEAD(rawURL string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.closing || g.navigationActive || g.core.result() != nil || !g.allowedURLLocked(rawURL) {
+	if g.closing || g.navigationActive || g.core.result() != nil || !g.allowedNavigationURLLocked(rawURL) {
 		return errors.New("registration HEAD request unavailable")
 	}
 	if !g.core.beginRequest(registrationPolicyError("request_limit")) {
@@ -459,12 +464,21 @@ func (g *registrationNetworkGuard) allowedOrigin(origin string) bool {
 	return ok
 }
 
-func (g *registrationNetworkGuard) allowedURLLocked(rawURL string) bool {
+func (g *registrationNetworkGuard) allowedResourceURLLocked(rawURL string) bool {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Host == "" || parsed.User != nil {
+	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
 		return false
 	}
 	origin, err := canonicalAuthorOrigin(parsed.Scheme + "://" + parsed.Host)
+	if err != nil {
+		return false
+	}
+	_, ok := g.origins[origin]
+	return ok
+}
+
+func (g *registrationNetworkGuard) allowedNavigationURLLocked(rawURL string) bool {
+	_, origin, _, err := registrationauthorsession.ValidateNavigationURL(g.protocol, rawURL)
 	if err != nil {
 		return false
 	}
@@ -526,6 +540,10 @@ func registrationPolicyError(code string) error {
 }
 
 func validateRegistrationBrowserRequest(request registrationauthorsession.BrowserRequest) error {
+	request.Protocol = normalizedRegistrationProtocol(request.Protocol)
+	if request.Protocol == "" {
+		return errors.New("registration browser protocol is invalid")
+	}
 	if request.NavigationTimeout <= 0 || request.NavigationTimeout > registrationauthorsession.DefaultNavigationTimeout*3 ||
 		request.TotalTimeout < request.NavigationTimeout || request.TotalTimeout > registrationauthorsession.DefaultTotalTimeout*6 ||
 		request.MaxRequests <= 0 || request.MaxRequests > 4096 || request.MaxResponseBytes <= 0 || request.MaxResponseBytes > 128<<20 ||
@@ -541,7 +559,7 @@ func validateRegistrationBrowserRequest(request registrationauthorsession.Browse
 			return errors.New("registration browser origin is invalid")
 		}
 	}
-	origin, _, err := registrationURLFacts(request.URL, func(value string) bool {
+	origin, _, err := registrationURLFacts(request.URL, request.Protocol, func(value string) bool {
 		index := sort.SearchStrings(request.ApprovedOrigins, value)
 		return index < len(request.ApprovedOrigins) && request.ApprovedOrigins[index] == value
 	})
@@ -551,27 +569,22 @@ func validateRegistrationBrowserRequest(request registrationauthorsession.Browse
 	return nil
 }
 
-func registrationURLFacts(rawURL string, allowed func(string) bool) (string, string, error) {
-	if rawURL != strings.TrimSpace(rawURL) || len(rawURL) > 4096 {
-		return "", "", errors.New("registration URL is invalid")
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", "", errors.New("registration URL is invalid")
-	}
-	origin, err := canonicalAuthorOrigin(parsed.Scheme + "://" + parsed.Host)
-	if err != nil || !allowed(origin) {
+func registrationURLFacts(rawURL, protocol string, allowed func(string) bool) (string, string, error) {
+	protocol = normalizedRegistrationProtocol(protocol)
+	_, origin, path, err := registrationauthorsession.ValidateNavigationURL(protocol, rawURL)
+	if err != nil || allowed == nil || !allowed(origin) {
 		return "", "", errors.New("registration URL origin is not approved")
 	}
-	path := parsed.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
-	if disclosurepath.Validate(path) != nil {
-		return "", "", errors.New("registration URL path is not disclosure-safe")
-	}
-	if rawURL != origin+path {
-		return "", "", errors.New("registration URL is not canonical")
-	}
 	return origin, path, nil
+}
+
+func normalizedRegistrationProtocol(value string) string {
+	switch value {
+	case "", registrationauthorsession.ProtocolV1:
+		return registrationauthorsession.ProtocolV1
+	case registrationauthorsession.ProtocolV2:
+		return registrationauthorsession.ProtocolV2
+	default:
+		return ""
+	}
 }

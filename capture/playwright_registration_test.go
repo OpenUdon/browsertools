@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -183,7 +184,7 @@ func TestValidateRegistrationBrowserRequestIsExactAndFinite(t *testing.T) {
 
 func TestRegistrationURLFactsRejectsDisclosureAndQuery(t *testing.T) {
 	allowed := func(origin string) bool { return origin == "https://app.example.test" }
-	if origin, path, err := registrationURLFacts("https://app.example.test/register", allowed); err != nil || origin != "https://app.example.test" || path != "/register" {
+	if origin, path, err := registrationURLFacts("https://app.example.test/register", registrationauthorsession.ProtocolV1, allowed); err != nil || origin != "https://app.example.test" || path != "/register" {
 		t.Fatalf("facts=%q %q err=%v", origin, path, err)
 	}
 	for _, rawURL := range []string{
@@ -192,8 +193,40 @@ func TestRegistrationURLFactsRejectsDisclosureAndQuery(t *testing.T) {
 		"https://other.example.test/register",
 		"https://user:pass@app.example.test/register",
 	} {
-		if _, _, err := registrationURLFacts(rawURL, allowed); err == nil {
+		if _, _, err := registrationURLFacts(rawURL, registrationauthorsession.ProtocolV1, allowed); err == nil {
 			t.Fatalf("unsafe URL %q was accepted", rawURL)
+		}
+	}
+}
+
+func TestRegistrationV2URLFactsAndGuardRetainOnlySafeNavigationQuery(t *testing.T) {
+	request := validRegistrationBrowserRequest()
+	request.Protocol = registrationauthorsession.ProtocolV2
+	request.URL += "?action=startnew"
+	if err := validateRegistrationBrowserRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	allowed := func(origin string) bool { return origin == "https://app.example.test" }
+	origin, path, err := registrationURLFacts(request.URL, request.Protocol, allowed)
+	if err != nil || origin != "https://app.example.test" || path != "/register" || strings.Contains(origin+path, "action") {
+		t.Fatalf("facts=%q %q error=%v", origin, path, err)
+	}
+	guard := newRegistrationNetworkGuard(request)
+	if err := guard.beginNavigation(request.URL); err != nil || !guard.allowBrowser(request.URL, "GET", "document", true) {
+		t.Fatalf("safe v2 navigation failed: %v", errors.Join(err, guard.err()))
+	}
+	guard.endNavigation()
+	if !guard.allowBrowser("https://app.example.test/app.css?cache=dynamic", "GET", "stylesheet", false) {
+		t.Fatalf("same-origin resource query failed: %v", guard.err())
+	}
+	for _, rawURL := range []string{
+		"https://app.example.test/register?token=private",
+		"https://app.example.test/register?action=startnew#fragment",
+		"https://other.example.test/register?action=startnew",
+	} {
+		guard := newRegistrationNetworkGuard(request)
+		if err := guard.beginNavigation(rawURL); err == nil || strings.Contains(err.Error(), "private") {
+			t.Fatalf("unsafe navigation error=%v", err)
 		}
 	}
 }
