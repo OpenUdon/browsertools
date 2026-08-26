@@ -22,11 +22,17 @@ import (
 
 	"github.com/OpenUdon/browsertools/authorsession"
 	"github.com/OpenUdon/browsertools/disclosurepath"
+	"github.com/OpenUdon/browsertools/internal/registrationurl"
 	"github.com/OpenUdon/browsertools/internal/strictjson"
 	"github.com/OpenUdon/browsertools/registrationprofile"
 )
 
-const Protocol = "browsertools.registration-author-session.v1"
+const (
+	ProtocolV1 = "browsertools.registration-author-session.v1"
+	ProtocolV2 = "browsertools.registration-author-session.v2"
+	// Protocol is the immutable legacy default.
+	Protocol = ProtocolV1
+)
 
 // AccessibilityLabelDisclosure must be shown anywhere registration
 // observations or reviewed candidates are displayed or retained.
@@ -285,6 +291,17 @@ func exactOrigin(raw string) (string, error) {
 }
 
 func cleanURL(raw string) (string, string, error) {
+	return cleanURLForProtocol(ProtocolV1, raw)
+}
+
+func cleanURLForProtocol(protocol, raw string) (string, string, error) {
+	if protocol == ProtocolV2 {
+		facts, err := registrationurl.Parse(raw, true, exactOrigin)
+		if err != nil {
+			return "", "", err
+		}
+		return facts.URL, facts.Origin, nil
+	}
 	if raw != strings.TrimSpace(raw) || len(raw) > 4096 {
 		return "", "", errors.New("URL must be canonical and bounded")
 	}
@@ -304,6 +321,19 @@ func cleanURL(raw string) (string, string, error) {
 		return "", "", errors.New("URL path is not disclosure-safe")
 	}
 	return origin + path, origin, nil
+}
+
+// ValidateNavigationURL validates one session URL under an explicit protocol
+// and returns only canonical URL, origin, and disclosure-safe path facts.
+func ValidateNavigationURL(protocol, raw string) (string, string, string, error) {
+	if protocol != ProtocolV1 && protocol != ProtocolV2 {
+		return "", "", "", errors.New("registration author-session protocol is unsupported")
+	}
+	facts, err := registrationurl.Parse(raw, protocol == ProtocolV2, exactOrigin)
+	if err != nil {
+		return "", "", "", err
+	}
+	return facts.URL, facts.Origin, facts.Path, nil
 }
 
 func normalizeOrigins(values []string) ([]string, error) {

@@ -123,6 +123,29 @@ func TestBuildCanonicalizesEmptyDiagnosticsAsArray(t *testing.T) {
 	}
 }
 
+func TestV2BuildDecodeAndVerifyUseAdditiveIdentity(t *testing.T) {
+	completion := validCompletion(t)
+	completion.Protocol = registrationauthorsession.ProtocolV2
+	result, err := Build(BuildRequest{Completion: completion, CreatedAt: createdAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Schema != SchemaV2 || result.Provenance != (Provenance{Producer: producerName, ResultVersion: SchemaV2, SessionVersion: registrationauthorsession.ProtocolV2}) {
+		t.Fatalf("identity = %q %#v", result.Schema, result.Provenance)
+	}
+	data, err := MarshalDeterministic(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := Decode(data, createdAt.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Schema != SchemaV2 || decoded.Provenance.SessionVersion != registrationauthorsession.ProtocolV2 {
+		t.Fatalf("decoded identity = %q %#v", decoded.Schema, decoded.Provenance)
+	}
+}
+
 func TestVerifyRejectsEveryBoundIdentityAndSafetyMutation(t *testing.T) {
 	base, err := Build(BuildRequest{Completion: validCompletion(t), CreatedAt: createdAt})
 	if err != nil {

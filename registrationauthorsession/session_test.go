@@ -185,6 +185,77 @@ func TestServeCompletesReviewedNoSubmitSession(t *testing.T) {
 	assertClosedServerMessages(t, transcript)
 }
 
+func TestV2RetainsStructuralQueryOnlyInsideBrowserNavigation(t *testing.T) {
+	profile := validProfileJSON(t)
+	registerID := candidateID(1, "button", "Register", 0)
+	session := &fakeSession{
+		observations: []RawObservation{{
+			Origin: "https://app.example.test", Path: "/register",
+			Candidates: []RawCandidate{{Role: "button", Label: "Register", Matches: 1}},
+		}},
+		summary: NetworkSummary{Requests: 2, GETRequests: 2},
+	}
+	browser := &fakeBrowser{session: session}
+	messages := []ClientMessage{
+		{Protocol: ProtocolV2, Type: "start", ProfileID: "synthetic_registration", URL: "https://app.example.test/register?action=startnew", Origins: []string{"https://app.example.test"}},
+		{Protocol: ProtocolV2, Type: "navigate", Method: "GET", URL: "https://app.example.test/register?action=startnew"},
+		{Protocol: ProtocolV2, Type: "observe"},
+		{Protocol: ProtocolV2, Type: "review", Profile: profile, CandidateIDs: []string{registerID}, Flow: "create_dedicated_test_user", CleanupDisposition: "delete_separately"},
+		{Protocol: ProtocolV2, Type: "finish"},
+	}
+	var input strings.Builder
+	for _, message := range messages {
+		data, err := json.Marshal(message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input.Write(data)
+		input.WriteByte('\n')
+	}
+	var output bytes.Buffer
+	completion, err := Serve(context.Background(), io.NopCloser(strings.NewReader(input.String())), &output, browser, ServeOptions{Clock: func() time.Time { return fixedNow }, Protocol: ProtocolV2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion == nil || completion.Protocol != ProtocolV2 || browser.request.Protocol != ProtocolV2 || browser.request.URL != "https://app.example.test/register?action=startnew" {
+		t.Fatalf("completion=%#v request=%#v", completion, browser.request)
+	}
+	if len(session.navigations) != 1 || session.navigations[0].URL != "https://app.example.test/register?action=startnew" {
+		t.Fatalf("navigations = %#v", session.navigations)
+	}
+	if strings.Contains(output.String(), "action") || strings.Contains(output.String(), "startnew") || !strings.Contains(output.String(), `"protocol":"`+ProtocolV2+`"`) {
+		t.Fatalf("v2 transcript leaked or mislabeled query: %s", output.String())
+	}
+}
+
+func TestV2RejectsUnsafeQueryBeforeBrowserWorkWithoutEcho(t *testing.T) {
+	for _, raw := range []string{
+		"https://app.example.test/register?token=do-not-retain",
+		"https://app.example.test/register?action=do-not-retain#fragment",
+	} {
+		browser := &fakeBrowser{}
+		message := ClientMessage{Protocol: ProtocolV2, Type: "start", ProfileID: "synthetic_registration", URL: raw, Origins: []string{"https://app.example.test"}}
+		data, err := json.Marshal(message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		_, err = Serve(context.Background(), io.NopCloser(strings.NewReader(string(data)+"\n")), &output, browser, ServeOptions{Clock: func() time.Time { return fixedNow }, Protocol: ProtocolV2})
+		assertFailure(t, err, output.String(), "invalid_start")
+		if browser.openCount != 0 || strings.Contains(output.String(), "do-not-retain") || strings.Contains(err.Error(), "do-not-retain") {
+			t.Fatalf("unsafe query crossed boundary: opens=%d error=%v output=%s", browser.openCount, err, output.String())
+		}
+	}
+}
+
+func TestServeRejectsUnsupportedConfiguredProtocolBeforeOutput(t *testing.T) {
+	var output bytes.Buffer
+	_, err := Serve(context.Background(), io.NopCloser(strings.NewReader("")), &output, &fakeBrowser{}, ServeOptions{Protocol: "browsertools.registration-author-session.v3"})
+	if err == nil || output.Len() != 0 {
+		t.Fatalf("error=%v output=%q", err, output.String())
+	}
+}
+
 func TestCompletionUsesAcceptedObservationTime(t *testing.T) {
 	profile := validProfileJSON(t)
 	registerID := candidateID(1, "button", "Register", 0)

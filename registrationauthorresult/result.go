@@ -28,8 +28,10 @@ import (
 )
 
 const (
-	// Schema is the exact private result discriminator.
-	Schema = "browsertools.registration-authoring.v1"
+	SchemaV1 = "browsertools.registration-authoring.v1"
+	SchemaV2 = "browsertools.registration-authoring.v2"
+	// Schema is the immutable legacy default.
+	Schema = SchemaV1
 	// MaxResultBytes bounds strict decoding and private persistence.
 	MaxResultBytes = 2 << 20
 	maxResultDepth = 32
@@ -177,8 +179,12 @@ type Finalized struct {
 // runtime access.
 func Build(request BuildRequest) (*Envelope, error) {
 	completion := request.Completion
-	if completion == nil || completion.Protocol != registrationauthorsession.Protocol {
+	if completion == nil || completion.Protocol != registrationauthorsession.ProtocolV1 && completion.Protocol != registrationauthorsession.ProtocolV2 {
 		return nil, errors.New("no-submit registration completion is required")
+	}
+	resultSchema := SchemaV1
+	if completion.Protocol == registrationauthorsession.ProtocolV2 {
+		resultSchema = SchemaV2
 	}
 	createdAt, err := canonicalTime(request.CreatedAt)
 	if err != nil {
@@ -240,10 +246,10 @@ func Build(request BuildRequest) (*Envelope, error) {
 		return nil, err
 	}
 	return &Envelope{
-		Schema: Schema,
+		Schema: resultSchema,
 		Provenance: Provenance{
-			Producer: producerName, ResultVersion: Schema,
-			SessionVersion: registrationauthorsession.Protocol,
+			Producer: producerName, ResultVersion: resultSchema,
+			SessionVersion: completion.Protocol,
 		},
 		CreatedAt: createdAt.Format(time.RFC3339), ObservedAt: observedAt.Format(time.RFC3339),
 		ExpiresAt: expiresAt.Format(time.RFC3339), Origins: append([]string(nil), origins...),
@@ -288,8 +294,12 @@ func Verify(value *Envelope, at time.Time) error {
 	if err != nil {
 		return errors.New("registration authoring source is invalid")
 	}
+	protocol := registrationauthorsession.ProtocolV1
+	if value.Schema == SchemaV2 && value.Provenance.ResultVersion == SchemaV2 && value.Provenance.SessionVersion == registrationauthorsession.ProtocolV2 {
+		protocol = registrationauthorsession.ProtocolV2
+	}
 	completion := &registrationauthorsession.Completion{
-		Protocol:  registrationauthorsession.Protocol,
+		Protocol:  protocol,
 		ProfileID: value.Candidate.ProfileID, Profile: *profileValue,
 		ProfileBytes:       append([]byte(nil), value.Candidate.Source...),
 		ReviewedCandidates: append([]registrationauthorsession.ReviewedCandidate(nil), value.ReviewedCandidates...),

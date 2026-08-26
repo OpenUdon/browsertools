@@ -35,6 +35,8 @@ type Session interface {
 
 // BrowserRequest fixes all authority before a browser can be opened.
 type BrowserRequest struct {
+	// Protocol selects the immutable v1 or additive retained-query v2 URL rule.
+	Protocol string
 	// URL is the initial GET navigation. Implementations must apply the same
 	// exact-origin and network guard used for later Navigation values.
 	URL               string
@@ -55,7 +57,8 @@ type Navigation struct {
 // ServeOptions controls local process behavior and confers no browser
 // authority.
 type ServeOptions struct {
-	Clock func() time.Time
+	Clock    func() time.Time
+	Protocol string
 }
 
 type server struct {
@@ -64,6 +67,7 @@ type server struct {
 	session         Session
 	output          io.Writer
 	clock           func() time.Time
+	protocol        string
 	phase           string
 	closed          bool
 	profileID       string
@@ -110,9 +114,16 @@ func Serve(ctx context.Context, input io.ReadCloser, output io.Writer, browser B
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
+	if options.Protocol == "" {
+		options.Protocol = ProtocolV1
+	}
+	if options.Protocol != ProtocolV1 && options.Protocol != ProtocolV2 {
+		return nil, errors.New("registration author-session protocol is unsupported")
+	}
 	s := &server{
 		ctx: ctx, browser: browser, output: output, clock: options.Clock,
-		phase: "awaiting_start", originSet: make(map[string]struct{}),
+		protocol: options.Protocol,
+		phase:    "awaiting_start", originSet: make(map[string]struct{}),
 		candidates: make(map[string]candidateRecord), diagnosticSet: make(map[string]struct{}),
 	}
 	if err := s.write(ServerMessage{
@@ -162,7 +173,7 @@ func (s *server) handle(message ClientMessage) (*Completion, bool, error) {
 	if s.closed {
 		return nil, true, errors.New("registration author session is closed")
 	}
-	if message.Protocol != Protocol {
+	if message.Protocol != s.protocol {
 		return nil, true, s.fail("protocol_mismatch")
 	}
 	if _, known := clientFields[message.Type]; !known || message.Type == "unknown" {
@@ -194,7 +205,7 @@ func (s *server) start(message ClientMessage) error {
 	if !identifierPattern.MatchString(message.ProfileID) {
 		return s.fail("invalid_start")
 	}
-	initialURL, initialOrigin, err := cleanURL(message.URL)
+	initialURL, initialOrigin, err := cleanURLForProtocol(s.protocol, message.URL)
 	if err != nil || initialURL != message.URL {
 		return s.fail("invalid_start")
 	}
@@ -220,7 +231,7 @@ func (s *server) start(message ClientMessage) error {
 	err = s.withActiveContext(func(callCtx context.Context) error {
 		var openErr error
 		session, openErr = s.browser.Open(callCtx, BrowserRequest{
-			URL: initialURL, ApprovedOrigins: append([]string(nil), origins...),
+			Protocol: s.protocol, URL: initialURL, ApprovedOrigins: append([]string(nil), origins...),
 			NavigationTimeout: time.Duration(bounds.NavigationTimeoutMS) * time.Millisecond,
 			TotalTimeout:      time.Duration(bounds.TotalTimeoutMS) * time.Millisecond,
 			MaxRequests:       bounds.MaxRequests,
@@ -274,7 +285,7 @@ func (s *server) navigate(message ClientMessage) error {
 	if message.Method != "GET" && message.Method != "HEAD" {
 		return s.fail("invalid_navigation")
 	}
-	canonicalURL, origin, err := cleanURL(message.URL)
+	canonicalURL, origin, err := cleanURLForProtocol(s.protocol, message.URL)
 	if err != nil || canonicalURL != message.URL {
 		return s.fail("invalid_navigation")
 	}
@@ -401,7 +412,7 @@ func (s *server) finish() (*Completion, error) {
 	}
 	review := s.reviewedProfile
 	return &Completion{
-		Protocol: Protocol, ProfileID: s.profileID, Profile: review.profile,
+		Protocol: s.protocol, ProfileID: s.profileID, Profile: review.profile,
 		ProfileBytes:       append([]byte(nil), review.bytes...),
 		ReviewedCandidates: append([]ReviewedCandidate(nil), review.candidates...),
 		Flow:               review.flow,
@@ -571,7 +582,7 @@ func (s *server) failAfterClose(code string) error {
 }
 
 func (s *server) write(message ServerMessage) error {
-	message.Protocol = Protocol
+	message.Protocol = s.protocol
 	data, err := json.Marshal(message)
 	if err != nil {
 		return err
