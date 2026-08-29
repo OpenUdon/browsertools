@@ -397,14 +397,6 @@ func (g *registrationNetworkGuard) allowBrowser(rawURL, method, resourceType str
 	if !g.core.beginRequest(registrationPolicyError("request_limit")) {
 		return false
 	}
-	allowed := g.allowedResourceURLLocked(rawURL)
-	if navigation {
-		allowed = g.allowedNavigationURLLocked(rawURL)
-	}
-	if !allowed {
-		g.violate("origin_escape")
-		return false
-	}
 	switch method {
 	case "GET":
 		g.getRequests++
@@ -418,8 +410,23 @@ func (g *registrationNetworkGuard) allowBrowser(rawURL, method, resourceType str
 		g.violate("persistent_resource")
 		return false
 	}
-	if navigation && !g.navigationActive {
-		g.violate("unexpected_navigation")
+	if navigation {
+		if !g.allowedNavigationURLLocked(rawURL) {
+			g.violate("origin_escape")
+			return false
+		}
+		if !g.navigationActive {
+			g.violate("unexpected_navigation")
+			return false
+		}
+		return g.core.result() == nil
+	}
+	valid, approved := g.classifyResourceURLLocked(rawURL)
+	if !valid {
+		g.violate("origin_escape")
+		return false
+	}
+	if !approved {
 		return false
 	}
 	return g.core.result() == nil
@@ -464,17 +471,17 @@ func (g *registrationNetworkGuard) allowedOrigin(origin string) bool {
 	return ok
 }
 
-func (g *registrationNetworkGuard) allowedResourceURLLocked(rawURL string) bool {
+func (g *registrationNetworkGuard) classifyResourceURLLocked(rawURL string) (valid, approved bool) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return false
+		return false, false
 	}
 	origin, err := canonicalAuthorOrigin(parsed.Scheme + "://" + parsed.Host)
 	if err != nil {
-		return false
+		return false, false
 	}
 	_, ok := g.origins[origin]
-	return ok
+	return true, ok
 }
 
 func (g *registrationNetworkGuard) allowedNavigationURLLocked(rawURL string) bool {

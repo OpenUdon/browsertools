@@ -57,8 +57,12 @@ Registration authoring has separate browser-independent contracts. V1
 (`browsertools.registration-author-session.v2` and private
 `browsertools.registration-authoring.v2`) admits only bounded canonical
 literal structural queries and validates them on all session and retained BRP
-navigations. Both admit only exact-origin GET/HEAD observation and bind one reviewed inert BRP
-without claiming a submit, account attempt, session, or supported runtime.
+navigations. Both continue only approved-origin GET/HEAD traffic and bind one
+reviewed inert BRP without claiming a submit, account attempt, session, or
+supported runtime. Canonical unapproved non-navigation GET/HEAD subresources
+are counted and aborted before contact without expanding the allowlist or
+poisoning an otherwise clean observation; unsafe navigation, methods, and
+persistent channels remain fatal.
 A guarded typed Chromium backend and deterministic explicit candidate builder
 implement those contracts. The importable `registrationauthorworker` and
 `browsertools registration-author-session chromium` expose that backend through

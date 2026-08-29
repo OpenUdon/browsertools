@@ -76,7 +76,10 @@ func TestRegistrationNetworkGuardAllowsOnlyApprovedGETAndHEAD(t *testing.T) {
 	}{
 		{name: "POST", rawURL: request.URL, method: "POST", resource: "fetch", code: "mutation_method"},
 		{name: "PUT", rawURL: request.URL, method: "PUT", resource: "xhr", code: "mutation_method"},
-		{name: "origin", rawURL: "https://evil.example.test/register", method: "GET", resource: "document", code: "origin_escape"},
+		{name: "unapproved mutation", rawURL: "https://other.example.test/register", method: "POST", resource: "fetch", code: "mutation_method"},
+		{name: "unapproved persistent resource", rawURL: "https://other.example.test/events", method: "GET", resource: "eventsource", code: "persistent_resource"},
+		{name: "unapproved navigation", rawURL: "https://other.example.test/register", method: "GET", resource: "document", navigation: true, code: "origin_escape"},
+		{name: "malformed resource URL", rawURL: "https://user:pass@other.example.test/resource", method: "GET", resource: "script", code: "origin_escape"},
 		{name: "event stream", rawURL: request.URL, method: "GET", resource: "eventsource", code: "persistent_resource"},
 		{name: "unexpected navigation", rawURL: request.URL, method: "GET", resource: "document", navigation: true, code: "unexpected_navigation"},
 	} {
@@ -87,6 +90,34 @@ func TestRegistrationNetworkGuardAllowsOnlyApprovedGETAndHEAD(t *testing.T) {
 			}
 			if code := policyCode(guard.err()); code != test.code {
 				t.Fatalf("policy code=%q err=%v", code, guard.err())
+			}
+		})
+	}
+}
+
+func TestRegistrationNetworkGuardDeniesUnapprovedReadOnlyResourcesWithoutPoisoning(t *testing.T) {
+	request := validRegistrationBrowserRequest()
+	for _, method := range []string{"GET", "HEAD"} {
+		t.Run(method, func(t *testing.T) {
+			guard := newRegistrationNetworkGuard(request)
+			if guard.allowBrowser("https://other.example.test/nonessential.js?cache=1", method, "script", false) {
+				t.Fatal("unapproved resource was allowed")
+			}
+			if err := guard.err(); err != nil {
+				t.Fatalf("safe resource denial poisoned guard: %v", err)
+			}
+			if !guard.allowBrowser(request.URL, "GET", "document", false) {
+				t.Fatalf("approved request after denial failed: %v", guard.err())
+			}
+			summary, err := guard.result(nil)
+			want := registrationauthorsession.NetworkSummary{Requests: 2, GETRequests: 1, HEADRequests: 0}
+			if method == "GET" {
+				want.GETRequests++
+			} else {
+				want.HEADRequests++
+			}
+			if err != nil || summary != want {
+				t.Fatalf("summary=%#v want=%#v err=%v", summary, want, err)
 			}
 		})
 	}
@@ -237,12 +268,21 @@ func TestPlaywrightRegistrationLoopbackOptIn(t *testing.T) {
 	}
 	var mu sync.Mutex
 	methods := []string{}
+	blockedMethods := []string{}
+	blockedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		mu.Lock()
+		blockedMethods = append(blockedMethods, request.Method)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/javascript")
+		_, _ = w.Write([]byte(`document.body.dataset.blocked = "contacted"`))
+	}))
+	defer blockedServer.Close()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		mu.Lock()
 		methods = append(methods, request.Method)
 		mu.Unlock()
 		w.Header().Set("Content-Type", "text/html")
-		_, _ = w.Write([]byte(`<main><form method="post" action="/created"><label>Email<input autocomplete="email"></label><label>Password<input type="password"></label><button>Register</button></form></main>`))
+		_, _ = w.Write([]byte(`<main><form method="post" action="/created"><label>Email<input autocomplete="email"></label><label>Password<input type="password"></label><button>Register</button></form></main><script src="` + blockedServer.URL + `/nonessential.js"></script>`))
 	}))
 	defer server.Close()
 	origin, err := canonicalAuthorOrigin(server.URL)
@@ -258,6 +298,9 @@ func TestPlaywrightRegistrationLoopbackOptIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		_, _ = session.Close(context.Background())
+	}()
 	observation, err := session.Observe(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -275,15 +318,30 @@ func TestPlaywrightRegistrationLoopbackOptIn(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary, err := session.Close(context.Background())
-	if err != nil || summary.Requests != summary.GETRequests+summary.HEADRequests || summary.HEADRequests != 1 {
+	if err != nil {
 		t.Fatalf("summary=%#v err=%v", summary, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
+	if len(blockedMethods) != 0 {
+		t.Fatalf("blocked origin received requests: %v", blockedMethods)
+	}
+	allowedGET, allowedHEAD := 0, 0
 	for _, method := range methods {
-		if method != http.MethodGet && method != http.MethodHead {
+		switch method {
+		case http.MethodGet:
+			allowedGET++
+		case http.MethodHead:
+			allowedHEAD++
+		default:
 			t.Fatalf("loopback observed mutation method %q in %#v", method, methods)
 		}
+	}
+	want := registrationauthorsession.NetworkSummary{
+		Requests: len(methods) + 1, GETRequests: allowedGET + 1, HEADRequests: allowedHEAD,
+	}
+	if summary != want || summary.HEADRequests != 1 {
+		t.Fatalf("summary=%#v want=%#v approved methods=%v", summary, want, methods)
 	}
 }
 

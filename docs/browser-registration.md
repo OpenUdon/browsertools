@@ -48,6 +48,9 @@ The registration producer uses separate v1 and v2 contracts. V1 remains
 structural-query retention. The version split is a safety boundary:
 
 - the registration session admits exact-origin GET/HEAD observation only;
+- canonical unapproved non-navigation GET/HEAD subresources are accounted and
+  aborted before contact without expanding the origin allowlist or failing an
+  otherwise clean observation;
 - no message can focus or type a credential, click or submit a control,
   approve POST, establish/export a session, or invoke a runtime;
 - the result contains exactly one `uws.browser-registration.1.0` candidate and
@@ -119,13 +122,16 @@ page content, capture, cookie/storage access, or session export.
 implementation of that narrow interface. It launches one sandbox-required,
 non-persistent context with the established sanitized browser environment,
 blocks service workers, popups, downloads, dialogs, file choosers, WebSockets,
-event streams, spontaneous navigations, unapproved origins, and every method
-other than GET or HEAD before continuation. It accounts completed response
-bytes, obtains candidates only from bounded ARIA snapshots, omits child-frame
-content with fixed diagnostics, and never calls a Playwright input, click,
-page-value, capture, cookie, or storage API. Explicit HEAD uses the context's
-request client with redirects and retries disabled and is admitted/accounted by
-the same exact-origin guard before the request starts.
+event streams, spontaneous or cross-origin navigations, and every method other
+than GET or HEAD before continuation. It also intercepts canonical unapproved
+non-navigation GET/HEAD subresources before contact, counts the denied attempt,
+and continues without admitting that origin. Malformed URLs and every unsafe
+method, channel, navigation, or bound remain terminal policy violations. It
+accounts completed response bytes, obtains candidates only from bounded ARIA
+snapshots, omits child-frame content with fixed diagnostics, and never calls a
+Playwright input, click, page-value, capture, cookie, or storage API. Explicit
+HEAD uses the context's request client with redirects and retries disabled and
+is admitted/accounted by the same exact-origin guard before the request starts.
 
 `registrationauthorworker.Run` is the reusable isolated process entry. It
 performs read-only exact-version driver preflight, serves the closed protocol,
