@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/OpenUdon/browsertools/registrationauthorsession"
+	playwright "github.com/mxschmitt/playwright-go"
 )
 
 func validRegistrationBrowserRequest() registrationauthorsession.BrowserRequest {
@@ -118,6 +119,44 @@ func TestRegistrationNetworkGuardDeniesUnapprovedReadOnlyResourcesWithoutPoisoni
 			}
 			if err != nil || summary != want {
 				t.Fatalf("summary=%#v want=%#v err=%v", summary, want, err)
+			}
+		})
+	}
+}
+
+func TestHandleRegistrationRouteFailsClosedOnRouteErrors(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		allowed bool
+		abort   func(...string) error
+		proceed func(...playwright.RouteContinueOptions) error
+		code    string
+	}{
+		{
+			name:    "abort",
+			allowed: false,
+			abort: func(...string) error {
+				return errors.New("synthetic abort failure")
+			},
+			proceed: func(...playwright.RouteContinueOptions) error { return nil },
+			code:    "route_abort",
+		},
+		{
+			name:    "continue",
+			allowed: true,
+			abort:   func(...string) error { return nil },
+			proceed: func(...playwright.RouteContinueOptions) error {
+				return errors.New("synthetic continue failure")
+			},
+			code: "route_continue",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			guard := newRegistrationNetworkGuard(validRegistrationBrowserRequest())
+			handleRegistrationRoute(guard, test.allowed, test.abort, test.proceed)
+			var policy *policyError
+			if err := guard.err(); !errors.As(err, &policy) || policy.Code != test.code {
+				t.Fatalf("route error = %v, want %s", err, test.code)
 			}
 		})
 	}
