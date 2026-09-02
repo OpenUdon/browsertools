@@ -344,13 +344,12 @@ func newRegistrationNetworkGuard(request registrationauthorsession.BrowserReques
 func installRegistrationNetworkPolicy(browserContext playwright.BrowserContext, guard *registrationNetworkGuard) error {
 	if err := browserContext.Route("**/*", func(route playwright.Route) {
 		request := route.Request()
-		if !guard.allowBrowser(request.URL(), request.Method(), request.ResourceType(), request.IsNavigationRequest()) {
-			_ = route.Abort("blockedbyclient")
-			return
-		}
-		if err := route.Continue(); err != nil {
-			guard.block("route_continue")
-		}
+		handleRegistrationRoute(
+			guard,
+			guard.allowBrowser(request.URL(), request.Method(), request.ResourceType(), request.IsNavigationRequest()),
+			route.Abort,
+			route.Continue,
+		)
 	}); err != nil {
 		return errors.New("install registration network route")
 	}
@@ -386,6 +385,18 @@ func installRegistrationNetworkPolicy(browserContext playwright.BrowserContext, 
 		guard.observeBytes(int64(sizes.ResponseBodySize))
 	})
 	return nil
+}
+
+func handleRegistrationRoute(guard *registrationNetworkGuard, allowed bool, abort func(...string) error, proceed func(...playwright.RouteContinueOptions) error) {
+	if !allowed {
+		if err := abort("blockedbyclient"); err != nil {
+			guard.block("route_abort")
+		}
+		return
+	}
+	if err := proceed(); err != nil {
+		guard.block("route_continue")
+	}
 }
 
 func (g *registrationNetworkGuard) allowBrowser(rawURL, method, resourceType string, navigation bool) bool {
