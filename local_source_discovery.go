@@ -21,6 +21,7 @@ import (
 	"github.com/OpenUdon/browsertools/profile"
 	eartifact "github.com/OpenUdon/evidence/artifact"
 	"github.com/OpenUdon/evidence/digest"
+	"github.com/OpenUdon/uws/browserauthentication"
 	"gopkg.in/yaml.v3"
 )
 
@@ -287,7 +288,7 @@ func classifyBrowserSource(path string, data []byte, at time.Time) (LocalSourceC
 			Status: eartifact.EffectiveStatus(value.Assessment, at), Provenance: value.Payload.Provenance.Source,
 		}, "bundle", nil
 	}
-	if profileDiscriminator == "uws.browser-authentication.1.0" {
+	if profileDiscriminator == browserauthentication.ProfileName || profileDiscriminator == browserauthentication.ContextProfileName {
 		value, err := authprofile.Parse(data)
 		if err != nil {
 			return LocalSourceCandidate{}, "authentication_profile", err

@@ -2,9 +2,12 @@ package authprofile
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/OpenUdon/uws/browserauthentication"
 )
 
 func TestParseAndLifecycle(t *testing.T) {
@@ -63,4 +66,36 @@ func readFixture(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// TestParseContextProfile proves the additive authentication 1.1 contract
+// parses through the same helpers as 1.0, including declared popup and frame
+// contexts and an exact success path.
+func TestParseContextProfile(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "valid-popup-frame.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Profile != browserauthentication.ContextProfileName {
+		t.Fatalf("profile = %q", value.Profile)
+	}
+	if len(value.Contexts) != 2 {
+		t.Fatalf("contexts = %#v", value.Contexts)
+	}
+	if got := value.Contexts["otp_frame"]; got.Kind != "frame" || got.Parent != "idp_popup" {
+		t.Fatalf("otp_frame = %#v", got)
+	}
+	if got := SortedFlowNames(value); len(got) != 1 || got[0] != "member_login_sms" {
+		t.Fatalf("flows = %#v", got)
+	}
+	if got := value.Flows["member_login_sms"].Success.Path; got != "/dashboard" {
+		t.Fatalf("success path = %q", got)
+	}
+	if got := Origins(value); len(got) != 2 {
+		t.Fatalf("origins = %#v", got)
+	}
 }

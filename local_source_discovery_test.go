@@ -1,6 +1,7 @@
 package browsertools
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -92,6 +93,40 @@ func TestDiscoverAuthenticationProfileWithoutRegistryPromotion(t *testing.T) {
 	}
 	if len(report.Ambiguous) != 0 || len(report.Truncated) != 0 {
 		t.Fatalf("blockers = %#v %#v", report.Ambiguous, report.Truncated)
+	}
+}
+
+// TestDiscoverContextAuthenticationProfileAndRejectsUnknownVersion proves the
+// additive authentication 1.1 contract is discoverable beside 1.0 while an
+// unknown authentication version is still rejected explicitly.
+func TestDiscoverContextAuthenticationProfileAndRejectsUnknownVersion(t *testing.T) {
+	root := t.TempDir()
+	data := mustReadDiscoveryFixture(t, filepath.Join("authprofile", "testdata", "valid-popup-frame.yaml"))
+	writeDiscoveryFile(t, filepath.Join(root, "browser-authentication", "member-contexts.yaml"), data)
+	report, err := DiscoverLocalSources(context.Background(), LocalSourceDiscoveryOptions{Roots: []string{root}, At: discoveryTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Candidates) != 1 || report.Candidates[0].Kind != LocalSourceAuthenticationProfile {
+		t.Fatalf("candidates = %#v", report.Candidates)
+	}
+	candidate := report.Candidates[0]
+	if candidate.Title != "Member popup and frame login" || candidate.FlowCount != 1 || len(candidate.Flows) != 1 || candidate.Flows[0] != "member_login_sms" {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+	if len(report.Rejected) != 0 || len(report.Ambiguous) != 0 {
+		t.Fatalf("blockers = %#v %#v", report.Rejected, report.Ambiguous)
+	}
+
+	future := t.TempDir()
+	unknown := bytes.Replace(data, []byte("uws.browser-authentication.1.1"), []byte("uws.browser-authentication.1.2"), 1)
+	writeDiscoveryFile(t, filepath.Join(future, "browser-authentication", "member-future.yaml"), unknown)
+	futureReport, err := DiscoverLocalSources(context.Background(), LocalSourceDiscoveryOptions{Roots: []string{future}, At: discoveryTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(futureReport.Candidates) != 0 || !hasDiscoveryDiagnostic(futureReport.Rejected, "invalid_authentication_profile") {
+		t.Fatalf("future version report = %#v", futureReport)
 	}
 }
 
