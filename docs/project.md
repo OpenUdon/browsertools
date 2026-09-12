@@ -295,10 +295,14 @@ Browsertools must not commit:
 
 ## Supported Browser Contracts
 
-Browsertools validates browser profiles 1.5 through 1.7. Version 1.6 adds
+Browsertools validates browser profiles 1.5 through 1.7, authentication
+recipes 1.0 and 1.1, and registration recipes 1.0 and 1.1. Browser 1.6 adds
 reviewed popup/frame contexts, while 1.7 permits the typed accessibility output
-conversions used by authenticated authoring. The oldest sufficient version is
-emitted. Upload/download, arbitrary pointer or JavaScript behavior, raw
+conversions used by authenticated authoring. Authentication 1.1 adds contexts,
+context-qualified steps, the navigate object form, and an exact success path;
+registration 1.1 adds typed private input slots and input checkpoints. The
+oldest sufficient version is emitted: a recipe that uses none of those features
+keeps its 1.0 or 1.5 discriminator. Upload/download, arbitrary pointer or JavaScript behavior, raw
 coordinates, credential/session storage, and runtime retry policy remain
 outside the portable contract.
 

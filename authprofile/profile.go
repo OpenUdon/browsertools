@@ -1,5 +1,5 @@
 // Package authprofile loads and validates portable
-// uws.browser-authentication.1.0 sign-in recipes.
+// uws.browser-authentication.1.0 and 1.1 sign-in recipes.
 //
 // The package is authoring tooling only. It never resolves credentials,
 // launches a browser, stores sessions, or performs authentication.

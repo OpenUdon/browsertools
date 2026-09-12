@@ -1,8 +1,9 @@
 // Package profile loads, models, and validates UWS browser-profile documents.
 //
-// The browser.1.5 and additive browser.1.6 schemas are owned by github.com/OpenUdon/uws. This package
-// embeds a parity-checked copy and provides a complete, engine-neutral Go view
-// of the portable document. It deliberately contains no browser runtime,
+// The browser.1.5 schema and the additive browser.1.6 and browser.1.7 schemas
+// are owned by github.com/OpenUdon/uws. This package reads each accepted
+// version from that pinned module, embeds a parity-checked 1.5 copy, and
+// provides a complete, engine-neutral Go view of the portable document. It deliberately contains no browser runtime,
 // session, credential, or Playwright behavior.
 package profile
 
@@ -29,7 +30,8 @@ import (
 // validation declarations.
 type JSONSchema map[string]any
 
-// Profile is the complete typed view of a uws.browser.1.5 or 1.6 document.
+// Profile is the complete typed view of a uws.browser.1.5, 1.6, or 1.7
+// document.
 type Profile struct {
 	Schema          string             `json:"profile" yaml:"profile"`
 	Info            Info               `json:"info" yaml:"info"`
@@ -110,7 +112,7 @@ type Action struct {
 	ConfirmationPolicy ConfirmationPolicy `json:"confirmationPolicy" yaml:"confirmationPolicy"`
 }
 
-// SideEffect is a member of the browser.1.5 side-effect vocabulary.
+// SideEffect is a member of the browser-profile side-effect vocabulary.
 type SideEffect string
 
 const (
@@ -128,7 +130,8 @@ type ConfirmationPolicy struct {
 	Prompt   string `json:"prompt,omitempty" yaml:"prompt,omitempty"`
 }
 
-// Role is an accessibility role accepted by browser.1.5.
+// Role is an accessibility role accepted by every supported browser
+// profile version.
 type Role string
 
 const (
@@ -261,7 +264,7 @@ const (
 	OutputNull    OutputType = "null"
 )
 
-// OutputSource identifies a browser.1.5 extraction source.
+// OutputSource identifies a browser-profile extraction source.
 type OutputSource string
 
 const (

@@ -1,7 +1,9 @@
 # Browser Registration Profiles
 
-Browsertools supports the additive `uws.browser-registration.1.0` contract as
-offline producer tooling. Registration is not authentication: it creates a
+Browsertools supports the additive `uws.browser-registration.1.0` and `1.1`
+contracts as offline producer tooling, emitting the oldest sufficient version.
+Filled private input values and their resolution remain owned by UWS and the
+runtime. Registration is not authentication: it creates a
 remote account, while `uws.browser-authentication` signs in an existing
 identity and establishes a named execution-local session.
 

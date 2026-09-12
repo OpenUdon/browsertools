@@ -1,7 +1,8 @@
 # Browser Authentication Profiles
 
 Browsertools validates and reviews the additive
-`uws.browser-authentication.1.0` profile. These profiles describe sign-in UI
+`uws.browser-authentication.1.0` and `1.1` profiles, emitting the oldest
+sufficient version. These profiles describe sign-in UI
 evidence; they are not browser drivers and do not contain credentials or
 sessions.
 

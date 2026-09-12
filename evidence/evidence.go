@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-// ObservationKind mirrors the uws.browser.1.5 schema enum for how the profile
+// ObservationKind mirrors the browser-profile schema enum for how the profile
 // was learned.
 type ObservationKind string
 

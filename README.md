@@ -418,11 +418,11 @@ go run ./cmd/browsertools cache delete \
 - A complete typed model and validation helpers for UWS `browser-profile`
   documents.
 - Typed validation, deterministic drafting, digest-bound review, freshness,
-  and local discovery for package-local `uws.browser-authentication.1.0`
-  recipes.
+  and local discovery for package-local `uws.browser-authentication.1.0` and
+  `1.1` recipes.
 - Typed offline validation, deterministic explicit drafting, digest-bound
-  review, and freshness for package-local `uws.browser-registration.1.0`
-  recipes.
+  review, and freshness for package-local `uws.browser-registration.1.0` and
+  `1.1` recipes.
 - Secret-free evidence records from browser and scraper tooling.
 - Draft profile generation from reviewed evidence.
 - Review bundles with validation, confidence, expiry, side-effect, and

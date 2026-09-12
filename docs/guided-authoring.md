@@ -42,7 +42,7 @@ origins, accessibility locators, and output candidates. It then asks for:
 - explicit action IDs and the evidence records supporting each action;
 - scalar parameters and whether each is required;
 - output candidates, including an explicit `none` choice;
-- each closed `browser.1.5` macro and its locator, parameter reference, and
+- each closed browser-profile macro and its locator, parameter reference, and
   optional wait;
 - side effects and confirmation policy;
 - a rationale for every selected ambiguous locator.

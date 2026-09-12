@@ -3,7 +3,7 @@
 E04 exposes more of Playwright-Go without turning Playwright artifacts or
 engine-specific selectors into UWS browser semantics. Rich evidence remains
 private raw material. Cross-engine checks remain value-free observations of an
-already reviewed `uws.browser.1.5` profile.
+already reviewed browser profile, 1.5 through 1.7.
 
 Neither path is a runtime. Both are headless, non-interactive, GET/HEAD-only,
 exact-origin acquisitions in fresh ephemeral contexts. They cannot receive an
@@ -132,8 +132,10 @@ without changing `browser.1.5`:
 | Upload | Deferred | Define runtime-owned private-input binding and confirmation semantics first. |
 | Permission | Deferred | Define exact-origin, least-privilege runtime grants and expiry first. |
 
-Any future portable change belongs in a reviewed UWS `browser.1.6` schema and
-version note. Browsertools does not add ad hoc keys to `browser.1.5` profiles.
+Any future portable change belongs in a reviewed UWS browser schema and
+version note. UWS has since published `browser.1.6` contexts and `browser.1.7`
+typed accessibility outputs, and Browsertools accepts 1.5 through 1.7.
+Browsertools does not add ad hoc keys to a profile of any version.
 
 ## Verification
 

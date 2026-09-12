@@ -2,7 +2,7 @@
 // evidence into one deterministic, strictly gated authoring bundle.
 //
 // Guide is not a browser command language. It accepts only the closed
-// browser.1.5 macro vocabulary and never infers a sequence, mutation, side
+// browser-profile macro vocabulary and never infers a sequence, mutation, side
 // effect, confirmation policy, or ambiguity decision from evidence.
 package guide
 
@@ -133,7 +133,7 @@ type ParameterIntent struct {
 	Required bool   `json:"required"`
 }
 
-// StepIntent is one explicit member of the closed browser.1.5 macro set.
+// StepIntent is one explicit member of the closed browser-profile macro set.
 type StepIntent struct {
 	Kind           profile.StepKind `json:"kind"`
 	Navigate       string           `json:"navigate,omitempty"`

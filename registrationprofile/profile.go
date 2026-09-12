@@ -1,5 +1,5 @@
 // Package registrationprofile loads and validates portable
-// uws.browser-registration.1.0 account-creation recipes.
+// uws.browser-registration.1.0 and 1.1 account-creation recipes.
 //
 // The package is offline authoring tooling only. It never resolves credentials,
 // launches a browser, submits a registration, handles human verification,
