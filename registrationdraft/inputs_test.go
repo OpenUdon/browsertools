@@ -28,6 +28,11 @@ func TestTypedInputsSelectAdditiveProfileAndReview(t *testing.T) {
 	if built.Profile != "uws.browser-registration.1.1" {
 		t.Fatal("typed recipe did not select 1.1")
 	}
+	// Discovery inventory is private authoring state. A portable export never
+	// carries it, per the UWS registration authoring boundary.
+	if built.Discovery != nil {
+		t.Fatal("authoring export carries discovery metadata")
+	}
 	review, err := registrationreview.Build(built, at)
 	if err != nil {
 		t.Fatal(err)

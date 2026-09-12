@@ -1,6 +1,7 @@
 package registrationauthorresult
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 	"time"
@@ -21,6 +22,11 @@ func TestV3ResultBindsActualProducerHistory(t *testing.T) {
 	}
 	if result.Schema != SchemaV3 || result.Candidate.Review.Version != registrationreview.VersionV2 {
 		t.Fatal("wrong v3 lineage")
+	}
+	// The reviewed source is a portable export, so it must not carry private
+	// discovery inventory.
+	if bytes.Contains(result.Candidate.Source, []byte(`"discovery"`)) {
+		t.Fatal("v3 candidate source carries discovery metadata")
 	}
 	data, err := MarshalDeterministic(result)
 	if err != nil {

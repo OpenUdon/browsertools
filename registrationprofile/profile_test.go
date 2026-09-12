@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/OpenUdon/uws/browserregistration"
 	"github.com/OpenUdon/uws/schemas"
 )
 
@@ -79,6 +80,30 @@ func TestRegistrationCallControlsValidateThroughUWS(t *testing.T) {
 	weakened := strings.Replace(string(call), "stop_without_retry", "retry", 1)
 	if err := schemas.ValidateBrowserRegistrationCallSupplement([]byte(weakened)); err == nil {
 		t.Fatal("weakened registration call unexpectedly validated")
+	}
+}
+
+// TestRegistrationCallSupplementVersionsAreSelectedExplicitly proves the call
+// envelope carries no discriminator, so its version is chosen by the caller.
+// The private input binding is required by 1.1 and refused by 1.0.
+func TestRegistrationCallSupplementVersionsAreSelectedExplicitly(t *testing.T) {
+	call := `{"x-uws-browser-registration":{"profile":"browser-registration/test.yaml","flow":"create_dedicated_test_user","credentialBindings":{"identifier":"test_identifier","password":"test_password"},"approval":"register_test_user","duplicatePrevention":"operator_attestation","onDuplicate":"fail","ambiguousOutcome":"stop_without_retry","cleanupDisposition":"delete_separately"}}`
+	bound := strings.Replace(call, `"cleanupDisposition":"delete_separately"`, `"cleanupDisposition":"delete_separately","inputBinding":"dedicated_registration_input"`, 1)
+
+	if err := schemas.ValidateBrowserRegistrationCallSupplementForProfile([]byte(call), browserregistration.CallProfileName); err != nil {
+		t.Fatalf("call 1.0 rejected its own envelope: %v", err)
+	}
+	if err := schemas.ValidateBrowserRegistrationCallSupplementForProfile([]byte(bound), browserregistration.CallProfileNameV11); err != nil {
+		t.Fatalf("call 1.1 rejected a bound envelope: %v", err)
+	}
+	if err := schemas.ValidateBrowserRegistrationCallSupplementForProfile([]byte(bound), browserregistration.CallProfileName); err == nil {
+		t.Fatal("call 1.0 accepted a private input binding")
+	}
+	if err := schemas.ValidateBrowserRegistrationCallSupplementForProfile([]byte(call), browserregistration.CallProfileNameV11); err == nil {
+		t.Fatal("call 1.1 accepted an envelope without its required input binding")
+	}
+	if err := schemas.ValidateBrowserRegistrationCallSupplement([]byte(call)); err != nil {
+		t.Fatalf("the unversioned validator no longer means 1.0: %v", err)
 	}
 }
 
