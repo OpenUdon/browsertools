@@ -155,7 +155,7 @@ func TestRegistrationAuthorSessionChromiumCLIUsesWorkerBoundary(t *testing.T) {
 }
 
 func TestRegistrationAuthorSessionChromiumCLIRejectsUsageBeforeWorker(t *testing.T) {
-	for _, args := range [][]string{nil, {"unexpected"}, {"--private-root", "/private", "unexpected"}, {"--private-root", "/private", "--protocol", "v3"}} {
+	for _, args := range [][]string{nil, {"unexpected"}, {"--private-root", "/private", "unexpected"}, {"--private-root", "/private", "--protocol", "v999"}} {
 		var stdout, stderr bytes.Buffer
 		calls := 0
 		code := runRegistrationAuthorSessionChromiumWith(args, strings.NewReader(""), &stdout, &stderr,

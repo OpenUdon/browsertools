@@ -30,6 +30,7 @@ import (
 const (
 	SchemaV1 = "browsertools.registration-authoring.v1"
 	SchemaV2 = "browsertools.registration-authoring.v2"
+	SchemaV3 = "browsertools.registration-authoring.v3"
 	// Schema is the immutable legacy default.
 	Schema = SchemaV1
 	// MaxResultBytes bounds strict decoding and private persistence.
@@ -141,6 +142,9 @@ type Envelope struct {
 	Observations       int                                           `json:"observations"`
 	Network            NetworkPosture                                `json:"network"`
 	Diagnostics        []string                                      `json:"diagnostics"`
+	History            []registrationauthorsession.Observation       `json:"history,omitempty"`
+	Previews           []registrationauthorsession.PreviewRecord     `json:"previews,omitempty"`
+	StepCandidates     []string                                      `json:"stepCandidates,omitempty"`
 }
 
 // BuildRequest contains one clean session completion and the deterministic
@@ -179,12 +183,36 @@ type Finalized struct {
 // runtime access.
 func Build(request BuildRequest) (*Envelope, error) {
 	completion := request.Completion
-	if completion == nil || completion.Protocol != registrationauthorsession.ProtocolV1 && completion.Protocol != registrationauthorsession.ProtocolV2 {
+	if completion == nil || completion.Protocol != registrationauthorsession.ProtocolV1 && completion.Protocol != registrationauthorsession.ProtocolV2 && completion.Protocol != registrationauthorsession.ProtocolV3 {
 		return nil, errors.New("no-submit registration completion is required")
 	}
 	resultSchema := SchemaV1
 	if completion.Protocol == registrationauthorsession.ProtocolV2 {
 		resultSchema = SchemaV2
+	}
+	profileSchema := registrationProfileSchema
+	if completion.Protocol == registrationauthorsession.ProtocolV3 {
+		resultSchema, profileSchema = SchemaV3, browserregistration.ProfileNameV11
+		selected := make([]string, 0, len(completion.ReviewedCandidates))
+		for _, candidate := range completion.ReviewedCandidates {
+			selected = append(selected, candidate.ID)
+		}
+		if len(completion.History) != completion.Observations || registrationauthorsession.ValidateV3Evidence(&completion.Profile, completion.Flow, completion.History, completion.Previews, completion.StepCandidates, selected) != nil {
+			return nil, errors.New("registration 1.1 observation evidence is invalid")
+		}
+		byID := map[string]registrationauthorsession.ReviewedCandidate{}
+		for _, observation := range completion.History {
+			for _, candidate := range observation.Candidates {
+				byID[candidate.ID] = registrationauthorsession.ReviewedCandidate{ID: candidate.ID, Generation: observation.Generation, Role: candidate.Role, Label: candidate.Label, Matches: candidate.Matches}
+			}
+		}
+		for _, candidate := range completion.ReviewedCandidates {
+			if byID[candidate.ID] != candidate {
+				return nil, errors.New("registration 1.1 reviewed candidate mismatch")
+			}
+		}
+	} else if len(completion.History) != 0 || len(completion.Previews) != 0 || len(completion.StepCandidates) != 0 {
+		return nil, errors.New("legacy registration completion has unsupported evidence")
 	}
 	createdAt, err := canonicalTime(request.CreatedAt)
 	if err != nil {
@@ -207,10 +235,10 @@ func Build(request BuildRequest) (*Envelope, error) {
 	if err := registrationprofile.ValidateAt(&completion.Profile, createdAt); err != nil {
 		return nil, errors.New("result profile is not current")
 	}
-	if completion.Protocol == registrationauthorsession.ProtocolV2 && registrationprofile.ValidateRetainedNavigationV2(&completion.Profile) != nil {
+	if completion.Protocol != registrationauthorsession.ProtocolV1 && registrationprofile.ValidateRetainedNavigationV2(&completion.Profile) != nil {
 		return nil, errors.New("result profile contains an unsafe navigation URL")
 	}
-	if completion.Profile.Profile != registrationProfileSchema || completion.Profile.ObservationKind != "accessibility_snapshot" {
+	if completion.Profile.Profile != profileSchema || completion.Profile.ObservationKind != "accessibility_snapshot" {
 		return nil, errors.New("result candidate schema or observation kind is unsupported")
 	}
 	origins := registrationprofile.Origins(&completion.Profile)
@@ -244,11 +272,11 @@ func Build(request BuildRequest) (*Envelope, error) {
 	if err != nil {
 		return nil, err
 	}
-	reviewedCandidates, err := canonicalReviewedCandidates(completion.ReviewedCandidates, completion.Observations, completion.Bounds.MaxCandidates)
+	reviewedCandidates, err := canonicalReviewedCandidatesForProtocol(completion.ReviewedCandidates, completion.Observations, completion.Bounds.MaxCandidates, completion.Protocol)
 	if err != nil {
 		return nil, err
 	}
-	return &Envelope{
+	result := &Envelope{
 		Schema: resultSchema,
 		Provenance: Provenance{
 			Producer: producerName, ResultVersion: resultSchema,
@@ -257,7 +285,7 @@ func Build(request BuildRequest) (*Envelope, error) {
 		CreatedAt: createdAt.Format(time.RFC3339), ObservedAt: observedAt.Format(time.RFC3339),
 		ExpiresAt: expiresAt.Format(time.RFC3339), Origins: append([]string(nil), origins...),
 		Candidate: Candidate{
-			ProfileID: completion.ProfileID, Schema: registrationProfileSchema,
+			ProfileID: completion.ProfileID, Schema: profileSchema,
 			SourceDigest: digest(canonicalProfile), Source: append(json.RawMessage(nil), canonicalProfile...),
 			ReviewDigest: digest(reviewBytes), Review: *review,
 		},
@@ -276,7 +304,18 @@ func Build(request BuildRequest) (*Envelope, error) {
 			SessionEstablished: false, RuntimeSupported: false,
 		},
 		Diagnostics: diagnostics,
-	}, nil
+		History:     completion.History, Previews: completion.Previews, StepCandidates: append([]string(nil), completion.StepCandidates...),
+	}
+	// Public nested control definitions must not alias caller-owned evidence.
+	data, err := json.Marshal(result)
+	if err != nil {
+		return nil, errors.New("registration authoring result cannot be copied")
+	}
+	var copy Envelope
+	if json.Unmarshal(data, &copy) != nil {
+		return nil, errors.New("registration authoring result cannot be copied")
+	}
+	return &copy, nil
 }
 
 // Verify reconstructs the complete deterministic result from its exact source
@@ -301,6 +340,9 @@ func Verify(value *Envelope, at time.Time) error {
 	if value.Schema == SchemaV2 && value.Provenance.ResultVersion == SchemaV2 && value.Provenance.SessionVersion == registrationauthorsession.ProtocolV2 {
 		protocol = registrationauthorsession.ProtocolV2
 	}
+	if value.Schema == SchemaV3 && value.Provenance.ResultVersion == SchemaV3 && value.Provenance.SessionVersion == registrationauthorsession.ProtocolV3 {
+		protocol = registrationauthorsession.ProtocolV3
+	}
 	completion := &registrationauthorsession.Completion{
 		Protocol:  protocol,
 		ProfileID: value.Candidate.ProfileID, Profile: *profileValue,
@@ -310,6 +352,7 @@ func Verify(value *Envelope, at time.Time) error {
 		Origins: append([]string(nil), value.Origins...), ObservedAt: observedAt,
 		Bounds: value.Bounds, Observations: value.Observations,
 		Diagnostics: append([]string(nil), value.Diagnostics...),
+		History:     value.History, Previews: value.Previews, StepCandidates: value.StepCandidates,
 		Network: registrationauthorsession.NetworkSummary{
 			Requests: value.Network.Requests, GETRequests: value.Network.GETRequests,
 			HEADRequests: value.Network.HEADRequests,
@@ -532,6 +575,10 @@ func buildFlowReview(completion *registrationauthorsession.Completion, flow brow
 }
 
 func canonicalReviewedCandidates(values []registrationauthorsession.ReviewedCandidate, observations, maximum int) ([]registrationauthorsession.ReviewedCandidate, error) {
+	return canonicalReviewedCandidatesForProtocol(values, observations, maximum, registrationauthorsession.ProtocolV1)
+}
+
+func canonicalReviewedCandidatesForProtocol(values []registrationauthorsession.ReviewedCandidate, observations, maximum int, protocol string) ([]registrationauthorsession.ReviewedCandidate, error) {
 	if len(values) == 0 || len(values) > maximum || maximum <= 0 {
 		return nil, errors.New("reviewed candidate inventory is invalid")
 	}
@@ -541,7 +588,7 @@ func canonicalReviewedCandidates(values []registrationauthorsession.ReviewedCand
 	}
 	seen := map[string]struct{}{}
 	for _, candidate := range result {
-		if !candidatePattern.MatchString(candidate.ID) || candidate.Generation != observations ||
+		if !candidatePattern.MatchString(candidate.ID) || candidate.Generation < 1 || candidate.Generation > observations || (protocol != registrationauthorsession.ProtocolV3 && candidate.Generation != observations) ||
 			candidate.Matches != 1 || !portableRoles[candidate.Role] || !promotableLabel(candidate.Label) {
 			return nil, errors.New("reviewed candidate is invalid")
 		}

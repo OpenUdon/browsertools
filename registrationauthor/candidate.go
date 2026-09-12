@@ -55,6 +55,9 @@ type BuildRequest struct {
 	Flow                 string
 	Controls             CallControls
 	AssessedAt           time.Time
+	History              []registrationauthorsession.Observation
+	Previews             []registrationauthorsession.PreviewRecord
+	StepCandidates       []string
 }
 
 // Candidate is an immutable-by-API pre-review value. Accessors return copies;
@@ -70,6 +73,7 @@ type Candidate struct {
 	controls        CallControls
 	approvedOrigins []string
 	protocol        string
+	stepCandidates  []string
 }
 
 // Build validates every explicit decision and constructs canonical UWS source.
@@ -77,7 +81,7 @@ func Build(request BuildRequest) (*Candidate, error) {
 	if request.Protocol == "" {
 		request.Protocol = registrationauthorsession.ProtocolV1
 	}
-	if request.Protocol != registrationauthorsession.ProtocolV1 && request.Protocol != registrationauthorsession.ProtocolV2 {
+	if request.Protocol != registrationauthorsession.ProtocolV1 && request.Protocol != registrationauthorsession.ProtocolV2 && request.Protocol != registrationauthorsession.ProtocolV3 {
 		return nil, errors.New("registration author protocol is unsupported")
 	}
 	if !identifierPattern.MatchString(request.ProfileID) || !identifierPattern.MatchString(request.Flow) {
@@ -92,6 +96,12 @@ func Build(request BuildRequest) (*Candidate, error) {
 	origins, err := validateOrigins(request.ApprovedOrigins)
 	if err != nil {
 		return nil, err
+	}
+	if request.Protocol == registrationauthorsession.ProtocolV3 {
+		return buildV3(request, origins)
+	}
+	if len(request.History) != 0 || len(request.Previews) != 0 || len(request.StepCandidates) != 0 || len(request.Spec.InputSlots) != 0 {
+		return nil, errors.New("legacy registration authoring does not accept typed input evidence")
 	}
 	observation, inventory, err := validateObservation(request.Observation, origins)
 	if err != nil {
@@ -190,6 +200,7 @@ func (c *Candidate) ReviewMessage() registrationauthorsession.ClientMessage {
 		Profile:      append(json.RawMessage(nil), c.profileBytes...),
 		CandidateIDs: append([]string(nil), c.reviewedIDs...), Flow: c.flow,
 		CleanupDisposition: c.controls.CleanupDisposition,
+		StepCandidates:     append([]string(nil), c.stepCandidates...),
 	}
 }
 
@@ -328,6 +339,14 @@ func bindSubmit(sequence []browserregistration.Step, candidate registrationautho
 func cloneObservation(value registrationauthorsession.Observation) registrationauthorsession.Observation {
 	value.Candidates = append([]registrationauthorsession.Candidate(nil), value.Candidates...)
 	value.Diagnostics = append([]string(nil), value.Diagnostics...)
+	for index := range value.Candidates {
+		if control := value.Candidates[index].Control; control != nil {
+			data, _ := json.Marshal(control)
+			var copy registrationauthorsession.ControlMetadata
+			_ = json.Unmarshal(data, &copy)
+			value.Candidates[index].Control = &copy
+		}
+	}
 	return value
 }
 

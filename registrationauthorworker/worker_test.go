@@ -238,11 +238,11 @@ func TestRunRejectsMissingBoundaryBeforeBrowserConstruction(t *testing.T) {
 		t.Fatal("Run() accepted missing boundary")
 	}
 	productionInput := &trackingReadCloser{Reader: strings.NewReader("")}
-	if err := Run(context.Background(), Options{PrivateRoot: "/private", Protocol: "v3", Stdin: productionInput, Stdout: io.Discard}); err == nil || !productionInput.closed {
+	if err := Run(context.Background(), Options{PrivateRoot: "/private", Protocol: "v999", Stdin: productionInput, Stdout: io.Discard}); err == nil || !productionInput.closed {
 		t.Fatalf("production unsupported protocol error=%v closed=%v", err, productionInput.closed)
 	}
 	input := &trackingReadCloser{Reader: strings.NewReader("")}
-	if err := run(context.Background(), Options{PrivateRoot: "/private", Protocol: "v3", Stdin: input, Stdout: io.Discard}, func() time.Time { return workerTime }, func(string) registrationauthorsession.Browser {
+	if err := run(context.Background(), Options{PrivateRoot: "/private", Protocol: "v999", Stdin: input, Stdout: io.Discard}, func() time.Time { return workerTime }, func(string) registrationauthorsession.Browser {
 		calls++
 		return &workerBrowser{}
 	}); err == nil || !input.closed || calls != 0 {

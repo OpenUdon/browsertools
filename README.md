@@ -51,6 +51,11 @@ up to 16 final accessibility outputs produce one private
 credential, page value, cookie, or browser state. See [Authenticated
 goal-directed browser authoring](docs/authenticated-goal-authoring.md).
 
+Registration 1.1 authoring is available explicitly with `--protocol v3`. It
+adds typed public field definitions, operator-reviewed preview of public
+choices, and versioned recipe/evidence review. Filled values remain runtime
+inputs. See [registration authoring](docs/browser-registration.md).
+
 Registration authoring has separate browser-independent contracts. V1
 (`browsertools.registration-author-session.v1` and private
 `browsertools.registration-authoring.v1`) remains query-free. Additive v2

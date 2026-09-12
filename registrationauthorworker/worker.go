@@ -109,6 +109,8 @@ func resolveProtocol(value string) (string, error) {
 		return registrationauthorsession.ProtocolV1, nil
 	case "v2":
 		return registrationauthorsession.ProtocolV2, nil
+	case "v3":
+		return registrationauthorsession.ProtocolV3, nil
 	default:
 		return "", errors.New("registration author worker protocol is unsupported")
 	}

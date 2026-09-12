@@ -306,3 +306,56 @@ UWS owns the profile and call schemas. OpenUdon owns user-facing selection,
 package review, and trusted handoff. Udon and Browserdriver own optional runtime
 execution, credential resolution, human-checkpoint interaction, network and
 redirect containment, approval enforcement, and value-free execution evidence.
+
+
+## Generic registration 1.1 authoring
+
+Select `registration-author-session chromium --protocol v3 --private-root DIR`
+for `browsertools.registration-author-session.v3`. Existing v1/v2 behavior and
+defaults remain unchanged. V3 produces `browsertools.registration-authoring.v3`
+with registration 1.1 source and `browsertools.registration-review.v2`.
+`registrationdraft.Build` chooses 1.1 only when explicit `inputSlots` exist.
+Published UWS schemas and filled-input semantics remain owned by UWS.
+
+V3 observations add optional public control definitions: supported kind,
+required status, bounds and at most 32 public select options. No current input
+value, checkbox state or selected option is read. Unknown widgets and unsafe
+option metadata become unsupported. Reduction is heuristic, not DLP; operator
+review is still required. `SuggestFields` returns deterministic unapproved
+suggestions; semantic roles, conditions and ordering remain human decisions.
+
+The closed `preview` command names a current candidate ID and generation,
+`purpose: public_form_preview`, and exactly one `select` plus public `option`,
+`check` plus Boolean `checked`, or non-submit `click`. It revalidates the exact
+observed control before acting and emits the next observation. Consent,
+verification, account creation and private input are outside this authority.
+Known protected labels and submit controls are rejected. Form submission is
+disabled in the authoring context, while origin, GET/HEAD, request, response,
+popup, WebSocket and teardown guards remain active. A blocked mutation is a
+terminal failure, never a successful preview. These are application controls,
+not a claim of network-wide containment or exhaustive discovery.
+
+Review includes `stepCandidates`, aligned with the selected flow sequence;
+non-locator steps use an empty string. Every observed macro binds an exact
+reviewed candidate in the bounded ordered history. Read-only clicks must bind
+an exercised preview transition. Typed fills match the observed control kind
+and public select choices. The separate success predicate remains reviewed
+and deferred; authoring never claims a post-submit observation. V3 retains at
+most the configured observation/candidate bounds and 256 KiB of observation
+history, and every complete protocol frame is bounded separately.
+
+`registrationauthor.Build` accepts the v3 history, previews and step candidates
+with the explicit specification and call controls. Finalization independently
+reconstructs the canonical source, all reviewed candidates, history and preview
+proofs after clean teardown. New exports omit discovery inventory. The private
+result remains outside packages and includes no runtime input document.
+
+Qualification uses synthetic fixtures only:
+
+```sh
+BROWSERTOOLS_REGISTRATION_LIVE_TEST=1 go test -count=1 ./capture -run TestPlaywrightRegistrationV3LoopbackOptIn
+```
+
+The conditional two-step wizard passes through the actual NDJSON producer and
+real installed sandboxed Chromium; a preview-triggered POST must fail without
+reaching the fixture server. Legacy producer tests remain mandatory.
