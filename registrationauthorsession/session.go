@@ -17,6 +17,7 @@ import (
 	"github.com/OpenUdon/browsertools/authorsession"
 	"github.com/OpenUdon/browsertools/disclosurepath"
 	"github.com/OpenUdon/browsertools/registrationprofile"
+	"github.com/OpenUdon/uws/browserregistration"
 )
 
 // Browser opens one live, non-persistent, no-submit authoring context.
@@ -82,14 +83,17 @@ type server struct {
 	observedAt      time.Time
 	reviewedProfile *registrationReview
 	activeRemaining time.Duration
+	history         []Observation
+	previews        []PreviewRecord
 }
 
 type registrationReview struct {
-	profile    registrationProfile
-	bytes      []byte
-	candidates []ReviewedCandidate
-	flow       string
-	cleanup    string
+	profile        registrationProfile
+	bytes          []byte
+	candidates     []ReviewedCandidate
+	flow           string
+	cleanup        string
+	stepCandidates []string
 }
 
 // These aliases keep the state machine declarations compact while retaining
@@ -117,7 +121,7 @@ func Serve(ctx context.Context, input io.ReadCloser, output io.Writer, browser B
 	if options.Protocol == "" {
 		options.Protocol = ProtocolV1
 	}
-	if options.Protocol != ProtocolV1 && options.Protocol != ProtocolV2 {
+	if options.Protocol != ProtocolV1 && options.Protocol != ProtocolV2 && options.Protocol != ProtocolV3 {
 		return nil, errors.New("registration author-session protocol is unsupported")
 	}
 	s := &server{
@@ -126,11 +130,13 @@ func Serve(ctx context.Context, input io.ReadCloser, output io.Writer, browser B
 		phase:    "awaiting_start", originSet: make(map[string]struct{}),
 		candidates: make(map[string]candidateRecord), diagnosticSet: make(map[string]struct{}),
 	}
+	capabilities := []string{"get_head_only", "no_submit", "reduced_observation", "registration_review"}
+	if s.protocol == ProtocolV3 {
+		capabilities = append(capabilities, "public_control_definitions", "reviewed_public_preview", "registration_1_1")
+	}
 	if err := s.write(ServerMessage{
-		Type: "hello",
-		Capabilities: []string{
-			"get_head_only", "no_submit", "reduced_observation", "registration_review",
-		},
+		Type:         "hello",
+		Capabilities: capabilities,
 	}); err != nil {
 		return nil, err
 	}
@@ -176,10 +182,12 @@ func (s *server) handle(message ClientMessage) (*Completion, bool, error) {
 	if message.Protocol != s.protocol {
 		return nil, true, s.fail("protocol_mismatch")
 	}
-	if _, known := clientFields[message.Type]; !known || message.Type == "unknown" {
+	_, known := clientFields[message.Type]
+	preview := s.protocol == ProtocolV3 && message.Type == "preview"
+	if (!known && !preview) || message.Type == "unknown" {
 		return nil, true, s.fail("unknown_message")
 	}
-	if !phaseMessages[s.phase][message.Type] {
+	if !phaseMessages[s.phase][message.Type] && !(preview && s.phase == "observing") {
 		return nil, true, s.fail("invalid_state")
 	}
 	switch message.Type {
@@ -189,6 +197,8 @@ func (s *server) handle(message ClientMessage) (*Completion, bool, error) {
 		return nil, false, s.observe()
 	case "navigate":
 		return nil, false, s.navigate(message)
+	case "preview":
+		return nil, false, s.preview(message)
 	case "review":
 		return nil, false, s.review(message)
 	case "finish":
@@ -278,6 +288,13 @@ func (s *server) observe() error {
 	}
 	s.reviewedProfile = nil
 	s.observedAt = observedAt
+	if s.protocol == ProtocolV3 {
+		s.history = append(s.history, observation)
+		data, err := json.Marshal(s.history)
+		if err != nil || len(data) > MaxProtocolLineBytes {
+			return s.fail("invalid_observation")
+		}
+	}
 	return s.write(ServerMessage{Type: "observation", Observation: &observation})
 }
 
@@ -314,6 +331,10 @@ func (s *server) review(message ClientMessage) error {
 	if profileValue.ObservationKind != "accessibility_snapshot" {
 		return s.fail("invalid_profile")
 	}
+	if (s.protocol == ProtocolV3 && profileValue.Profile != browserregistration.ProfileNameV11) ||
+		(s.protocol != ProtocolV3 && profileValue.Profile != browserregistration.ProfileName) {
+		return s.fail("invalid_profile")
+	}
 	now := s.clock().UTC().Round(0)
 	if now.IsZero() || registrationprofile.ValidateAt(profileValue, now) != nil {
 		return s.fail("invalid_profile")
@@ -325,7 +346,7 @@ func (s *server) review(message ClientMessage) error {
 	if !equalStrings(registrationprofile.Origins(profileValue), s.origins) {
 		return s.fail("origin_mismatch")
 	}
-	if s.protocol == ProtocolV2 && registrationprofile.ValidateRetainedNavigationV2(profileValue) != nil {
+	if s.protocol != ProtocolV1 && registrationprofile.ValidateRetainedNavigationV2(profileValue) != nil {
 		return s.fail("invalid_profile")
 	}
 	if !identifierPattern.MatchString(message.Flow) {
@@ -342,12 +363,19 @@ func (s *server) review(message ClientMessage) error {
 	}
 	reviewed := make([]ReviewedCandidate, 0, len(message.CandidateIDs))
 	seen := make(map[string]struct{}, len(message.CandidateIDs))
+	available := s.candidates
+	if s.protocol == ProtocolV3 {
+		available = historyCandidates(s.history)
+		if err := ValidateV3Evidence(profileValue, message.Flow, s.history, s.previews, message.StepCandidates, message.CandidateIDs); err != nil {
+			return s.fail("invalid_candidate")
+		}
+	}
 	for _, id := range message.CandidateIDs {
 		if _, duplicate := seen[id]; duplicate {
 			return s.fail("invalid_candidate")
 		}
 		seen[id] = struct{}{}
-		record, ok := s.candidates[id]
+		record, ok := available[id]
 		if !ok || record.protocol.Matches != 1 || !promotableCandidate(record.protocol) {
 			return s.fail("invalid_candidate")
 		}
@@ -362,6 +390,7 @@ func (s *server) review(message ClientMessage) error {
 	s.reviewedProfile = &registrationReview{
 		profile: *profileValue, bytes: append([]byte(nil), profileBytes...), candidates: reviewed,
 		flow: message.Flow, cleanup: message.CleanupDisposition,
+		stepCandidates: append([]string(nil), message.StepCandidates...),
 	}
 	s.phase = "reviewed"
 	return s.write(ServerMessage{Type: "state", Phase: s.phase})
@@ -423,6 +452,7 @@ func (s *server) finish() (*Completion, error) {
 		Origins:            append([]string(nil), s.origins...), ObservedAt: s.observedAt,
 		Bounds: s.bounds, Observations: s.observations,
 		Diagnostics: append([]string(nil), s.diagnostics...), Network: summary,
+		History: s.history, Previews: s.previews, StepCandidates: review.stepCandidates,
 	}, nil
 }
 
@@ -487,6 +517,15 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 		reducedLocators[locatorKey] = struct{}{}
 		id := candidateID(s.generation, rawCandidate.Role, label, index)
 		candidate := Candidate{ID: id, Role: rawCandidate.Role, Label: label, Matches: rawCandidate.Matches}
+		if s.protocol == ProtocolV3 && rawCandidate.Control != nil && promotableCandidate(candidate) {
+			if err := ValidateControlMetadata(rawCandidate.Control); err != nil {
+				return Observation{}, nil, errors.New("backend control metadata is invalid")
+			}
+			data, _ := json.Marshal(rawCandidate.Control)
+			if err := json.Unmarshal(data, &candidate.Control); err != nil {
+				return Observation{}, nil, errors.New("backend control metadata is invalid")
+			}
+		}
 		observation.Candidates = append(observation.Candidates, candidate)
 		records[id] = candidateRecord{protocol: candidate, generation: s.generation}
 	}
@@ -587,8 +626,8 @@ func (s *server) failAfterClose(code string) error {
 func (s *server) write(message ServerMessage) error {
 	message.Protocol = s.protocol
 	data, err := json.Marshal(message)
-	if err != nil {
-		return err
+	if err != nil || len(data)+1 > MaxProtocolLineBytes {
+		return errors.New("registration author-session output exceeds bounds")
 	}
 	written, err := s.output.Write(append(data, '\n'))
 	if err != nil || written != len(data)+1 {

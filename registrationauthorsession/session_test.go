@@ -290,7 +290,7 @@ func TestV2ReviewRejectsUnsafeRetainedProfileNavigationWithoutEcho(t *testing.T)
 
 func TestServeRejectsUnsupportedConfiguredProtocolBeforeOutput(t *testing.T) {
 	var output bytes.Buffer
-	_, err := Serve(context.Background(), io.NopCloser(strings.NewReader("")), &output, &fakeBrowser{}, ServeOptions{Protocol: "browsertools.registration-author-session.v3"})
+	_, err := Serve(context.Background(), io.NopCloser(strings.NewReader("")), &output, &fakeBrowser{}, ServeOptions{Protocol: "browsertools.registration-author-session.v999"})
 	if err == nil || output.Len() != 0 {
 		t.Fatalf("error=%v output=%q", err, output.String())
 	}

@@ -89,6 +89,14 @@ func (b *playwrightRegistrationBrowser) Open(ctx context.Context, request regist
 	if err := browserContext.ClearPermissions(); err != nil {
 		return nil, fmt.Errorf("clear registration permissions")
 	}
+	if normalizedRegistrationProtocol(request.Protocol) == registrationauthorsession.ProtocolV3 {
+		if err := browserContext.AddInitScript(playwright.Script{Content: playwright.String(`(() => {
+  addEventListener('submit', event => { event.preventDefault(); event.stopImmediatePropagation(); }, true);
+  Object.defineProperty(HTMLFormElement.prototype, 'submit', {value: function () {}, writable: false, configurable: false});
+})()`)}); err != nil {
+			return nil, errors.New("install registration preview submission block")
+		}
+	}
 	browserContext.SetDefaultNavigationTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	browserContext.SetDefaultTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	guard := newRegistrationNetworkGuard(request)
@@ -154,6 +162,7 @@ func (s *playwrightRegistrationSession) Observe(ctx context.Context) (registrati
 	type group struct {
 		role, label string
 		matches     int
+		control     *registrationauthorsession.ControlMetadata
 	}
 	groups := make(map[string]*group)
 	diagnosticSet := make(map[string]struct{})
@@ -186,7 +195,14 @@ func (s *playwrightRegistrationSession) Observe(ctx context.Context) (registrati
 			existing.matches++
 			continue
 		}
-		groups[key] = &group{role: role, label: label, matches: 1}
+		item := &group{role: role, label: label, matches: 1}
+		if normalizedRegistrationProtocol(s.request.Protocol) == registrationauthorsession.ProtocolV3 {
+			item.control, err = registrationControlMetadata(locator)
+			if err != nil {
+				return registrationauthorsession.RawObservation{}, errors.New("observe public registration control")
+			}
+		}
+		groups[key] = item
 	}
 	if len(groups) > s.request.MaxCandidates {
 		return registrationauthorsession.RawObservation{}, errors.New("registration candidate bound exceeded")
@@ -211,6 +227,7 @@ func (s *playwrightRegistrationSession) Observe(ctx context.Context) (registrati
 		item := groups[key]
 		candidates = append(candidates, registrationauthorsession.RawCandidate{
 			Role: item.role, Label: item.label, Matches: item.matches,
+			Control: item.control,
 		})
 	}
 	diagnostics := make([]string, 0, len(diagnosticSet))
@@ -602,6 +619,8 @@ func normalizedRegistrationProtocol(value string) string {
 		return registrationauthorsession.ProtocolV1
 	case registrationauthorsession.ProtocolV2:
 		return registrationauthorsession.ProtocolV2
+	case registrationauthorsession.ProtocolV3:
+		return registrationauthorsession.ProtocolV3
 	default:
 		return ""
 	}
