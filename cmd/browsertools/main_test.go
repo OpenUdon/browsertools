@@ -760,6 +760,60 @@ func TestAuthenticationProfileDraftReviewCLI(t *testing.T) {
 	}
 }
 
+// TestAuthenticationContextProfileDraftReviewCLI proves the CLI drafts and
+// reviews a context-capable 1.1 recipe through the same commands as 1.0.
+func TestAuthenticationContextProfileDraftReviewCLI(t *testing.T) {
+	fixture, err := os.ReadFile("../../authprofile/testdata/valid-popup-frame.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"auth-profile", "validate", "--input", "-", "--at", "2026-08-16T00:00:00Z"}, bytes.NewReader(fixture), &stdout, &stderr)
+	if code != exitOK || strings.TrimSpace(stdout.String()) != "valid" {
+		t.Fatalf("validate code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+
+	tmp := t.TempDir()
+	specPath := filepath.Join(tmp, "spec.yaml")
+	profilePath := filepath.Join(tmp, "member-contexts.yaml")
+	reviewPath := filepath.Join(tmp, "review.json")
+	spec := strings.Replace(string(fixture), "profile: uws.browser-authentication.1.1\n", "", 1)
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"auth-draft", "build", "--spec", specPath, "--out", profilePath}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("draft code=%d stderr=%q", code, stderr.String())
+	}
+	value, err := authprofile.LoadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Profile != "uws.browser-authentication.1.1" || len(value.Contexts) != 2 {
+		t.Fatalf("profile = %q contexts = %#v", value.Profile, value.Contexts)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"auth-review", "bundle", "--profile", profilePath, "--at", "2026-08-16T00:00:00Z", "--out", reviewPath}, strings.NewReader(""), &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("review code=%d stderr=%q", code, stderr.String())
+	}
+	data, err := os.ReadFile(reviewPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reviewed authreview.Bundle
+	if err := json.Unmarshal(data, &reviewed); err != nil {
+		t.Fatal(err)
+	}
+	if err := authreview.Verify(&reviewed, mustTime(t, "2026-08-16T00:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRegistrationProfileDraftReviewCLI(t *testing.T) {
 	fixture, err := os.ReadFile("../../registrationprofile/testdata/valid-registration.yaml")
 	if err != nil {
