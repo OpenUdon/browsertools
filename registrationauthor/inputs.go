@@ -1,7 +1,6 @@
 package registrationauthor
 
 import (
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -37,13 +36,6 @@ func buildV3(request BuildRequest, origins []string) (*Candidate, error) {
 	if err != nil {
 		return nil, bad
 	}
-	last := request.History[len(request.History)-1]
-	encoded, err := json.Marshal(last)
-	if err != nil {
-		return nil, bad
-	}
-	if json.Unmarshal(encoded, &last) != nil {
-		return nil, bad
-	}
+	last := cloneObservation(request.History[len(request.History)-1])
 	return &Candidate{profileID: request.ProfileID, profileBytes: data, observation: last, reviewedIDs: append([]string(nil), request.ReviewedCandidateIDs...), submitID: request.SubmitCandidateID, flow: request.Flow, controls: request.Controls, approvedOrigins: append([]string(nil), origins...), protocol: request.Protocol, stepCandidates: append([]string(nil), request.StepCandidates...)}, nil
 }

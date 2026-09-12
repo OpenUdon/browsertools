@@ -47,6 +47,16 @@ func TestBuildV3UsesReviewedHistoryAndCopiesMetadata(t *testing.T) {
 			t.Fatal("candidate observation aliases mutable metadata")
 		}
 	}
+	for _, item := range request.History[len(request.History)-1].Candidates {
+		if item.Control != nil {
+			item.Control.Kind = "changed"
+		}
+	}
+	for _, item := range candidate.Observation().Candidates {
+		if item.Control != nil && item.Control.Kind == "changed" {
+			t.Fatal("candidate aliases the builder's input history")
+		}
+	}
 	request.Protocol = registrationauthorsession.ProtocolV2
 	if _, err := Build(request); err == nil {
 		t.Fatal("legacy builder accepted v3 evidence")
