@@ -12,7 +12,7 @@ import (
 
 // TestSchemaCompiles ensures the embedded schema is well-formed and compilable.
 func TestSchemaCompiles(t *testing.T) {
-	data, err := schemas.BrowserSourceProfileSchema("uws.browser.1.5")
+	data, err := schemas.BrowserSourceProfileSchema(SchemaV15)
 	if err != nil || len(data) == 0 {
 		t.Fatalf("pinned UWS schema failed to load: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestSupportedProfileVersionsUsePinnedSchemasAndFutureVersionFails(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, version := range []string{"uws.browser.1.5", "uws.browser.1.6", "uws.browser.1.7"} {
+	for _, version := range SupportedSchemas() {
 		value, err := prof.Value()
 		if err != nil {
 			t.Fatal(err)
@@ -300,5 +300,21 @@ func TestDurationAddToCalendarComponents(t *testing.T) {
 	}
 	if _, err := Duration("PT1M1H").AddTo(reference); err == nil {
 		t.Fatal("expected out-of-order duration rejection")
+	}
+}
+
+// TestSchemaConstantsPinWireDiscriminators keeps the exported constants bound
+// to the exact published UWS discriminator strings.
+func TestSchemaConstantsPinWireDiscriminators(t *testing.T) {
+	if SchemaV15 != "uws.browser.1.5" || SchemaV16 != "uws.browser.1.6" || SchemaV17 != "uws.browser.1.7" {
+		t.Fatalf("schema constants drifted: %s %s %s", SchemaV15, SchemaV16, SchemaV17)
+	}
+	supported := SupportedSchemas()
+	supported[0] = "mutated"
+	if SupportedSchemas()[0] != SchemaV15 {
+		t.Fatal("SupportedSchemas returned a shared slice")
+	}
+	if SupportsSchema("uws.browser.1.8") || !SupportsSchema(SchemaV17) {
+		t.Fatal("SupportsSchema does not match the accepted set")
 	}
 }

@@ -17,6 +17,43 @@ var schemaFS embed.FS
 
 const schemaResource = "schema/browser.1.5.json"
 
+// Accepted browser-profile schema discriminators, oldest first. Drafting emits
+// the oldest sufficient version; validation dispatches every accepted version
+// to the pinned UWS schema for that exact discriminator.
+const (
+	SchemaV15 = "uws.browser.1.5"
+	SchemaV16 = "uws.browser.1.6"
+	SchemaV17 = "uws.browser.1.7"
+)
+
+// SupportedSchemas returns a fresh copy of the accepted schema discriminators
+// in ascending version order.
+func SupportedSchemas() []string { return []string{SchemaV15, SchemaV16, SchemaV17} }
+
+// SupportsSchema reports whether a schema discriminator is accepted.
+func SupportsSchema(schema string) bool {
+	for _, supported := range SupportedSchemas() {
+		if schema == supported {
+			return true
+		}
+	}
+	return false
+}
+
+// SchemaBytesFor returns independent bytes of the pinned UWS JSON Schema for
+// one accepted discriminator. An unsupported version fails explicitly rather
+// than falling back to another version.
+func SchemaBytesFor(schema string) ([]byte, error) {
+	if !SupportsSchema(schema) {
+		return nil, fmt.Errorf("unsupported browser profile discriminator %q", schema)
+	}
+	data, err := schemas.BrowserSourceProfileSchema(schema)
+	if err != nil {
+		return nil, fmt.Errorf("read pinned UWS schema %q: %w", schema, err)
+	}
+	return data, nil
+}
+
 // Issue is a deterministic, path-tagged semantic validation diagnostic.
 type Issue struct {
 	Code    string `json:"code"`
@@ -43,7 +80,9 @@ func (e *ValidationError) Error() string {
 // Unwrap exposes the underlying JSON Schema error, when present.
 func (e *ValidationError) Unwrap() error { return e.Cause }
 
-// SchemaBytes returns the embedded uws.browser.1.5 JSON Schema.
+// SchemaBytes returns the embedded parity copy of the uws.browser.1.5 JSON
+// Schema. Use SchemaBytesFor to read any accepted version from the pinned UWS
+// module.
 func SchemaBytes() ([]byte, error) { return schemaFS.ReadFile(schemaResource) }
 
 // Validate checks a JSON-compatible browser-profile value against both the
@@ -57,9 +96,7 @@ func Validate(value any) error {
 	if !ok || strings.TrimSpace(discriminator) == "" {
 		return &ValidationError{Issues: []Issue{{Code: "unsupported_profile", Path: "profile", Message: "browser profile discriminator is required"}}}
 	}
-	switch discriminator {
-	case "uws.browser.1.5", "uws.browser.1.6", "uws.browser.1.7":
-	default:
+	if !SupportsSchema(discriminator) {
 		return &ValidationError{Issues: []Issue{{Code: "unsupported_profile", Path: "profile", Message: fmt.Sprintf("unsupported browser profile discriminator %q", discriminator)}}}
 	}
 	data, err := json.Marshal(value)
