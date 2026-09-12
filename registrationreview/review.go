@@ -8,9 +8,12 @@ import (
 	"time"
 
 	"github.com/OpenUdon/browsertools/registrationprofile"
+	"github.com/OpenUdon/uws/browserregistration"
 )
 
 const Version = "browsertools.registration-review.v1"
+
+const VersionV2 = "browsertools.registration-review.v2"
 
 // Bundle binds one exact inert profile to one freshness assessment. It is not
 // evidence of an account-creation attempt or result.
@@ -54,6 +57,9 @@ func Build(value *registrationprofile.Profile, at time.Time) (*Bundle, error) {
 		AssessedAt: at.UTC().Format(time.RFC3339), ExpiresAt: expires.Format(time.RFC3339),
 		Promotable: true, Gaps: []string{},
 	}
+	if value.Profile == browserregistration.ProfileNameV11 {
+		result.Version = VersionV2
+	}
 	if !at.Before(expires) {
 		result.Promotable = false
 		result.Gaps = []string{"profile_expired"}
@@ -63,7 +69,14 @@ func Build(value *registrationprofile.Profile, at time.Time) (*Bundle, error) {
 
 // Verify proves the embedded profile digest and current lifecycle.
 func Verify(value *Bundle, at time.Time) error {
-	if value == nil || value.Version != Version || at.IsZero() {
+	if value == nil || at.IsZero() {
+		return fmt.Errorf("invalid registration review bundle")
+	}
+	expectedVersion := Version
+	if value.Profile.Profile == browserregistration.ProfileNameV11 {
+		expectedVersion = VersionV2
+	}
+	if value.Version != expectedVersion {
 		return fmt.Errorf("invalid registration review bundle")
 	}
 	assessed, err := time.Parse(time.RFC3339, value.AssessedAt)

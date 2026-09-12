@@ -21,6 +21,7 @@ type Spec struct {
 	ExpiresAfter    string                                        `json:"expiresAfter" yaml:"expiresAfter"`
 	Verification    browserregistration.Verification              `json:"verification" yaml:"verification"`
 	CredentialSlots map[string]browserregistration.CredentialSlot `json:"credentialSlots" yaml:"credentialSlots"`
+	InputSlots      map[string]browserregistration.InputSlot      `json:"inputSlots,omitempty" yaml:"inputSlots,omitempty"`
 	Flows           map[string]browserregistration.Flow           `json:"flows" yaml:"flows"`
 }
 
@@ -36,7 +37,11 @@ func Build(spec Spec) (*registrationprofile.Profile, error) {
 		ExpiresAfter:    spec.ExpiresAfter,
 		Verification:    spec.Verification,
 		CredentialSlots: spec.CredentialSlots,
+		InputSlots:      spec.InputSlots,
 		Flows:           spec.Flows,
+	}
+	if len(spec.InputSlots) != 0 {
+		value.Profile = browserregistration.ProfileNameV11
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
