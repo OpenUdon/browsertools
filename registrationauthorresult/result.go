@@ -46,7 +46,7 @@ const (
 	ambiguousOutcome          = "stop_without_retry"
 	cleanupDelete             = "delete_separately"
 	cleanupRetain             = "retain_dedicated_test_identity"
-	registrationProfileSchema = "uws.browser-registration.1.0"
+	registrationProfileSchema = browserregistration.ProfileName
 )
 
 // Provenance identifies the exact producer contracts without naming a

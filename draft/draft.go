@@ -121,7 +121,7 @@ func Build(records []evidence.Record, spec Spec) (*Result, error) {
 	}
 
 	prof := &profile.Profile{
-		Schema:          "uws.browser.1.5",
+		Schema:          profile.SchemaV15,
 		Info:            spec.Info,
 		ObservationKind: spec.ObservationKind,
 		Evidence:        profile.Evidence{LearnedAt: earliest, Source: "browsertools_draft"},

@@ -17,7 +17,9 @@ import (
 	"unicode"
 
 	"github.com/OpenUdon/browsertools/disclosurepath"
+	btprofile "github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/evidence/redact"
+	"github.com/OpenUdon/uws/browserauthentication"
 )
 
 const Schema = "browsertools.authenticated-authoring.v2"
@@ -496,10 +498,10 @@ func buildAuthenticationProfile(request BuildRequest, origins []string) (map[str
 		success["path"] = request.AuthenticationProof.Path
 	}
 	putContext(success, request.AuthenticationProof.Context)
-	profileName := "uws.browser-authentication.1.0"
-	versionDecision := "uws.browser-authentication.1.0"
+	profileName := browserauthentication.ProfileName
+	versionDecision := browserauthentication.ProfileName
 	if use11 {
-		profileName, versionDecision = "uws.browser-authentication.1.1", "uws.browser-authentication.1.1"
+		profileName, versionDecision = browserauthentication.ContextProfileName, browserauthentication.ContextProfileName
 	}
 	profile := map[string]any{
 		"profile": profileName,
@@ -604,11 +606,11 @@ func buildCapabilityProfile(request BuildRequest, origins []string) (map[string]
 		}
 		outputs[selection.Key] = selectedOutput
 	}
-	profileName, versionDecision := "uws.browser.1.5", "uws.browser.1.5"
+	profileName, versionDecision := btprofile.SchemaV15, btprofile.SchemaV15
 	if use17 {
-		profileName, versionDecision = "uws.browser.1.7", "uws.browser.1.7"
+		profileName, versionDecision = btprofile.SchemaV17, btprofile.SchemaV17
 	} else if use16 {
-		profileName, versionDecision = "uws.browser.1.6", "uws.browser.1.6"
+		profileName, versionDecision = btprofile.SchemaV16, btprofile.SchemaV16
 	}
 	profile := map[string]any{
 		"profile":         profileName,
