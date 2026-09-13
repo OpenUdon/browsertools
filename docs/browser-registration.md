@@ -1,5 +1,36 @@
 # Browser Registration Profiles
 
+## Registration 1.2 verification candidate
+
+`registration-author-session chromium --protocol v4` observes public metadata
+for one standard Turnstile, reCAPTCHA v2 or hCaptcha widget bound to the selected
+submit control's POST form. It proposes provider, activation and destination;
+the operator grants traffic with an explicit `approve_verification` command
+carrying the candidate ID and reviewed `humanVerification` descriptor. Detection
+alone grants no provider authority. Missing or ambiguous bindings stop.
+
+V4 preserves typed public field review and preview, and emits registration 1.2,
+registration review v3 and authoring result v4. Consumers select these versions
+explicitly. Results bind the reviewed dependency authority to the observed
+submit and canonical profile. Provider request/POST/body counts are separate
+from application GET/HEAD counts. Application mutations, registration inputs and
+submission remain prohibited; the whole v4 session is no longer GET/HEAD-only.
+
+Adapter-owned HTTPS policies cover Turnstile's challenge origin, documented
+Google/recaptcha.net paths and hCaptcha's DNS domain family. Limits are at most
+256 provider requests, 32 MiB of bodies delivered to the browser and a
+nonrenewable 120-second phase, tightened by consumer/session authority. Provider
+redirects, top-level navigation, application frames, popups, downloads and
+persistent channels stop. Bodies are buffered before budget checking; the budget
+does not bound the transport's process heap. No provider key, response field or
+challenge content enters observations, profiles or results. Permission does not
+automatically reload a page or activate Submit.
+
+Ordinary tests are offline. An authorized local Chromium smoke uses
+`BROWSERTOOLS_VERIFICATION_LIVE_TEST=1 go test ./capture -run
+TestPlaywrightRegistrationVerificationLoopbackOptIn -count=1`, with synthetic
+loopback fixtures only. Provider integration and real authoring remain separate.
+
 Browsertools supports the additive `uws.browser-registration.1.0` and `1.1`
 contracts as offline producer tooling, emitting the oldest sufficient version.
 Filled private input values and their resolution remain owned by UWS and the

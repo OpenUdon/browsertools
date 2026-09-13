@@ -1,5 +1,11 @@
 # OpenUdon Integration
 
+Registration 1.2 uses author-session/result v4, review v3 and OpenUdon transaction
+v4. Explicitly review the detected widget, activation, submission destination and
+bounded verification dependencies before authoring the profile. Provider POST
+authority remains separate from application mutation authority. See
+[registration verification](browser-registration.md).
+
 This is the canonical relationship reference for OpenUdon/iCoT and
 Browsertools. iCoT is the primary end-user authoring entry point across API,
 browser, and runtime-handoff sources. Browsertools is its specialized

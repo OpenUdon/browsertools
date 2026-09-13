@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"sort"
@@ -66,6 +67,21 @@ func Profile(origin string, at time.Time) *registrationprofile.Profile {
 // Author exercises the real v3 NDJSON state machine and consumes its actual
 // emitted candidate IDs. The same sequence works with fake and Chromium backends.
 func Author(ctx context.Context, browser registrationauthorsession.Browser, origin string, at time.Time) (*registrationauthorsession.Completion, error) {
+	return author(ctx, browser, origin, at, nil)
+}
+
+func AuthorVerification(ctx context.Context, browser registrationauthorsession.Browser, origin string, at time.Time, descriptor *browserregistration.HumanVerification) (*registrationauthorsession.Completion, error) {
+	if descriptor == nil {
+		return nil, errors.New("verification descriptor missing")
+	}
+	return author(ctx, browser, origin, at, descriptor)
+}
+
+func author(ctx context.Context, browser registrationauthorsession.Browser, origin string, at time.Time, descriptor *browserregistration.HumanVerification) (*registrationauthorsession.Completion, error) {
+	protocol := registrationauthorsession.ProtocolV3
+	if descriptor != nil {
+		protocol = registrationauthorsession.ProtocolV4
+	}
 	server, client := net.Pipe()
 	defer client.Close()
 	deadline := time.Now().Add(90 * time.Second)
@@ -80,7 +96,7 @@ func Author(ctx context.Context, browser registrationauthorsession.Browser, orig
 	done := make(chan outcome, 1)
 	go func() {
 		defer server.Close()
-		completion, err := registrationauthorsession.Serve(ctx, server, server, browser, registrationauthorsession.ServeOptions{Protocol: registrationauthorsession.ProtocolV3, Clock: func() time.Time { return at }})
+		completion, err := registrationauthorsession.Serve(ctx, server, server, browser, registrationauthorsession.ServeOptions{Protocol: protocol, Clock: func() time.Time { return at }})
 		done <- outcome{completion, err}
 	}()
 	defer func() { _ = client.Close() }()
@@ -89,12 +105,12 @@ func Author(ctx context.Context, browser registrationauthorsession.Browser, orig
 		var response registrationauthorsession.ServerMessage
 		err := decoder.Decode(&response)
 		if err == nil && response.Type != kind {
-			err = errors.New("synthetic authoring unexpected protocol stage")
+			err = fmt.Errorf("synthetic authoring expected %s, got %s (%v)", kind, response.Type, response.Diagnostic)
 		}
 		return response, err
 	}
 	send := func(message registrationauthorsession.ClientMessage) error {
-		message.Protocol = registrationauthorsession.ProtocolV3
+		message.Protocol = protocol
 		return encoder.Encode(message)
 	}
 	if _, err := read("hello"); err != nil {
@@ -138,6 +154,20 @@ func Author(ctx context.Context, browser registrationauthorsession.Browser, orig
 	}
 	profile := Profile(origin, at)
 	steps := []string{"", "", id(first.Observation, "textbox", "Email"), id(first.Observation, "textbox", "Password"), id(first.Observation, "textbox", "Contact name"), id(first.Observation, "combobox", "Account kind"), id(second.Observation, "textbox", "Company name"), id(second.Observation, "button", "Next"), "", id(third.Observation, "textbox", "Phone"), id(third.Observation, "checkbox", "Product updates"), "", id(third.Observation, "button", "Register"), ""}
+	if descriptor != nil {
+		profile.Profile = browserregistration.ProfileNameV12
+		flow := profile.Flows["member"]
+		flow.HumanVerification = descriptor
+		flow.Sequence = flow.Sequence[:len(flow.Sequence)-1]
+		profile.Flows["member"] = flow
+		steps = steps[:len(steps)-1]
+		if err := send(registrationauthorsession.ClientMessage{Type: "approve_verification", CandidateID: id(third.Observation, "button", "Register"), Verification: descriptor}); err != nil {
+			return nil, err
+		}
+		if _, err := read("state"); err != nil {
+			return nil, err
+		}
+	}
 	selected := []string{}
 	for _, candidate := range steps {
 		if candidate != "" {
@@ -165,21 +195,33 @@ func Author(ctx context.Context, browser registrationauthorsession.Browser, orig
 	return result.completion, result.err
 }
 
-type Browser struct{ Session *Session }
+type Browser struct {
+	Session      *Session
+	Verification *browserregistration.HumanVerification
+}
 
 func (b *Browser) Open(_ context.Context, request registrationauthorsession.BrowserRequest) (registrationauthorsession.Session, error) {
 	parsed, _ := url.Parse(request.URL)
-	b.Session = &Session{origin: parsed.Scheme + "://" + parsed.Host}
+	b.Session = &Session{origin: parsed.Scheme + "://" + parsed.Host, verification: b.Verification}
 	return b.Session, nil
 }
 
 type Session struct {
-	origin       string
-	state        int
-	Closed       bool
-	PreviewCount int
+	verification         *browserregistration.HumanVerification
+	VerificationApproved bool
+	origin               string
+	state                int
+	Closed               bool
+	PreviewCount         int
 }
 
+func (s *Session) ApproveVerification(_ context.Context, value browserregistration.HumanVerification) error {
+	if s.verification == nil || value != *s.verification || s.VerificationApproved {
+		return errors.New("unreviewed verification")
+	}
+	s.VerificationApproved = true
+	return nil
+}
 func (s *Session) Navigate(context.Context, registrationauthorsession.Navigation) error { return nil }
 func (s *Session) Close(context.Context) (registrationauthorsession.NetworkSummary, error) {
 	s.Closed = true
@@ -208,6 +250,14 @@ func (s *Session) Observe(context.Context) (registrationauthorsession.RawObserva
 		}
 	} else {
 		candidates = []registrationauthorsession.RawCandidate{candidate("textbox", "Phone", "text", &no), candidate("checkbox", "Product updates", "checkbox", &no), candidate("button", "Register", "unsupported", nil)}
+	}
+	if s.verification != nil {
+		for i := range candidates {
+			if candidates[i].Label == "Register" {
+				v := s.verification
+				candidates[i].Verification = &registrationauthorsession.VerificationObservation{Provider: v.Provider, Activation: v.Activation, SubmissionURL: v.SubmissionURL, WidgetBinding: v.WidgetBinding, Coverage: "standard_single_widget"}
+			}
+		}
 	}
 	return registrationauthorsession.RawObservation{Origin: s.origin, Path: "/register", Candidates: candidates, Diagnostics: []string{"synthetic_fixture"}}, nil
 }
