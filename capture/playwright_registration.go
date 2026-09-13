@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/OpenUdon/uws/browserregistration"
 	"io"
 	"log/slog"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/OpenUdon/browsertools/registrationauthorsession"
@@ -89,7 +91,7 @@ func (b *playwrightRegistrationBrowser) Open(ctx context.Context, request regist
 	if err := browserContext.ClearPermissions(); err != nil {
 		return nil, fmt.Errorf("clear registration permissions")
 	}
-	if normalizedRegistrationProtocol(request.Protocol) == registrationauthorsession.ProtocolV3 {
+	if normalizedRegistrationProtocol(request.Protocol) == registrationauthorsession.ProtocolV3 || request.Protocol == registrationauthorsession.ProtocolV4 {
 		if err := browserContext.AddInitScript(playwright.Script{Content: playwright.String(`(() => {
   addEventListener('submit', event => { event.preventDefault(); event.stopImmediatePropagation(); }, true);
   Object.defineProperty(HTMLFormElement.prototype, 'submit', {value: function () {}, writable: false, configurable: false});
@@ -111,6 +113,7 @@ func (b *playwrightRegistrationBrowser) Open(ctx context.Context, request regist
 		pw: pw, browser: browser, browserContext: browserContext,
 		page: page, request: request, guard: guard,
 	}
+	guard.main = page.MainFrame()
 	session.installSurfacePolicy()
 	browserContext.OnPage(func(popup playwright.Page) {
 		guard.block("popup")
@@ -160,9 +163,10 @@ func (s *playwrightRegistrationSession) Observe(ctx context.Context) (registrati
 		return registrationauthorsession.RawObservation{}, errors.New("registration candidate bound exceeded")
 	}
 	type group struct {
-		role, label string
-		matches     int
-		control     *registrationauthorsession.ControlMetadata
+		role, label  string
+		matches      int
+		control      *registrationauthorsession.ControlMetadata
+		verification *registrationauthorsession.VerificationObservation
 	}
 	groups := make(map[string]*group)
 	diagnosticSet := make(map[string]struct{})
@@ -196,10 +200,16 @@ func (s *playwrightRegistrationSession) Observe(ctx context.Context) (registrati
 			continue
 		}
 		item := &group{role: role, label: label, matches: 1}
-		if normalizedRegistrationProtocol(s.request.Protocol) == registrationauthorsession.ProtocolV3 {
+		if normalizedRegistrationProtocol(s.request.Protocol) == registrationauthorsession.ProtocolV3 || s.request.Protocol == registrationauthorsession.ProtocolV4 {
 			item.control, err = registrationControlMetadata(locator)
 			if err != nil {
 				return registrationauthorsession.RawObservation{}, errors.New("observe public registration control")
+			}
+		}
+		if s.request.Protocol == registrationauthorsession.ProtocolV4 {
+			item.verification, err = registrationVerificationMetadata(locator, s.request.ApprovedOrigins)
+			if err != nil {
+				return registrationauthorsession.RawObservation{}, err
 			}
 		}
 		groups[key] = item
@@ -227,7 +237,7 @@ func (s *playwrightRegistrationSession) Observe(ctx context.Context) (registrati
 		item := groups[key]
 		candidates = append(candidates, registrationauthorsession.RawCandidate{
 			Role: item.role, Label: item.label, Matches: item.matches,
-			Control: item.control,
+			Control: item.control, Verification: item.verification,
 		})
 	}
 	diagnostics := make([]string, 0, len(diagnosticSet))
@@ -336,14 +346,20 @@ func (s *playwrightRegistrationSession) installSurfacePolicy() {
 }
 
 type registrationNetworkGuard struct {
-	mu               sync.Mutex
-	origins          map[string]struct{}
-	protocol         string
-	core             networkGuardCore
-	getRequests      int
-	headRequests     int
-	navigationActive bool
-	closing          bool
+	main                  playwright.Frame
+	verification          *browserregistration.HumanVerification
+	verificationDeadline  time.Time
+	providerRequests      int
+	providerPOSTRequests  int
+	providerResponseBytes int64
+	mu                    sync.Mutex
+	origins               map[string]struct{}
+	protocol              string
+	core                  networkGuardCore
+	getRequests           int
+	headRequests          int
+	navigationActive      bool
+	closing               bool
 }
 
 func newRegistrationNetworkGuard(request registrationauthorsession.BrowserRequest) *registrationNetworkGuard {
@@ -360,7 +376,24 @@ func newRegistrationNetworkGuard(request registrationauthorsession.BrowserReques
 
 func installRegistrationNetworkPolicy(browserContext playwright.BrowserContext, guard *registrationNetworkGuard) error {
 	if err := browserContext.Route("**/*", func(route playwright.Route) {
+		if guard.protocol == registrationauthorsession.ProtocolV4 && guard.handleVerificationRoute(route) {
+			return
+		}
 		request := route.Request()
+		if guard.protocol == registrationauthorsession.ProtocolV4 && request.Frame().ParentFrame() != nil {
+			if guard.unreviewedVerificationFrame(request) {
+				// Observe metadata while provider frames remain blocked pending
+				// review. The ordinary budget still counts these denied reads.
+				guard.allowBrowser(request.URL(), request.Method(), request.ResourceType(), false)
+				if route.Abort("blockedbyclient") != nil {
+					guard.block("route_abort")
+				}
+				return
+			}
+			guard.block("verification_policy")
+			_ = route.Abort("blockedbyclient")
+			return
+		}
 		handleRegistrationRoute(
 			guard,
 			guard.allowBrowser(request.URL(), request.Method(), request.ResourceType(), request.IsNavigationRequest()),
@@ -377,6 +410,9 @@ func installRegistrationNetworkPolicy(browserContext playwright.BrowserContext, 
 		return errors.New("install registration WebSocket blocker")
 	}
 	browserContext.OnResponse(func(response playwright.Response) {
+		if guard.isVerificationURL(response.URL()) {
+			return
+		}
 		value, err := response.HeaderValue("content-length")
 		if err != nil {
 			guard.block("response_header")
@@ -394,6 +430,9 @@ func installRegistrationNetworkPolicy(browserContext playwright.BrowserContext, 
 		guard.observeResponseContentLength(length)
 	})
 	browserContext.OnRequestFinished(func(request playwright.Request) {
+		if guard.isVerificationURL(request.URL()) {
+			return
+		}
 		sizes, err := request.Sizes()
 		if err != nil || sizes == nil || sizes.ResponseBodySize < 0 {
 			guard.block("response_size")
@@ -562,6 +601,7 @@ func (g *registrationNetworkGuard) result(closeErr error) (registrationauthorses
 	defer g.mu.Unlock()
 	summary := registrationauthorsession.NetworkSummary{
 		Requests: g.core.requests, GETRequests: g.getRequests, HEADRequests: g.headRequests,
+		ProviderRequests: g.providerRequests, ProviderPOSTRequests: g.providerPOSTRequests, ProviderResponseBytes: g.providerResponseBytes,
 	}
 	return summary, errors.Join(closeErr, g.core.result())
 }
@@ -621,6 +661,8 @@ func normalizedRegistrationProtocol(value string) string {
 		return registrationauthorsession.ProtocolV2
 	case registrationauthorsession.ProtocolV3:
 		return registrationauthorsession.ProtocolV3
+	case registrationauthorsession.ProtocolV4:
+		return registrationauthorsession.ProtocolV4
 	default:
 		return ""
 	}

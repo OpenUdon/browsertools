@@ -64,7 +64,7 @@ func registrationControlMetadata(locator playwright.Locator) (*registrationautho
 }
 
 func (s *playwrightRegistrationSession) Preview(ctx context.Context, candidate registrationauthorsession.Candidate, request registrationauthorsession.PreviewRequest) error {
-	if normalizedRegistrationProtocol(s.request.Protocol) != registrationauthorsession.ProtocolV3 || registrationauthorsession.ValidatePreview(candidate, request) != nil {
+	if (normalizedRegistrationProtocol(s.request.Protocol) != registrationauthorsession.ProtocolV3 && s.request.Protocol != registrationauthorsession.ProtocolV4) || registrationauthorsession.ValidatePreview(candidate, request) != nil {
 		return errors.New("registration preview unsupported")
 	}
 	if err := s.health(ctx); err != nil {

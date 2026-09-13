@@ -132,7 +132,7 @@ func runRegistrationAuthorSessionChromiumWith(
 	fs.SetOutput(stderr)
 	privateRoot := fs.String("private-root", "", "existing mode-0700 directory for the private registration result")
 	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
-	protocol := fs.String("protocol", "v1", "registration author-session protocol: v1, v2 or v3")
+	protocol := fs.String("protocol", "v1", "registration author-session protocol: v1, v2, v3 or v4")
 	if err := fs.Parse(args); err != nil {
 		return exitUsageOrIO
 	}
@@ -144,8 +144,8 @@ func runRegistrationAuthorSessionChromiumWith(
 		fmt.Fprintln(stderr, "registration-author-session chromium: --private-root and browser dependencies are required")
 		return exitUsageOrIO
 	}
-	if *protocol != "v1" && *protocol != "v2" && *protocol != "v3" {
-		fmt.Fprintln(stderr, "registration-author-session chromium: --protocol must be v1, v2 or v3")
+	if *protocol != "v1" && *protocol != "v2" && *protocol != "v3" && *protocol != "v4" {
+		fmt.Fprintln(stderr, "registration-author-session chromium: --protocol must be v1, v2, v3 or v4")
 		return exitUsageOrIO
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
