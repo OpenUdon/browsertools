@@ -109,6 +109,8 @@ func resolveProtocol(value string) (string, error) {
 		return registrationauthorsession.ProtocolV1, nil
 	case "v2":
 		return registrationauthorsession.ProtocolV2, nil
+	case "v4":
+		return registrationauthorsession.ProtocolV4, nil
 	case "v3":
 		return registrationauthorsession.ProtocolV3, nil
 	default:

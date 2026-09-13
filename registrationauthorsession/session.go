@@ -63,28 +63,29 @@ type ServeOptions struct {
 }
 
 type server struct {
-	ctx             context.Context
-	browser         Browser
-	session         Session
-	output          io.Writer
-	clock           func() time.Time
-	protocol        string
-	phase           string
-	closed          bool
-	profileID       string
-	bounds          Bounds
-	origins         []string
-	originSet       map[string]struct{}
-	candidates      map[string]candidateRecord
-	generation      int
-	observations    int
-	diagnostics     []string
-	diagnosticSet   map[string]struct{}
-	observedAt      time.Time
-	reviewedProfile *registrationReview
-	activeRemaining time.Duration
-	history         []Observation
-	previews        []PreviewRecord
+	verificationAuthority *browserregistration.HumanVerification
+	ctx                   context.Context
+	browser               Browser
+	session               Session
+	output                io.Writer
+	clock                 func() time.Time
+	protocol              string
+	phase                 string
+	closed                bool
+	profileID             string
+	bounds                Bounds
+	origins               []string
+	originSet             map[string]struct{}
+	candidates            map[string]candidateRecord
+	generation            int
+	observations          int
+	diagnostics           []string
+	diagnosticSet         map[string]struct{}
+	observedAt            time.Time
+	reviewedProfile       *registrationReview
+	activeRemaining       time.Duration
+	history               []Observation
+	previews              []PreviewRecord
 }
 
 type registrationReview struct {
@@ -121,7 +122,7 @@ func Serve(ctx context.Context, input io.ReadCloser, output io.Writer, browser B
 	if options.Protocol == "" {
 		options.Protocol = ProtocolV1
 	}
-	if options.Protocol != ProtocolV1 && options.Protocol != ProtocolV2 && options.Protocol != ProtocolV3 {
+	if options.Protocol != ProtocolV1 && options.Protocol != ProtocolV2 && (options.Protocol != ProtocolV3 && options.Protocol != ProtocolV4) {
 		return nil, errors.New("registration author-session protocol is unsupported")
 	}
 	s := &server{
@@ -131,8 +132,11 @@ func Serve(ctx context.Context, input io.ReadCloser, output io.Writer, browser B
 		candidates: make(map[string]candidateRecord), diagnosticSet: make(map[string]struct{}),
 	}
 	capabilities := []string{"get_head_only", "no_submit", "reduced_observation", "registration_review"}
-	if s.protocol == ProtocolV3 {
+	if s.protocol == ProtocolV3 || s.protocol == ProtocolV4 {
 		capabilities = append(capabilities, "public_control_definitions", "reviewed_public_preview", "registration_1_1")
+	}
+	if s.protocol == ProtocolV4 {
+		capabilities = []string{"application_get_head_only", "reviewed_verification_traffic", "no_submit", "reduced_observation", "registration_review", "public_control_definitions", "reviewed_public_preview", "registration_1_2"}
 	}
 	if err := s.write(ServerMessage{
 		Type:         "hello",
@@ -183,14 +187,17 @@ func (s *server) handle(message ClientMessage) (*Completion, bool, error) {
 		return nil, true, s.fail("protocol_mismatch")
 	}
 	_, known := clientFields[message.Type]
-	preview := s.protocol == ProtocolV3 && message.Type == "preview"
-	if (!known && !preview) || message.Type == "unknown" {
+	preview := (s.protocol == ProtocolV3 || s.protocol == ProtocolV4) && message.Type == "preview"
+	verification := s.protocol == ProtocolV4 && message.Type == "approve_verification"
+	if (!known && !preview && !verification) || message.Type == "unknown" {
 		return nil, true, s.fail("unknown_message")
 	}
-	if !phaseMessages[s.phase][message.Type] && !(preview && s.phase == "observing") {
+	if !phaseMessages[s.phase][message.Type] && !((preview || verification) && s.phase == "observing") {
 		return nil, true, s.fail("invalid_state")
 	}
 	switch message.Type {
+	case "approve_verification":
+		return nil, false, s.approveVerification(message)
 	case "start":
 		return nil, false, s.start(message)
 	case "observe":
@@ -288,7 +295,7 @@ func (s *server) observe() error {
 	}
 	s.reviewedProfile = nil
 	s.observedAt = observedAt
-	if s.protocol == ProtocolV3 {
+	if s.protocol == ProtocolV3 || s.protocol == ProtocolV4 {
 		s.history = append(s.history, observation)
 		data, err := json.Marshal(s.history)
 		if err != nil || len(data) > MaxProtocolLineBytes {
@@ -331,9 +338,13 @@ func (s *server) review(message ClientMessage) error {
 	if profileValue.ObservationKind != "accessibility_snapshot" {
 		return s.fail("invalid_profile")
 	}
-	if (s.protocol == ProtocolV3 && profileValue.Profile != browserregistration.ProfileNameV11) ||
-		(s.protocol != ProtocolV3 && profileValue.Profile != browserregistration.ProfileName) {
+	if (s.protocol == ProtocolV4 && profileValue.Profile != browserregistration.ProfileNameV12) ||
+		(s.protocol == ProtocolV3 && profileValue.Profile != browserregistration.ProfileNameV11) ||
+		((s.protocol != ProtocolV3 && s.protocol != ProtocolV4) && profileValue.Profile != browserregistration.ProfileName) {
 		return s.fail("invalid_profile")
+	}
+	if s.protocol == ProtocolV4 && !verificationEqual(s.verificationAuthority, profileValue.Flows[message.Flow].HumanVerification) {
+		return s.fail("invalid_review")
 	}
 	now := s.clock().UTC().Round(0)
 	if now.IsZero() || registrationprofile.ValidateAt(profileValue, now) != nil {
@@ -364,9 +375,9 @@ func (s *server) review(message ClientMessage) error {
 	reviewed := make([]ReviewedCandidate, 0, len(message.CandidateIDs))
 	seen := make(map[string]struct{}, len(message.CandidateIDs))
 	available := s.candidates
-	if s.protocol == ProtocolV3 {
+	if s.protocol == ProtocolV3 || s.protocol == ProtocolV4 {
 		available = historyCandidates(s.history)
-		if err := ValidateV3Evidence(profileValue, message.Flow, s.history, s.previews, message.StepCandidates, message.CandidateIDs); err != nil {
+		if err := ValidateTypedEvidence(s.protocol, profileValue, message.Flow, s.history, s.previews, message.StepCandidates, message.CandidateIDs); err != nil {
 			return s.fail("invalid_candidate")
 		}
 	}
@@ -434,7 +445,7 @@ func (s *server) finish() (*Completion, error) {
 	if err != nil {
 		return nil, s.failAfterClose("teardown_failure")
 	}
-	if err := validateNetworkSummary(summary, s.bounds.MaxRequests); err != nil {
+	if err := ValidateNetworkSummaryForProtocol(summary, s.bounds.MaxRequests, s.protocol, s.verificationAuthority); err != nil {
 		return nil, s.failAfterClose("network_policy")
 	}
 	s.closed = true
@@ -451,7 +462,7 @@ func (s *server) finish() (*Completion, error) {
 		CleanupDisposition: review.cleanup,
 		Origins:            append([]string(nil), s.origins...), ObservedAt: s.observedAt,
 		Bounds: s.bounds, Observations: s.observations,
-		Diagnostics: append([]string(nil), s.diagnostics...), Network: summary,
+		Diagnostics: append([]string(nil), s.diagnostics...), Network: summary, VerificationAuthority: cloneVerification(s.verificationAuthority),
 		History: s.history, Previews: s.previews, StepCandidates: review.stepCandidates,
 	}, nil
 }
@@ -463,7 +474,7 @@ func (s *server) closeWithoutResult() error {
 	if err != nil {
 		return s.failAfterClose("teardown_failure")
 	}
-	if err := validateNetworkSummary(summary, s.bounds.MaxRequests); err != nil && s.profileID != "" {
+	if err := ValidateNetworkSummaryForProtocol(summary, s.bounds.MaxRequests, s.protocol, s.verificationAuthority); err != nil && s.profileID != "" {
 		return s.failAfterClose("network_policy")
 	}
 	return s.write(ServerMessage{Type: "state", Phase: s.phase})
@@ -517,7 +528,7 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 		reducedLocators[locatorKey] = struct{}{}
 		id := candidateID(s.generation, rawCandidate.Role, label, index)
 		candidate := Candidate{ID: id, Role: rawCandidate.Role, Label: label, Matches: rawCandidate.Matches}
-		if s.protocol == ProtocolV3 && rawCandidate.Control != nil && promotableCandidate(candidate) {
+		if (s.protocol == ProtocolV3 || s.protocol == ProtocolV4) && rawCandidate.Control != nil && promotableCandidate(candidate) {
 			if err := ValidateControlMetadata(rawCandidate.Control); err != nil {
 				return Observation{}, nil, errors.New("backend control metadata is invalid")
 			}
@@ -525,6 +536,13 @@ func (s *server) reduceObservation(raw RawObservation) (Observation, map[string]
 			if err := json.Unmarshal(data, &candidate.Control); err != nil {
 				return Observation{}, nil, errors.New("backend control metadata is invalid")
 			}
+		}
+		if s.protocol == ProtocolV4 && rawCandidate.Verification != nil {
+			if ValidateVerificationObservation(rawCandidate.Verification, s.origins) != nil {
+				return Observation{}, nil, errors.New("invalid verification observation")
+			}
+			copy := *rawCandidate.Verification
+			candidate.Verification = &copy
 		}
 		observation.Candidates = append(observation.Candidates, candidate)
 		records[id] = candidateRecord{protocol: candidate, generation: s.generation}

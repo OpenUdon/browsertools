@@ -25,12 +25,14 @@ import (
 	"github.com/OpenUdon/browsertools/internal/registrationurl"
 	"github.com/OpenUdon/browsertools/internal/strictjson"
 	"github.com/OpenUdon/browsertools/registrationprofile"
+	"github.com/OpenUdon/uws/browserregistration"
 )
 
 const (
 	ProtocolV1 = "browsertools.registration-author-session.v1"
 	ProtocolV2 = "browsertools.registration-author-session.v2"
 	ProtocolV3 = "browsertools.registration-author-session.v3"
+	ProtocolV4 = "browsertools.registration-author-session.v4"
 	// Protocol is the immutable legacy default.
 	Protocol = ProtocolV1
 )
@@ -72,19 +74,21 @@ type Bounds struct {
 // ClientMessage is the closed NDJSON input union. Profile is admitted only on
 // review and must be one complete, secret-free UWS registration profile.
 type ClientMessage struct {
-	Protocol           string          `json:"protocol"`
-	Type               string          `json:"type"`
-	ProfileID          string          `json:"profileId,omitempty"`
-	URL                string          `json:"url,omitempty"`
-	Origins            []string        `json:"origins,omitempty"`
-	Bounds             *Bounds         `json:"bounds,omitempty"`
-	Method             string          `json:"method,omitempty"`
-	Profile            json.RawMessage `json:"profile,omitempty"`
-	CandidateIDs       []string        `json:"candidateIds,omitempty"`
-	Flow               string          `json:"flow,omitempty"`
-	CleanupDisposition string          `json:"cleanupDisposition,omitempty"`
-	Preview            *PreviewRequest `json:"preview,omitempty"`
-	StepCandidates     []string        `json:"stepCandidates,omitempty"`
+	Verification       *browserregistration.HumanVerification `json:"verification,omitempty"`
+	CandidateID        string                                 `json:"candidateId,omitempty"`
+	Protocol           string                                 `json:"protocol"`
+	Type               string                                 `json:"type"`
+	ProfileID          string                                 `json:"profileId,omitempty"`
+	URL                string                                 `json:"url,omitempty"`
+	Origins            []string                               `json:"origins,omitempty"`
+	Bounds             *Bounds                                `json:"bounds,omitempty"`
+	Method             string                                 `json:"method,omitempty"`
+	Profile            json.RawMessage                        `json:"profile,omitempty"`
+	CandidateIDs       []string                               `json:"candidateIds,omitempty"`
+	Flow               string                                 `json:"flow,omitempty"`
+	CleanupDisposition string                                 `json:"cleanupDisposition,omitempty"`
+	Preview            *PreviewRequest                        `json:"preview,omitempty"`
+	StepCandidates     []string                               `json:"stepCandidates,omitempty"`
 }
 
 // RawObservation is backend-only evidence. Raw labels never cross the
@@ -100,19 +104,21 @@ type RawObservation struct {
 // Matches is the complete count for the reduced role/name locator; a backend
 // must not split the same reduced locator across multiple candidates.
 type RawCandidate struct {
-	Role    string
-	Label   string
-	Matches int
-	Control *ControlMetadata
+	Verification *VerificationObservation
+	Role         string
+	Label        string
+	Matches      int
+	Control      *ControlMetadata
 }
 
 // Candidate is one reduced current-generation protocol candidate.
 type Candidate struct {
-	ID      string           `json:"id"`
-	Role    string           `json:"role"`
-	Label   string           `json:"label,omitempty"`
-	Matches int              `json:"matches"`
-	Control *ControlMetadata `json:"control,omitempty"`
+	Verification *VerificationObservation `json:"verification,omitempty"`
+	ID           string                   `json:"id"`
+	Role         string                   `json:"role"`
+	Label        string                   `json:"label,omitempty"`
+	Matches      int                      `json:"matches"`
+	Control      *ControlMetadata         `json:"control,omitempty"`
 }
 
 // Observation is the complete page-derived protocol payload.
@@ -145,9 +151,12 @@ type Diagnostic struct {
 // must equal GETRequests plus HEADRequests; there is no mutation counter
 // because the backend contract cannot admit a mutation request.
 type NetworkSummary struct {
-	Requests     int `json:"requests"`
-	GETRequests  int `json:"getRequests"`
-	HEADRequests int `json:"headRequests"`
+	ProviderRequests      int   `json:"providerRequests,omitempty"`
+	ProviderPOSTRequests  int   `json:"providerPostRequests,omitempty"`
+	ProviderResponseBytes int64 `json:"providerResponseBytes,omitempty"`
+	Requests              int   `json:"requests"`
+	GETRequests           int   `json:"getRequests"`
+	HEADRequests          int   `json:"headRequests"`
 }
 
 // ReviewedCandidate binds one exact current-generation reduced candidate.
@@ -163,22 +172,23 @@ type ReviewedCandidate struct {
 // builder. It is returned only after clean browser teardown and zero-mutation
 // network-summary validation.
 type Completion struct {
-	Protocol           string
-	ProfileID          string
-	Profile            registrationprofile.Profile
-	ProfileBytes       []byte
-	ReviewedCandidates []ReviewedCandidate
-	Flow               string
-	CleanupDisposition string
-	Origins            []string
-	ObservedAt         time.Time
-	Bounds             Bounds
-	Observations       int
-	Diagnostics        []string
-	Network            NetworkSummary
-	History            []Observation
-	Previews           []PreviewRecord
-	StepCandidates     []string
+	VerificationAuthority *browserregistration.HumanVerification
+	Protocol              string
+	ProfileID             string
+	Profile               registrationprofile.Profile
+	ProfileBytes          []byte
+	ReviewedCandidates    []ReviewedCandidate
+	Flow                  string
+	CleanupDisposition    string
+	Origins               []string
+	ObservedAt            time.Time
+	Bounds                Bounds
+	Observations          int
+	Diagnostics           []string
+	Network               NetworkSummary
+	History               []Observation
+	Previews              []PreviewRecord
+	StepCandidates        []string
 }
 
 type candidateRecord struct {
@@ -198,12 +208,15 @@ func decodeClientMessage(line []byte) (ClientMessage, error) {
 		return ClientMessage{}, err
 	}
 	allowed, ok := clientFields[header.Type]
-	if header.Protocol == ProtocolV3 {
+	if header.Protocol == ProtocolV3 || header.Protocol == ProtocolV4 {
 		if header.Type == "preview" {
 			allowed, ok = fields("protocol", "type", "preview"), true
 		} else if header.Type == "review" {
 			allowed = fields("protocol", "type", "profile", "candidateIds", "flow", "cleanupDisposition", "stepCandidates")
 		}
+	}
+	if header.Protocol == ProtocolV4 && header.Type == "approve_verification" {
+		allowed, ok = fields("protocol", "type", "candidateId", "verification"), true
 	}
 	if !ok {
 		allowed = clientFields["unknown"]
@@ -311,7 +324,7 @@ func cleanURL(raw string) (string, string, error) {
 }
 
 func cleanURLForProtocol(protocol, raw string) (string, string, error) {
-	if protocol == ProtocolV2 || protocol == ProtocolV3 {
+	if protocol == ProtocolV2 || (protocol == ProtocolV3 || protocol == ProtocolV4) {
 		facts, err := registrationurl.Parse(raw, true, exactOrigin)
 		if err != nil {
 			return "", "", err
@@ -342,7 +355,7 @@ func cleanURLForProtocol(protocol, raw string) (string, string, error) {
 // ValidateNavigationURL validates one session URL under an explicit protocol
 // and returns only canonical URL, origin, and disclosure-safe path facts.
 func ValidateNavigationURL(protocol, raw string) (string, string, string, error) {
-	if protocol != ProtocolV1 && protocol != ProtocolV2 && protocol != ProtocolV3 {
+	if protocol != ProtocolV1 && protocol != ProtocolV2 && (protocol != ProtocolV3 && protocol != ProtocolV4) {
 		return "", "", "", errors.New("registration author-session protocol is unsupported")
 	}
 	facts, err := registrationurl.Parse(raw, protocol != ProtocolV1, exactOrigin)

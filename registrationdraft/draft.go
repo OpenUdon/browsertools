@@ -43,6 +43,11 @@ func Build(spec Spec) (*registrationprofile.Profile, error) {
 	if len(spec.InputSlots) != 0 {
 		value.Profile = browserregistration.ProfileNameV11
 	}
+	for _, flow := range spec.Flows {
+		if flow.HumanVerification != nil {
+			value.Profile = browserregistration.ProfileNameV12
+		}
+	}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, fmt.Errorf("build registration draft: %w", err)

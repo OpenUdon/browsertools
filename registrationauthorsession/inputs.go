@@ -151,7 +151,7 @@ func humanControlLabel(label string) bool {
 }
 
 func (s *server) preview(message ClientMessage) error {
-	if s.protocol != ProtocolV3 || message.Preview == nil {
+	if (s.protocol != ProtocolV3 && s.protocol != ProtocolV4) || message.Preview == nil {
 		return s.fail("invalid_state")
 	}
 	request := *message.Preview
@@ -185,8 +185,16 @@ func historyCandidates(history []Observation) map[string]candidateRecord {
 // ValidateV3Evidence independently binds each observed macro to the recorded
 // page and public preview sequence. No success page is claimed observed.
 func ValidateV3Evidence(profile *registrationprofile.Profile, flowName string, history []Observation, previews []PreviewRecord, steps, selected []string) error {
+	return ValidateTypedEvidence(ProtocolV3, profile, flowName, history, previews, steps, selected)
+}
+
+// ValidateTypedEvidence explicitly selects the typed protocol and its matching recipe.
+func ValidateTypedEvidence(protocol string, profile *registrationprofile.Profile, flowName string, history []Observation, previews []PreviewRecord, steps, selected []string) error {
 	bad := errors.New("registration recipe observation binding is invalid")
-	if profile == nil || profile.Profile != browserregistration.ProfileNameV11 || len(history) == 0 || len(history) > 256 {
+	if profile == nil || (protocol != ProtocolV3 && protocol != ProtocolV4 || protocol == ProtocolV3 && profile.Profile != browserregistration.ProfileNameV11 || protocol == ProtocolV4 && profile.Profile != browserregistration.ProfileNameV12) || len(history) == 0 || len(history) > 256 {
+		return bad
+	}
+	if protocol == ProtocolV4 && ValidateVerificationEvidence(profile, flowName, history, steps) != nil {
 		return bad
 	}
 	flow, ok := profile.Flows[flowName]
@@ -209,6 +217,9 @@ func ValidateV3Evidence(profile *registrationprofile.Profile, flowName string, h
 			return bad
 		}
 		for candidateIndex, candidate := range observation.Candidates {
+			if protocol != ProtocolV4 && candidate.Verification != nil || candidate.Verification != nil && ValidateVerificationObservation(candidate.Verification, registrationprofile.Origins(profile)) != nil {
+				return bad
+			}
 			if candidate.ID != candidateID(observation.Generation, candidate.Role, candidate.Label, candidateIndex) || !portableRoles[candidate.Role] || !safeCandidateLabel(candidate.Label) || candidate.Matches < 1 || candidate.Matches > 512 {
 				return bad
 			}

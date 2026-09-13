@@ -15,7 +15,7 @@ func buildV3(request BuildRequest, origins []string) (*Candidate, error) {
 	if err != nil || profile.Evidence.LearnedAt != request.AssessedAt.Format(time.RFC3339) || profile.Verification.LastVerifiedAt != request.AssessedAt.Format(time.RFC3339) || registrationprofile.ValidateAt(profile, request.AssessedAt) != nil || registrationprofile.ValidateRetainedNavigationV2(profile) != nil || !equalStrings(registrationprofile.Origins(profile), origins) {
 		return nil, bad
 	}
-	if registrationauthorsession.ValidateV3Evidence(profile, request.Flow, request.History, request.Previews, request.StepCandidates, request.ReviewedCandidateIDs) != nil {
+	if registrationauthorsession.ValidateTypedEvidence(request.Protocol, profile, request.Flow, request.History, request.Previews, request.StepCandidates, request.ReviewedCandidateIDs) != nil {
 		return nil, bad
 	}
 	if !contains(request.ReviewedCandidateIDs, request.SubmitCandidateID) {

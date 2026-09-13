@@ -81,7 +81,7 @@ func Build(request BuildRequest) (*Candidate, error) {
 	if request.Protocol == "" {
 		request.Protocol = registrationauthorsession.ProtocolV1
 	}
-	if request.Protocol != registrationauthorsession.ProtocolV1 && request.Protocol != registrationauthorsession.ProtocolV2 && request.Protocol != registrationauthorsession.ProtocolV3 {
+	if request.Protocol != registrationauthorsession.ProtocolV1 && request.Protocol != registrationauthorsession.ProtocolV2 && (request.Protocol != registrationauthorsession.ProtocolV3 && request.Protocol != registrationauthorsession.ProtocolV4) {
 		return nil, errors.New("registration author protocol is unsupported")
 	}
 	if !identifierPattern.MatchString(request.ProfileID) || !identifierPattern.MatchString(request.Flow) {
@@ -97,7 +97,7 @@ func Build(request BuildRequest) (*Candidate, error) {
 	if err != nil {
 		return nil, err
 	}
-	if request.Protocol == registrationauthorsession.ProtocolV3 {
+	if request.Protocol == registrationauthorsession.ProtocolV3 || request.Protocol == registrationauthorsession.ProtocolV4 {
 		return buildV3(request, origins)
 	}
 	if len(request.History) != 0 || len(request.Previews) != 0 || len(request.StepCandidates) != 0 || len(request.Spec.InputSlots) != 0 {

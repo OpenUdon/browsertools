@@ -8,6 +8,8 @@ github.com/OpenUdon/uws v0.0.0-20260826233246-9e676eaa469e h1:zlLV0dVfZbEvxZcWKZ
 github.com/OpenUdon/uws v0.0.0-20260826233246-9e676eaa469e/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
 github.com/OpenUdon/uws v0.0.0-20260907155543-9ff877ebce55 h1:orIC4LJMNK0FAIheRhnUwUnsFknEYLK9nKuGxSBB1mg=
 github.com/OpenUdon/uws v0.0.0-20260907155543-9ff877ebce55/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
+github.com/OpenUdon/uws v0.0.0-20260913141421-b6e62fcc9133 h1:duy+XrOppZwHA6MVE1yKo/R12Fo69GLKMY1pK3aKs4c=
+github.com/OpenUdon/uws v0.0.0-20260913141421-b6e62fcc9133/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
 github.com/agext/levenshtein v1.2.1 h1:QmvMAjj2aEICytGiWzmxoE0x2KZvE0fvmqMOfy2tjT8=
 github.com/agext/levenshtein v1.2.1/go.mod h1:JEDfjyjHDjOF/1e4FlBE/PkbqA9OfWu2ki2W0IB5558=
 github.com/antchfx/xmlquery v1.5.1 h1:T9I4Ns1EXiWHy0IqKupGhnfTQtJwlGrpXtauYOoNv78=

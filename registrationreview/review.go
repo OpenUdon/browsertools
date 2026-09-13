@@ -14,6 +14,7 @@ import (
 const Version = "browsertools.registration-review.v1"
 
 const VersionV2 = "browsertools.registration-review.v2"
+const VersionV3 = "browsertools.registration-review.v3"
 
 // Bundle binds one exact inert profile to one freshness assessment. It is not
 // evidence of an account-creation attempt or result.
@@ -60,6 +61,9 @@ func Build(value *registrationprofile.Profile, at time.Time) (*Bundle, error) {
 	if value.Profile == browserregistration.ProfileNameV11 {
 		result.Version = VersionV2
 	}
+	if value.Profile == browserregistration.ProfileNameV12 {
+		result.Version = VersionV3
+	}
 	if !at.Before(expires) {
 		result.Promotable = false
 		result.Gaps = []string{"profile_expired"}
@@ -75,6 +79,9 @@ func Verify(value *Bundle, at time.Time) error {
 	expectedVersion := Version
 	if value.Profile.Profile == browserregistration.ProfileNameV11 {
 		expectedVersion = VersionV2
+	}
+	if value.Profile.Profile == browserregistration.ProfileNameV12 {
+		expectedVersion = VersionV3
 	}
 	if value.Version != expectedVersion {
 		return fmt.Errorf("invalid registration review bundle")

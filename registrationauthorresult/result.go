@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -31,6 +32,7 @@ const (
 	SchemaV1 = "browsertools.registration-authoring.v1"
 	SchemaV2 = "browsertools.registration-authoring.v2"
 	SchemaV3 = "browsertools.registration-authoring.v3"
+	SchemaV4 = "browsertools.registration-authoring.v4"
 	// Schema is the immutable legacy default.
 	Schema = SchemaV1
 	// MaxResultBytes bounds strict decoding and private persistence.
@@ -115,36 +117,40 @@ type CallPolicy struct {
 // NetworkPosture proves the authority and accounting asserted by the closed
 // session backend. No mutation method exists in that backend interface.
 type NetworkPosture struct {
-	Methods            []string `json:"methods"`
-	Requests           int      `json:"requests"`
-	GETRequests        int      `json:"getRequests"`
-	HEADRequests       int      `json:"headRequests"`
-	MutationRequests   int      `json:"mutationRequests"`
-	SubmitExecuted     bool     `json:"submitExecuted"`
-	AccountAttempted   bool     `json:"accountAttempted"`
-	SessionEstablished bool     `json:"sessionEstablished"`
-	RuntimeSupported   bool     `json:"runtimeSupported"`
+	ProviderRequests      int      `json:"providerRequests,omitempty"`
+	ProviderPOSTRequests  int      `json:"providerPostRequests,omitempty"`
+	ProviderResponseBytes int64    `json:"providerResponseBytes,omitempty"`
+	Methods               []string `json:"methods"`
+	Requests              int      `json:"requests"`
+	GETRequests           int      `json:"getRequests"`
+	HEADRequests          int      `json:"headRequests"`
+	MutationRequests      int      `json:"mutationRequests"`
+	SubmitExecuted        bool     `json:"submitExecuted"`
+	AccountAttempted      bool     `json:"accountAttempted"`
+	SessionEstablished    bool     `json:"sessionEstablished"`
+	RuntimeSupported      bool     `json:"runtimeSupported"`
 }
 
 // Envelope is one private, non-publishable registration-authoring result.
 type Envelope struct {
-	Schema             string                                        `json:"schema"`
-	Provenance         Provenance                                    `json:"provenance"`
-	CreatedAt          string                                        `json:"createdAt"`
-	ObservedAt         string                                        `json:"observedAt"`
-	ExpiresAt          string                                        `json:"expiresAt"`
-	Origins            []string                                      `json:"origins"`
-	Candidate          Candidate                                     `json:"candidate"`
-	ReviewedCandidates []registrationauthorsession.ReviewedCandidate `json:"reviewedCandidates"`
-	Flow               FlowReview                                    `json:"flow"`
-	CallPolicy         CallPolicy                                    `json:"callPolicy"`
-	Bounds             registrationauthorsession.Bounds              `json:"bounds"`
-	Observations       int                                           `json:"observations"`
-	Network            NetworkPosture                                `json:"network"`
-	Diagnostics        []string                                      `json:"diagnostics"`
-	History            []registrationauthorsession.Observation       `json:"history,omitempty"`
-	Previews           []registrationauthorsession.PreviewRecord     `json:"previews,omitempty"`
-	StepCandidates     []string                                      `json:"stepCandidates,omitempty"`
+	VerificationAuthority *browserregistration.HumanVerification        `json:"verificationAuthority,omitempty"`
+	Schema                string                                        `json:"schema"`
+	Provenance            Provenance                                    `json:"provenance"`
+	CreatedAt             string                                        `json:"createdAt"`
+	ObservedAt            string                                        `json:"observedAt"`
+	ExpiresAt             string                                        `json:"expiresAt"`
+	Origins               []string                                      `json:"origins"`
+	Candidate             Candidate                                     `json:"candidate"`
+	ReviewedCandidates    []registrationauthorsession.ReviewedCandidate `json:"reviewedCandidates"`
+	Flow                  FlowReview                                    `json:"flow"`
+	CallPolicy            CallPolicy                                    `json:"callPolicy"`
+	Bounds                registrationauthorsession.Bounds              `json:"bounds"`
+	Observations          int                                           `json:"observations"`
+	Network               NetworkPosture                                `json:"network"`
+	Diagnostics           []string                                      `json:"diagnostics"`
+	History               []registrationauthorsession.Observation       `json:"history,omitempty"`
+	Previews              []registrationauthorsession.PreviewRecord     `json:"previews,omitempty"`
+	StepCandidates        []string                                      `json:"stepCandidates,omitempty"`
 }
 
 // BuildRequest contains one clean session completion and the deterministic
@@ -183,7 +189,7 @@ type Finalized struct {
 // runtime access.
 func Build(request BuildRequest) (*Envelope, error) {
 	completion := request.Completion
-	if completion == nil || completion.Protocol != registrationauthorsession.ProtocolV1 && completion.Protocol != registrationauthorsession.ProtocolV2 && completion.Protocol != registrationauthorsession.ProtocolV3 {
+	if completion == nil || completion.Protocol != registrationauthorsession.ProtocolV1 && completion.Protocol != registrationauthorsession.ProtocolV2 && completion.Protocol != registrationauthorsession.ProtocolV3 && completion.Protocol != registrationauthorsession.ProtocolV4 {
 		return nil, errors.New("no-submit registration completion is required")
 	}
 	resultSchema := SchemaV1
@@ -191,13 +197,16 @@ func Build(request BuildRequest) (*Envelope, error) {
 		resultSchema = SchemaV2
 	}
 	profileSchema := registrationProfileSchema
-	if completion.Protocol == registrationauthorsession.ProtocolV3 {
+	if completion.Protocol == registrationauthorsession.ProtocolV3 || completion.Protocol == registrationauthorsession.ProtocolV4 {
 		resultSchema, profileSchema = SchemaV3, browserregistration.ProfileNameV11
+		if completion.Protocol == registrationauthorsession.ProtocolV4 {
+			resultSchema, profileSchema = SchemaV4, browserregistration.ProfileNameV12
+		}
 		selected := make([]string, 0, len(completion.ReviewedCandidates))
 		for _, candidate := range completion.ReviewedCandidates {
 			selected = append(selected, candidate.ID)
 		}
-		if len(completion.History) != completion.Observations || registrationauthorsession.ValidateV3Evidence(&completion.Profile, completion.Flow, completion.History, completion.Previews, completion.StepCandidates, selected) != nil {
+		if len(completion.History) != completion.Observations || registrationauthorsession.ValidateTypedEvidence(completion.Protocol, &completion.Profile, completion.Flow, completion.History, completion.Previews, completion.StepCandidates, selected) != nil {
 			return nil, errors.New("registration 1.1 observation evidence is invalid")
 		}
 		byID := map[string]registrationauthorsession.ReviewedCandidate{}
@@ -277,7 +286,7 @@ func Build(request BuildRequest) (*Envelope, error) {
 		return nil, err
 	}
 	result := &Envelope{
-		Schema: resultSchema,
+		Schema: resultSchema, VerificationAuthority: completion.VerificationAuthority,
 		Provenance: Provenance{
 			Producer: producerName, ResultVersion: resultSchema,
 			SessionVersion: completion.Protocol,
@@ -300,11 +309,18 @@ func Build(request BuildRequest) (*Envelope, error) {
 		Network: NetworkPosture{
 			Methods: []string{"GET", "HEAD"}, Requests: completion.Network.Requests,
 			GETRequests: completion.Network.GETRequests, HEADRequests: completion.Network.HEADRequests,
+			ProviderRequests: completion.Network.ProviderRequests, ProviderPOSTRequests: completion.Network.ProviderPOSTRequests, ProviderResponseBytes: completion.Network.ProviderResponseBytes,
 			MutationRequests: 0, SubmitExecuted: false, AccountAttempted: false,
 			SessionEstablished: false, RuntimeSupported: false,
 		},
 		Diagnostics: diagnostics,
 		History:     completion.History, Previews: completion.Previews, StepCandidates: append([]string(nil), completion.StepCandidates...),
+	}
+	if completion.Protocol == registrationauthorsession.ProtocolV4 {
+		if completion.VerificationAuthority == nil || !reflect.DeepEqual(completion.VerificationAuthority, completion.Profile.Flows[completion.Flow].HumanVerification) {
+			return nil, errors.New("verification review authority mismatch")
+		}
+		result.Network.Methods = []string{"GET", "HEAD", "POST"}
 	}
 	// Public nested control definitions must not alias caller-owned evidence.
 	data, err := json.Marshal(result)
@@ -343,8 +359,11 @@ func Verify(value *Envelope, at time.Time) error {
 	if value.Schema == SchemaV3 && value.Provenance.ResultVersion == SchemaV3 && value.Provenance.SessionVersion == registrationauthorsession.ProtocolV3 {
 		protocol = registrationauthorsession.ProtocolV3
 	}
+	if value.Schema == SchemaV4 && value.Provenance.ResultVersion == SchemaV4 && value.Provenance.SessionVersion == registrationauthorsession.ProtocolV4 {
+		protocol = registrationauthorsession.ProtocolV4
+	}
 	completion := &registrationauthorsession.Completion{
-		Protocol:  protocol,
+		Protocol: protocol, VerificationAuthority: value.VerificationAuthority,
 		ProfileID: value.Candidate.ProfileID, Profile: *profileValue,
 		ProfileBytes:       append([]byte(nil), value.Candidate.Source...),
 		ReviewedCandidates: append([]registrationauthorsession.ReviewedCandidate(nil), value.ReviewedCandidates...),
@@ -355,7 +374,7 @@ func Verify(value *Envelope, at time.Time) error {
 		History:     value.History, Previews: value.Previews, StepCandidates: value.StepCandidates,
 		Network: registrationauthorsession.NetworkSummary{
 			Requests: value.Network.Requests, GETRequests: value.Network.GETRequests,
-			HEADRequests: value.Network.HEADRequests,
+			HEADRequests: value.Network.HEADRequests, ProviderRequests: value.Network.ProviderRequests, ProviderPOSTRequests: value.Network.ProviderPOSTRequests, ProviderResponseBytes: value.Network.ProviderResponseBytes,
 		},
 	}
 	expected, err := Build(BuildRequest{Completion: completion, CreatedAt: createdAt})
@@ -588,7 +607,7 @@ func canonicalReviewedCandidatesForProtocol(values []registrationauthorsession.R
 	}
 	seen := map[string]struct{}{}
 	for _, candidate := range result {
-		if !candidatePattern.MatchString(candidate.ID) || candidate.Generation < 1 || candidate.Generation > observations || (protocol != registrationauthorsession.ProtocolV3 && candidate.Generation != observations) ||
+		if !candidatePattern.MatchString(candidate.ID) || candidate.Generation < 1 || candidate.Generation > observations || (protocol != registrationauthorsession.ProtocolV3 && protocol != registrationauthorsession.ProtocolV4 && candidate.Generation != observations) ||
 			candidate.Matches != 1 || !portableRoles[candidate.Role] || !promotableLabel(candidate.Label) {
 			return nil, errors.New("reviewed candidate is invalid")
 		}
@@ -601,6 +620,9 @@ func canonicalReviewedCandidatesForProtocol(values []registrationauthorsession.R
 }
 
 func validateCompletionBounds(completion *registrationauthorsession.Completion) error {
+	if err := registrationauthorsession.ValidateNetworkSummaryForProtocol(completion.Network, completion.Bounds.MaxRequests, completion.Protocol, completion.VerificationAuthority); err != nil {
+		return err
+	}
 	bounds := completion.Bounds
 	if bounds.NavigationTimeoutMS <= 0 || bounds.NavigationTimeoutMS > time.Minute.Milliseconds() ||
 		bounds.TotalTimeoutMS < bounds.NavigationTimeoutMS || bounds.TotalTimeoutMS > (30*time.Minute).Milliseconds() ||
