@@ -442,10 +442,27 @@ var (
 	}
 )
 
-// ValidDiagnostic reports whether code is in the closed, value-free backend
-// diagnostic vocabulary.
+// ValidDiagnostic reports whether code is in the closed, value-free
+// observation-warning vocabulary. Terminal failures use ValidTerminalDiagnostic.
 func ValidDiagnostic(code string) bool {
 	return allowedDiagnostics[code]
+}
+
+// ValidTerminalDiagnostic validates the closed worker failure vocabulary.
+// Observation warnings (ValidDiagnostic) cannot represent a terminal failure.
+// These codes were already emitted by v1-v4; this does not expand their wires.
+func ValidTerminalDiagnostic(code string) bool {
+	switch code {
+	case "browser_failure", "canceled", "clock_unavailable", "invalid_bounds",
+		"invalid_candidate", "invalid_cleanup", "invalid_flow", "invalid_navigation",
+		"invalid_observation", "invalid_origin", "invalid_profile", "invalid_review",
+		"invalid_start", "invalid_state", "invalid_submit", "malformed_message",
+		"network_policy", "observation_limit", "origin_mismatch", "protocol_limit",
+		"protocol_mismatch", "teardown_failure", "unexpected_eof", "unknown_message":
+		return true
+	default:
+		return false
+	}
 }
 
 func fields(names ...string) map[string]bool {

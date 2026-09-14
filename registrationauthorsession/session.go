@@ -609,20 +609,14 @@ func (s *server) closeSession() (NetworkSummary, error) {
 }
 
 func (s *server) cancel() error {
-	_, _ = s.closeSession()
-	s.closed = true
-	_ = s.write(ServerMessage{Type: "diagnostic", Diagnostic: &Diagnostic{Code: "canceled"}})
-	return errors.New("registration author session failed: canceled")
+	return s.fail("canceled")
 }
 
 func (s *server) fail(code string) error {
-	_, _ = s.closeSession()
-	s.closed = true
-	writeErr := s.write(ServerMessage{Type: "diagnostic", Diagnostic: &Diagnostic{Code: code}})
-	if writeErr != nil {
-		return errors.Join(fmt.Errorf("registration author session failed: %s", code), writeErr)
+	if _, err := s.closeSession(); err != nil {
+		code = "teardown_failure"
 	}
-	return fmt.Errorf("registration author session failed: %s", code)
+	return s.failAfterClose(code)
 }
 
 func (s *server) failBrowser() error {

@@ -18,13 +18,18 @@ import (
 // particular it never reads response fields, site keys or challenge contents.
 const registrationVerificationDefinition = `element => {
  const form=element.form;
- if (!form || form.method.toUpperCase()!=='POST' || (form.target && form.target!=='_self') || (element.hasAttribute('formtarget') && element.formTarget && element.formTarget!=='_self') || (element.tagName!=='BUTTON' && element.tagName!=='INPUT') || element.type!=='submit') return null;
- if (element.hasAttribute('formaction') && element.formAction!==form.action || element.hasAttribute('formmethod') && element.formMethod.toUpperCase()!=='POST') return null;
+ if (!form || (element.tagName!=='BUTTON' && element.tagName!=='INPUT') || element.type!=='submit') return null;
+ // Named controls can shadow form.action/method/target and form.contains.
+ // Native getters retain the browser's URL resolution and attribute defaults.
+ const property=name=>Object.getOwnPropertyDescriptor(HTMLFormElement.prototype,name).get.call(form);
+ const action=property('action'), method=property('method'), target=property('target');
+ if (method.toUpperCase()!=='POST' || (target && target!=='_self') || (element.hasAttribute('formtarget') && element.formTarget && element.formTarget!=='_self')) return null;
+ if (element.hasAttribute('formaction') && element.formAction!==action || element.hasAttribute('formmethod') && element.formMethod.toUpperCase()!=='POST') return null;
  const widgets=Array.from(document.querySelectorAll('.cf-turnstile,.g-recaptcha,.h-captcha'));
- if (widgets.length!==1 || !form.contains(widgets[0])) return null;
+ if (widgets.length!==1 || !Node.prototype.contains.call(form,widgets[0])) return null;
  const widget=widgets[0], provider=widget.classList.contains('cf-turnstile')?'turnstile':widget.classList.contains('h-captcha')?'hcaptcha':'recaptcha_v2';
  const activation=widget.dataset.execution==='execute' || widget.dataset.size==='invisible' || widget===element?'approved_submit':'before_approval';
- return {provider,activation,submissionURL:form.action,widgetBinding:'single_in_submit_form',coverage:'standard_single_widget'};
+ return {provider,activation,submissionURL:action,widgetBinding:'single_in_submit_form',coverage:'standard_single_widget'};
 }`
 
 func registrationVerificationMetadata(locator playwright.Locator, origins []string) (*registrationauthorsession.VerificationObservation, error) {

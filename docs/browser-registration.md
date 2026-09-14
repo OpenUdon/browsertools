@@ -392,3 +392,19 @@ BROWSERTOOLS_REGISTRATION_LIVE_TEST=1 go test -count=1 ./capture -run TestPlaywr
 The conditional two-step wizard passes through the actual NDJSON producer and
 real installed sandboxed Chromium; a preview-triggered POST must fail without
 reaching the fixture server. Legacy producer tests remain mandatory.
+
+## Terminal failures and native form bindings
+
+Worker terminal failures use `registrationauthorsession.ValidTerminalDiagnostic`;
+`ValidDiagnostic` remains the separate observation-warning validator. Existing
+v1-v4 terminal codes and wire shapes are unchanged. Failed browser teardown
+takes precedence over the earlier error or cancellation; no completion is emitted.
+Raw browser exception text never becomes a diagnostic.
+
+Verification metadata reads native reflected form action, method and target,
+and native containment. Named fields such as `action`, `method`, `target` or
+`contains` cannot replace that binding. Native URL resolution and submitter
+override checks remain authoritative. A form that masks DOM APIs used by the
+installed accessibility engine, such as `getAttribute` or `hasAttribute`, remains unsupported:
+observation stops without a candidate or application mutation. The adapter does
+not rename controls or bypass accessibility review.
