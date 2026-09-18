@@ -18,8 +18,8 @@ func TestWorkerPreflightRetainsPrivateDriverClass(t *testing.T) {
 	if err == nil {
 		t.Fatal("preflight unexpectedly passed")
 	}
-	got, err := authordiagnostic.Read(path)
-	if err != nil || got != (authordiagnostic.Class{Stage: "driver", Reason: "failed"}) {
+	got, err := authordiagnostic.ReadV2(path)
+	if err != nil || got.Class != (authordiagnostic.Class{Stage: "driver", Reason: "failed"}) || got.Rejection != authordiagnostic.NoRejection() {
 		t.Fatalf("%v %v", got, err)
 	}
 }

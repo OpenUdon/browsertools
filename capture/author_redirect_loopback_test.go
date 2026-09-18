@@ -24,7 +24,7 @@ func TestAuthorRedirectContainmentLoopbackOptIn(t *testing.T) {
 	if os.Getenv("BROWSERTOOLS_AUTHOR_LIVE_TEST") != "1" {
 		t.Skip("explicit isolated loopback browser test")
 	}
-	for _, name := range []string{"main_escape", "second_hop_escape", "iframe_escape", "oopif_escape", "popup_escape", "worker_escape", "allowed_cookie_compression", "redirect_budget", "post_303", "post_307_block", "post_307_allowed", "post_307_escape", "automatic_post", "allowed_popup", "approved_popup_escape", "close_pending", "declared_byte_limit", "actual_byte_limit", "cancel"} {
+	for _, name := range []string{"main_escape", "second_hop_escape", "script_escape", "iframe_escape", "oopif_escape", "popup_escape", "worker_escape", "allowed_cookie_compression", "redirect_budget", "post_303", "post_307_block", "post_307_allowed", "post_307_escape", "automatic_post", "allowed_popup", "approved_popup_escape", "close_pending", "declared_byte_limit", "actual_byte_limit", "cancel"} {
 		t.Run(name, func(t *testing.T) {
 			var excluded, posts, final, cookieOK, worker, escapeStarts atomic.Int32
 			slowStarted := make(chan struct{})
@@ -43,6 +43,8 @@ func TestAuthorRedirectContainmentLoopbackOptIn(t *testing.T) {
 						http.Redirect(w, r, "/escape", 302)
 					case "iframe_escape":
 						fmt.Fprint(w, `<iframe src="/escape"></iframe>`)
+					case "script_escape":
+						fmt.Fprint(w, `<script src="/escape"></script><h1>Local</h1>`)
 					case "oopif_escape":
 						fmt.Fprintf(w, `<iframe src="%s/child"></iframe>`, other)
 					case "popup_escape":
@@ -326,6 +328,21 @@ func TestAuthorRedirectContainmentLoopbackOptIn(t *testing.T) {
 				}
 				if class.Stage != "policy" || class.Reason != want {
 					t.Fatalf("classification=%+v, want policy/%s", class, want)
+				}
+				if want == "origin_escape" {
+					rejection := authordiagnostic.RejectionOf(err)
+					resource := "document"
+					if name == "script_escape" {
+						resource = "script"
+					}
+					if name == "worker_escape" || name == "oopif_escape" {
+						// The pinned Chromium Fetch boundary reports these fetch()
+						// calls as XHR. Describe CDP facts, not the JavaScript API.
+						resource = "xhr"
+					}
+					if rejection != (authordiagnostic.Rejection{Boundary: "request", Resource: resource, OriginRelation: "port_mismatch"}) {
+						t.Fatalf("rejection attribution = %+v", rejection)
+					}
 				}
 				if (name == "post_307_block" || name == "post_307_escape") && (posts.Load() != 1 || final.Load() != 0) {
 					t.Fatal("307 POST bypassed its budget")

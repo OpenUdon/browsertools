@@ -45,7 +45,7 @@ func Run(ctx context.Context, options Options) (result error) {
 			return err
 		}
 		defer func() {
-			result = errors.Join(result, authordiagnostic.Write(diagnostic, result), diagnostic.Close())
+			result = errors.Join(result, authordiagnostic.WriteV2(diagnostic, result), diagnostic.Close())
 		}()
 	}
 	if _, err := capture.PreflightPlaywrightDriver(options.DriverDirectory); err != nil {

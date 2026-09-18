@@ -34,7 +34,11 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		if errors.As(err, &policy) {
 			class := authordiagnostic.Class{Stage: "policy", Reason: policy.Code}
 			if class.Valid() {
-				err = &authordiagnostic.Error{Class: class}
+				if rejection := authordiagnostic.RejectionOf(err); class.Reason == "origin_escape" {
+					err = &authordiagnostic.RejectionError{Rejection: rejection}
+				} else {
+					err = &authordiagnostic.Error{Class: class}
+				}
 			}
 		}
 	}()
@@ -268,7 +272,7 @@ func (s *playwrightAuthorSession) Observe(ctx context.Context, contextID string)
 		contexts[id] = item
 	}
 	s.mu.Unlock()
-	origin, path, err := authorURLFacts(targetURL, s.guard.allowedOrigin)
+	origin, path, err := s.guard.urlFacts(targetURL)
 	if err != nil {
 		return authorsession.RawObservation{}, err
 	}
@@ -574,7 +578,7 @@ func (s *playwrightAuthorSession) registerPopup(parent string, page playwright.P
 	if parent == "" {
 		parent = "main"
 	}
-	origin, _, err := authorURLFacts(page.URL(), s.guard.allowedOrigin)
+	origin, _, err := s.guard.urlFacts(page.URL())
 	if err != nil {
 		return "", authorresult.Context{}, err
 	}
@@ -601,8 +605,11 @@ func (s *playwrightAuthorSession) discoverFrames() error {
 			if !ok || stored.Kind != "popup" {
 				return fmt.Errorf("popup context registry is inconsistent")
 			}
-			origin, _, err := authorURLFacts(page.URL(), s.guard.allowedOrigin)
-			if err != nil || origin != stored.Origin {
+			origin, _, err := s.guard.urlFacts(page.URL())
+			if err != nil {
+				return err
+			}
+			if origin != stored.Origin {
 				return fmt.Errorf("popup context origin changed")
 			}
 		}
@@ -622,9 +629,12 @@ func (s *playwrightAuthorSession) discoverFrames() error {
 		if !ok || parentID != stored.Parent {
 			return fmt.Errorf("frame context parent changed")
 		}
-		origin, path, err := authorURLFacts(frame.URL(), s.guard.allowedOrigin)
+		origin, path, err := s.guard.urlFacts(frame.URL())
+		if err != nil {
+			return err
+		}
 		name, nameErr := canonicalAuthorFrameName(frame.Name())
-		if err != nil || nameErr != nil || origin != stored.Origin || path != stored.Path || name != stored.Name {
+		if nameErr != nil || origin != stored.Origin || path != stored.Path || name != stored.Name {
 			return fmt.Errorf("frame context identity changed")
 		}
 		identity := parentID + "\x00" + origin + "\x00" + path + "\x00" + name
@@ -653,7 +663,7 @@ func (s *playwrightAuthorSession) discoverFrames() error {
 					next = append(next, frame)
 					continue
 				}
-				origin, path, err := authorURLFacts(frame.URL(), s.guard.allowedOrigin)
+				origin, path, err := s.guard.urlFacts(frame.URL())
 				if err != nil {
 					return err
 				}
@@ -746,6 +756,15 @@ func installAuthorNetworkPolicy(browserContext playwright.BrowserContext, guard 
 }
 
 func (g *authorNetworkGuard) allow(rawURL, method string, navigation ...bool) bool {
+	nav := len(navigation) != 0 && navigation[0]
+	resource := "unknown"
+	if nav {
+		resource = "document"
+	}
+	return g.allowRequest(rawURL, method, nav, resource)
+}
+
+func (g *authorNetworkGuard) allowRequest(rawURL, method string, navigation bool, resource string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.closing {
@@ -755,10 +774,12 @@ func (g *authorNetworkGuard) allow(rawURL, method string, navigation ...bool) bo
 		return false
 	}
 	if !g.allowedURLLocked(rawURL) {
-		g.violate("origin_escape")
+		g.core.violate(errors.Join(authorPolicyError("origin_escape"), &authordiagnostic.RejectionError{Rejection: authordiagnostic.Rejection{
+			Boundary: "request", Resource: resource, OriginRelation: authorOriginRelation(rawURL, g.origins),
+		}}))
 		return false
 	}
-	if len(navigation) != 0 && navigation[0] && !g.navigationActive {
+	if navigation && !g.navigationActive {
 		g.violate("unexpected_navigation")
 		return false
 	}

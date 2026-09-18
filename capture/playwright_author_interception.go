@@ -105,7 +105,7 @@ func (a *authorInterception) paused(params map[string]any) {
 		a.guard.block("request_limit")
 		return
 	}
-	allowed := a.guard.allow(rawURL, method, kind == "Document")
+	allowed := a.guard.allowRequest(rawURL, method, kind == "Document", authorResource(kind))
 	go func() {
 		defer func() { <-a.slots }()
 		operation := "Fetch.continueRequest"
