@@ -7,8 +7,11 @@ package authorworker
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/OpenUdon/browsertools/authordiagnostic"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -21,6 +24,7 @@ import (
 // result envelope; DriverDirectory points at an already installed Playwright
 // runtime.
 type Options struct {
+	DiagnosticPath  string
 	PrivateRoot     string
 	DriverDirectory string
 	Stdin           io.ReadCloser
@@ -29,12 +33,23 @@ type Options struct {
 
 // Run serves one Chromium author session until completion, cancellation, or a
 // fail-closed protocol error.
-func Run(ctx context.Context, options Options) error {
+func Run(ctx context.Context, options Options) (result error) {
 	if ctx == nil || options.Stdin == nil || options.Stdout == nil || options.PrivateRoot == "" {
 		return fmt.Errorf("author worker private root, stdin, stdout, and context are required")
 	}
+	var diagnostic *os.File
+	if options.DiagnosticPath != "" {
+		var err error
+		diagnostic, err = authordiagnostic.Reserve(options.DiagnosticPath)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			result = errors.Join(result, authordiagnostic.Write(diagnostic, result), diagnostic.Close())
+		}()
+	}
 	if _, err := capture.PreflightPlaywrightDriver(options.DriverDirectory); err != nil {
-		return err
+		return &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: "driver", Reason: "failed"}}
 	}
 	return run(ctx, options, time.Now, capture.NewPlaywrightAuthorBrowser)
 }

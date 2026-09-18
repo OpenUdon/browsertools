@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/OpenUdon/browsertools/authordiagnostic"
 	"github.com/OpenUdon/browsertools/authorresult"
 	"github.com/OpenUdon/browsertools/authorsession"
 	playwright "github.com/mxschmitt/playwright-go"
@@ -28,6 +29,15 @@ func NewPlaywrightAuthorBrowser(driverDirectory string) authorsession.Browser {
 type playwrightAuthorBrowser struct{ driverDirectory string }
 
 func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsession.BrowserRequest) (_ authorsession.Session, err error) {
+	defer func() {
+		var policy *policyError
+		if errors.As(err, &policy) {
+			class := authordiagnostic.Class{Stage: "policy", Reason: policy.Code}
+			if class.Valid() {
+				err = &authordiagnostic.Error{Class: class}
+			}
+		}
+	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -40,12 +50,16 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("start installed Playwright driver")
+		return nil, authorBackendError("driver", err)
 	}
 	var browser playwright.Browser
 	var browserContext playwright.BrowserContext
+	var interception *authorInterception
 	cleanup := func() error {
 		var result error
+		if interception != nil {
+			interception.close()
+		}
 		if browserContext != nil {
 			if closeErr := browserContext.Close(); closeErr != nil {
 				result = errors.Join(result, fmt.Errorf("close author context"))
@@ -77,7 +91,7 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		Args: []string{"--deny-permission-prompts"},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("launch installed headed Chromium")
+		return nil, authorBackendError("launch", err)
 	}
 	browserContext, err = browser.NewContext(playwright.BrowserNewContextOptions{
 		AcceptDownloads: playwright.Bool(false), NoViewport: playwright.Bool(true),
@@ -85,23 +99,27 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		Permissions: []string{},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create headed author context")
+		return nil, authorBackendError("context", err)
 	}
 	if err := browserContext.ClearPermissions(); err != nil {
-		return nil, fmt.Errorf("clear author permissions")
+		return nil, authorBackendError("context", err)
 	}
 	browserContext.SetDefaultNavigationTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	browserContext.SetDefaultTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	guard := newAuthorNetworkGuard(request)
+	interception, err = installAuthorInterception(browser, guard, request.NavigationTimeout)
+	if err != nil {
+		return nil, authorBackendError("guard", err)
+	}
 	if err := installAuthorNetworkPolicy(browserContext, guard); err != nil {
-		return nil, err
+		return nil, authorBackendError("guard", err)
 	}
 	page, err := browserContext.NewPage()
 	if err != nil {
-		return nil, fmt.Errorf("create headed author page")
+		return nil, authorBackendError("page", err)
 	}
 	session := &playwrightAuthorSession{
-		pw: pw, browser: browser, browserContext: browserContext, request: request, guard: guard,
+		pw: pw, browser: browser, browserContext: browserContext, request: request, guard: guard, interception: interception,
 		pages: map[string]playwright.Page{"main": page}, pageIDs: map[playwright.Page]string{page: "main"},
 		frames: make(map[string]playwright.Frame), frameIDs: make(map[playwright.Frame]string),
 		contexts: make(map[string]authorresult.Context),
@@ -122,11 +140,24 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		Timeout: playwright.Float(timeout), WaitUntil: playwright.WaitUntilStateLoad,
 	})
 	guard.endNavigation()
-	if navigationErr != nil || response == nil || response.Status() < 200 || response.Status() >= 400 || response.FromServiceWorker() {
-		return nil, fmt.Errorf("initial author navigation failed")
-	}
+	// Check the guard first: a policy abort also causes Goto to fail.
 	if err := guard.result(); err != nil {
 		return nil, err
+	}
+	if navigationErr != nil {
+		return nil, authorBackendError("navigation", navigationErr)
+	}
+	reason := ""
+	switch {
+	case response == nil:
+		reason = "missing_response"
+	case response.Status() < 200 || response.Status() >= 400:
+		reason = "http_status"
+	case response.FromServiceWorker():
+		reason = "service_worker"
+	}
+	if reason != "" {
+		return nil, &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: "navigation", Reason: reason}}
 	}
 	return session, nil
 }
@@ -140,6 +171,7 @@ type playwrightAuthorSession struct {
 	browserContext playwright.BrowserContext
 	request        authorsession.BrowserRequest
 	guard          *authorNetworkGuard
+	interception   *authorInterception
 	pages          map[string]playwright.Page
 	pageIDs        map[playwright.Page]string
 	frames         map[string]playwright.Frame
@@ -439,6 +471,7 @@ func (s *playwrightAuthorSession) AddOrigin(origin string) error {
 func (s *playwrightAuthorSession) Close() error {
 	s.closeOnce.Do(func() {
 		s.guard.beginClose()
+		s.interception.close()
 		if s.browserContext != nil {
 			if err := s.browserContext.Close(); err != nil {
 				s.closeErr = errors.Join(s.closeErr, fmt.Errorf("close author context"))
@@ -678,18 +711,9 @@ func newAuthorNetworkGuard(request authorsession.BrowserRequest) *authorNetworkG
 }
 
 func installAuthorNetworkPolicy(browserContext playwright.BrowserContext, guard *authorNetworkGuard) error {
-	if err := browserContext.Route("**/*", func(route playwright.Route) {
-		request := route.Request()
-		if !guard.allow(request.URL(), request.Method(), request.IsNavigationRequest()) {
-			_ = route.Abort("blockedbyclient")
-			return
-		}
-		if err := route.Continue(); err != nil {
-			guard.block("route_continue")
-		}
-	}); err != nil {
-		return fmt.Errorf("install author network route")
-	}
+	// Browser-wide Fetch admission covers each redirect and every page/worker
+	// before contact. Playwright routes skip redirected requests.
+
 	if err := browserContext.RouteWebSocket("**/*", func(route playwright.WebSocketRoute) { guard.block("websocket"); route.Close() }); err != nil {
 		return fmt.Errorf("install author WebSocket blocker")
 	}
@@ -724,6 +748,9 @@ func installAuthorNetworkPolicy(browserContext playwright.BrowserContext, guard 
 func (g *authorNetworkGuard) allow(rawURL, method string, navigation ...bool) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.closing {
+		return false
+	}
 	if !g.core.beginRequest(authorPolicyError("request_limit")) {
 		return false
 	}
@@ -758,7 +785,7 @@ func (g *authorNetworkGuard) allowedURL(rawURL string) bool {
 }
 func (g *authorNetworkGuard) allowedURLLocked(rawURL string) bool {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Host == "" {
+	if err != nil || parsed.Host == "" || parsed.User != nil {
 		return false
 	}
 	origin, err := canonicalAuthorOrigin(parsed.Scheme + "://" + parsed.Host)
@@ -848,7 +875,12 @@ func (g *authorNetworkGuard) violate(code string) {
 }
 
 func authorPolicyError(code string) error {
-	return &policyError{Code: code, Message: fmt.Sprintf("author browser policy violation: %s", code)}
+	policy := &policyError{Code: code, Message: fmt.Sprintf("author browser policy violation: %s", code)}
+	class := authordiagnostic.Class{Stage: "policy", Reason: code}
+	if class.Valid() {
+		return errors.Join(policy, &authordiagnostic.Error{Class: class})
+	}
+	return policy
 }
 
 func validateAuthorBrowserRequest(request authorsession.BrowserRequest) error {
@@ -869,7 +901,7 @@ func authorURLFacts(rawURL string, allowed func(string) bool) (string, string, e
 	}
 	origin, err := canonicalAuthorOrigin(parsed.Scheme + "://" + parsed.Host)
 	if err != nil || !allowed(origin) {
-		return "", "", fmt.Errorf("author page origin is not approved")
+		return "", "", authorPolicyError("origin_escape")
 	}
 	path := parsed.EscapedPath()
 	if path == "" {
@@ -1034,3 +1066,14 @@ var (
 		"form": true, "search": true, "switch": true, "group": true,
 	}
 )
+
+func authorBackendError(stage string, err error) error {
+	reason := "failed"
+	if stage == "navigation" {
+		reason = "transport"
+	}
+	if errors.Is(err, playwright.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
+		reason = "timeout"
+	}
+	return &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: stage, Reason: reason}}
+}
