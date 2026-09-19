@@ -24,11 +24,12 @@ import (
 // result envelope; DriverDirectory points at an already installed Playwright
 // runtime.
 type Options struct {
-	DiagnosticPath  string
-	PrivateRoot     string
-	DriverDirectory string
-	Stdin           io.ReadCloser
-	Stdout          io.Writer
+	BlockedScriptOrigin string
+	DiagnosticPath      string
+	PrivateRoot         string
+	DriverDirectory     string
+	Stdin               io.ReadCloser
+	Stdout              io.Writer
 }
 
 // Run serves one Chromium author session until completion, cancellation, or a
@@ -48,10 +49,14 @@ func Run(ctx context.Context, options Options) (result error) {
 			result = errors.Join(result, authordiagnostic.WriteV2(diagnostic, result), diagnostic.Close())
 		}()
 	}
+	browser, err := capture.NewPlaywrightAuthorBrowserWithPolicy(options.DriverDirectory, options.BlockedScriptOrigin)
+	if err != nil {
+		return err
+	}
 	if _, err := capture.PreflightPlaywrightDriver(options.DriverDirectory); err != nil {
 		return &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: "driver", Reason: "failed"}}
 	}
-	return run(ctx, options, time.Now, capture.NewPlaywrightAuthorBrowser)
+	return run(ctx, options, time.Now, func(string) authorsession.Browser { return browser })
 }
 
 func run(ctx context.Context, options Options, clock func() time.Time, newBrowser func(string) authorsession.Browser) error {

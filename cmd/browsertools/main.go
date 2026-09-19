@@ -60,6 +60,7 @@ func runAuthorSessionChromium(args []string, stdin io.Reader, stdout, stderr io.
 	fs.SetOutput(stderr)
 	privateRoot := fs.String("private-root", "", "existing mode-0700 directory for the private result envelope")
 	driverDirectory := fs.String("driver-dir", "", "optional installed Playwright-Go driver directory")
+	blockedScriptOrigin := fs.String("blocked-script-origin", "", "Exact HTTPS origin whose non-navigation GET scripts remain blocked without ending authoring")
 	if err := fs.Parse(args); err != nil {
 		return exitUsageOrIO
 	}
@@ -78,7 +79,7 @@ func runAuthorSessionChromium(args []string, stdin io.Reader, stdout, stderr io.
 		input = io.NopCloser(stdin)
 	}
 	if err := authorworker.Run(ctx, authorworker.Options{
-		PrivateRoot: *privateRoot, DriverDirectory: *driverDirectory, Stdin: input, Stdout: stdout,
+		PrivateRoot: *privateRoot, DriverDirectory: *driverDirectory, Stdin: input, Stdout: stdout, BlockedScriptOrigin: *blockedScriptOrigin,
 	}); err != nil {
 		fmt.Fprintln(stderr, "author-session chromium: session failed closed")
 		return exitRejected

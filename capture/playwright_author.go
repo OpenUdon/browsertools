@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/OpenUdon/browsertools/authordiagnostic"
+	"github.com/OpenUdon/browsertools/authorpolicy"
 	"github.com/OpenUdon/browsertools/authorresult"
 	"github.com/OpenUdon/browsertools/authorsession"
 	playwright "github.com/mxschmitt/playwright-go"
@@ -26,7 +27,20 @@ func NewPlaywrightAuthorBrowser(driverDirectory string) authorsession.Browser {
 	return &playwrightAuthorBrowser{driverDirectory: strings.TrimSpace(driverDirectory)}
 }
 
-type playwrightAuthorBrowser struct{ driverDirectory string }
+// NewPlaywrightAuthorBrowserWithPolicy selects an immutable local denial rule.
+// Existing callers retain strict failure semantics through the original constructor.
+func NewPlaywrightAuthorBrowserWithPolicy(driverDirectory, blockedScriptOrigin string) (authorsession.Browser, error) {
+	policy, err := authorpolicy.New(blockedScriptOrigin)
+	if err != nil {
+		return nil, err
+	}
+	return &playwrightAuthorBrowser{driverDirectory: strings.TrimSpace(driverDirectory), policy: policy}, nil
+}
+
+type playwrightAuthorBrowser struct {
+	driverDirectory string
+	policy          authorpolicy.Policy
+}
 
 func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsession.BrowserRequest) (_ authorsession.Session, err error) {
 	defer func() {
@@ -111,6 +125,7 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 	browserContext.SetDefaultNavigationTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	browserContext.SetDefaultTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	guard := newAuthorNetworkGuard(request)
+	guard.policy = b.policy
 	interception, err = installAuthorInterception(browser, guard, request.NavigationTimeout)
 	if err != nil {
 		return nil, authorBackendError("guard", err)
@@ -701,6 +716,7 @@ func normalizedAuthorContext(value string) string {
 type authorNetworkGuard struct {
 	mu               sync.Mutex
 	origins          map[string]struct{}
+	policy           authorpolicy.Policy
 	core             networkGuardCore
 	postActive       bool
 	postBudget       int
@@ -773,6 +789,11 @@ func (g *authorNetworkGuard) allowRequest(rawURL, method string, navigation bool
 	if !g.core.beginRequest(authorPolicyError("request_limit")) {
 		return false
 	}
+	// Matching requests are always denied, including if a later origin approval
+	// overlaps this local policy. A denial alone does not poison the session.
+	if g.policy.Matches(rawURL, method, navigation, resource) {
+		return false
+	}
 	if !g.allowedURLLocked(rawURL) {
 		g.core.violate(errors.Join(authorPolicyError("origin_escape"), &authordiagnostic.RejectionError{Rejection: authordiagnostic.Rejection{
 			Boundary: "request", Resource: resource, OriginRelation: authorOriginRelation(rawURL, g.origins),
@@ -814,7 +835,7 @@ func (g *authorNetworkGuard) allowedURLLocked(rawURL string) bool {
 		return false
 	}
 	_, ok := g.origins[origin]
-	return ok
+	return ok && origin != g.policy.Origin()
 }
 func (g *authorNetworkGuard) allowedOrigin(origin string) bool {
 	g.mu.Lock()
@@ -827,7 +848,7 @@ func (g *authorNetworkGuard) allowedOrigin(origin string) bool {
 		return false
 	}
 	_, ok := g.origins[canonical]
-	return ok
+	return ok && canonical != g.policy.Origin()
 }
 func (g *authorNetworkGuard) addOrigin(origin string) error {
 	canonical, err := canonicalAuthorOrigin(origin)
@@ -838,6 +859,9 @@ func (g *authorNetworkGuard) addOrigin(origin string) error {
 	defer g.mu.Unlock()
 	if err := g.core.result(); err != nil {
 		return err
+	}
+	if canonical == g.policy.Origin() {
+		return fmt.Errorf("blocked script origin cannot be admitted")
 	}
 	g.origins[canonical] = struct{}{}
 	return nil
