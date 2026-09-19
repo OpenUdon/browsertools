@@ -39,6 +39,31 @@ func TestBuildUsesOldestSufficientProfilesAndFinalPresence(t *testing.T) {
 	}
 }
 
+func TestBuildRetainsReviewedQueryInAuthenticationAndCapability(t *testing.T) {
+	request := baseBuildRequest()
+	request.InitialURL = "https://members.example.test/campaign?action=topics"
+	request.Trace = append(request.Trace, TraceStep{Kind: "navigate", Phase: "exploration", Context: "main", URL: request.InitialURL})
+	envelope, err := Build(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range [][]byte{envelope.AuthenticationProfile, envelope.CapabilityProfile} {
+		if !bytes.Contains(data, []byte(request.InitialURL)) {
+			t.Fatal("reviewed navigation query was lost")
+		}
+	}
+	if err := schemas.ValidateBrowserAuthenticationProfile(envelope.AuthenticationProfile); err != nil {
+		t.Fatal(err)
+	}
+	if err := schemas.ValidateBrowserSourceProfile(envelope.CapabilityProfile); err != nil {
+		t.Fatal(err)
+	}
+	request.Trace[len(request.Trace)-1].URL = "https://members.example.test/campaign?token=TOKEN_CANARY"
+	if _, err := Build(request); err == nil || bytes.Contains([]byte(err.Error()), []byte("TOKEN_CANARY")) {
+		t.Fatal("sensitive navigation accepted or disclosed")
+	}
+}
+
 func TestBuiltProfilesValidateAgainstInstalledUWSSchemas(t *testing.T) {
 	envelope, err := Build(baseBuildRequest())
 	if err != nil {
@@ -114,7 +139,7 @@ func TestBuildSeparatesAuthenticationSuccessFromCompleteExplorationTrace(t *test
 	request.GoalProof = GoalProof{Origin: "https://members.example.test", Path: "/account", Context: "main", Role: "status", Label: "Active", Matches: 1}
 	request.Trace = append(request.Trace,
 		TraceStep{Kind: "click", Phase: "exploration", CandidateID: "candidate-account", Context: "main", Role: "link", Label: "Account details"},
-		TraceStep{Kind: "navigate", Phase: "exploration", Context: "main", URL: "https://members.example.test/account?private=discarded"},
+		TraceStep{Kind: "navigate", Phase: "exploration", Context: "main", URL: "https://members.example.test/account?view=details"},
 	)
 	envelope, err := Build(request)
 	if err != nil {
@@ -132,7 +157,7 @@ func TestBuildSeparatesAuthenticationSuccessFromCompleteExplorationTrace(t *test
 		t.Fatalf("authentication success drifted to final goal: %#v", success)
 	}
 	sequence := capability["actions"].(map[string]any)["reach_authenticated_goal"].(map[string]any)["sequence"].([]any)
-	if len(sequence) != 3 || sequence[0].(map[string]any)["click"] == nil || sequence[1].(map[string]any)["navigate"] != "https://members.example.test/account" || sequence[2].(map[string]any)["wait_for"] == nil {
+	if len(sequence) != 3 || sequence[0].(map[string]any)["click"] == nil || sequence[1].(map[string]any)["navigate"] != "https://members.example.test/account?view=details" || sequence[2].(map[string]any)["wait_for"] == nil {
 		t.Fatalf("exploration trace was not preserved before final proof: %#v", sequence)
 	}
 	if err := schemas.ValidateBrowserSourceProfile(envelope.CapabilityProfile); err != nil {

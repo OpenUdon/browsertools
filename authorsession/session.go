@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/OpenUdon/browsertools/authorresult"
+	"github.com/OpenUdon/browsertools/authorurl"
 	"github.com/OpenUdon/browsertools/disclosurepath"
 	"github.com/OpenUdon/evidence/redact"
 )
@@ -1290,33 +1291,19 @@ func originForURL(raw string) (string, error) {
 }
 
 func cleanAbsoluteURL(raw string) (*url.URL, error) {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || !parsed.IsAbs() || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return nil, fmt.Errorf("URL must be absolute and fragment-free")
-	}
-	if _, err := exactOrigin(parsed.Scheme + "://" + parsed.Host); err != nil {
+	value, _, err := authorurl.Normalize(raw)
+	if err != nil {
 		return nil, err
 	}
-	path := parsed.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
-	if disclosurepath.Validate(path) != nil {
-		return nil, fmt.Errorf("URL path must be clean")
-	}
-	return parsed, nil
+	return url.Parse(value)
 }
 
 func cleanProtocolURL(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	parsed, err := url.Parse(raw)
+	value, _, err := authorurl.Normalize(raw)
 	if err != nil {
 		return ""
 	}
-	parsed.RawQuery, parsed.Fragment = "", ""
-	return parsed.String()
+	return value
 }
 
 func dashboardMatches(rawURL, origin, path string) bool {

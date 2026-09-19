@@ -497,6 +497,45 @@ func TestActionInvalidatesGoalProofAndCompletedPhaseIsClosed(t *testing.T) {
 	})
 }
 
+func TestReviewedQuerySurvivesWorkerAndProfilesWithoutObservationDisclosure(t *testing.T) {
+	start := startMessage()
+	start.URL += "?next=dashboard"
+	start.DashboardURL += "?view=home"
+	session := &fakeSession{observations: []RawObservation{dashboardObservation(), dashboardObservation(), dashboardObservation()}}
+	browser := &fakeBrowser{session: session}
+	input := protocolLines(start,
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		ClientMessage{Protocol: Protocol, Type: "execute", Action: "navigate_get", URL: start.DashboardURL},
+		ClientMessage{Protocol: Protocol, Type: "observe"},
+		ClientMessage{Protocol: Protocol, Type: "human_complete", Confirmed: true, Outputs: outputRequests()},
+		ClientMessage{Protocol: Protocol, Type: "finish"},
+	)
+	var output bytes.Buffer
+	if err := Serve(context.Background(), strings.NewReader(input), &output, browser, ServeOptions{PrivateRoot: privateRoot(t), Clock: fixedClock}); err != nil {
+		t.Fatal(err)
+	}
+	if browser.request.URL != start.URL || len(session.actions) != 1 || session.actions[0].URL != start.DashboardURL || session.closed != 1 {
+		t.Fatal("reviewed navigation or cleanup changed")
+	}
+	if strings.Contains(output.String(), "?next=") || strings.Contains(output.String(), "?view=") {
+		t.Fatal("observation channel disclosed retained navigation queries")
+	}
+	var artifact string
+	for _, message := range decodeServerMessages(t, output.Bytes()) {
+		if message.Result != nil {
+			artifact = message.Result.ArtifactPath
+		}
+	}
+	data, err := os.ReadFile(artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope authorresult.Envelope
+	if json.Unmarshal(data, &envelope) != nil || len(envelope.Trace) != 1 || envelope.Trace[0].URL != start.DashboardURL || !bytes.Contains(envelope.AuthenticationProfile, []byte(start.URL)) || !bytes.Contains(envelope.CapabilityProfile, []byte(start.DashboardURL)) {
+		t.Fatal("private reviewed navigation was lost")
+	}
+}
+
 func TestHumanInputCompletionRequiresCompatibleHumanReviewedChallengeKind(t *testing.T) {
 	tests := []struct {
 		name, inputKind, challengeKind string

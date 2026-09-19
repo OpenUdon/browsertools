@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/OpenUdon/browsertools/authorurl"
 	"github.com/OpenUdon/browsertools/disclosurepath"
 	btprofile "github.com/OpenUdon/browsertools/profile"
 	"github.com/OpenUdon/evidence/redact"
@@ -339,6 +340,11 @@ func validateBuildRequest(request BuildRequest, origins []string) error {
 		}
 	}
 	for _, step := range request.Trace {
+		if step.URL != "" {
+			if _, _, err := authorurl.Normalize(step.URL); err != nil {
+				return fmt.Errorf("result trace URL is unsafe")
+			}
+		}
 		if context := normalizedContext(step.Context); context != "main" {
 			if _, ok := request.Contexts[context]; !ok {
 				return fmt.Errorf("result trace context is missing")
@@ -685,12 +691,8 @@ func authenticationEffects(hasChallenge bool) []any {
 }
 
 func cleanURL(raw string) (string, error) {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed == nil || !parsed.IsAbs() || parsed.Host == "" || parsed.User != nil || disclosurepath.Validate(absoluteEscapedPath(parsed)) != nil {
-		return "", fmt.Errorf("must be an absolute URL")
-	}
-	parsed.RawQuery, parsed.Fragment = "", ""
-	return parsed.String(), nil
+	value, _, err := authorurl.Normalize(raw)
+	return value, err
 }
 
 func absoluteEscapedPath(parsed *url.URL) string {

@@ -254,7 +254,7 @@ so the client never has to guess a portable context name.
 
 The protocol never exposes DOM, ARIA snapshots, page text, screenshots, input
 values, cookies, local/session storage, request or response bodies, headers,
-query strings, fragments, browser exception prose, or environment values.
+page-derived query strings, fragments, browser exception prose, or environment values.
 
 ## Result and promotion contracts
 
@@ -416,3 +416,21 @@ a skipped feature test is not producer/consumer/replay evidence.
 Network accounting uses Playwright's completed-request size report, including
 actual response-body bytes for chunked responses without `Content-Length`.
 Header declarations are never treated as the response budget measurement.
+
+
+## Reviewed structural-query navigation
+
+Authenticated authoring preserves reviewed literal query parameters such as
+`?view=list` in initial/navigation commands, private action traces and generated
+authentication/capability navigation. Parent attestation binds the exact reviewed
+query. Observations, page-derived URL facts and rejection diagnostics continue
+to expose only origin/path facts, never observed query values. Redirect transport
+and origin/POST/request/byte limits are unchanged.
+
+`authorurl.Normalize` accepts HTTPS or loopback HTTP and shares the established
+structural-query validator: 4,096 URL bytes, 1,024 query bytes, 16 unique items,
+64-byte keys and 256-byte values with canonical encoding/order. Known sensitive
+keys (including private), secret/identity patterns, templates, controls, userinfo,
+fragments and malformed queries are rejected without echoing the input. Only
+reviewed public structural values belong in these retained URLs; this validation
+is not a general-purpose secret detector. Registration protocols are unchanged.
