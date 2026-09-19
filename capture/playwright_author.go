@@ -739,6 +739,14 @@ func newAuthorNetworkGuard(request authorsession.BrowserRequest) *authorNetworkG
 func installAuthorNetworkPolicy(browserContext playwright.BrowserContext, guard *authorNetworkGuard) error {
 	// Browser-wide Fetch admission covers each redirect and every page/worker
 	// before contact. Playwright routes skip redirected requests.
+	// Context routing disables HTTP cache across pages and child targets. Cached
+	// Chromium responses can report negative Request.Sizes body measurements;
+	// avoid that source of ambiguity instead of accepting invalid accounting.
+	// This route only resumes unmodified native requests. The browser-wide
+	// interceptor remains the admission boundary, including every redirect hop.
+	if err := browserContext.Route("**/*", guard.resumeUnmodifiedRoute); err != nil {
+		return fmt.Errorf("install author cache policy")
+	}
 
 	if err := browserContext.RouteWebSocket("**/*", func(route playwright.WebSocketRoute) { guard.block("websocket"); route.Close() }); err != nil {
 		return fmt.Errorf("install author WebSocket blocker")
@@ -769,6 +777,19 @@ func installAuthorNetworkPolicy(browserContext playwright.BrowserContext, guard 
 		guard.observeBytes(int64(sizes.ResponseBodySize))
 	})
 	return nil
+}
+
+func (g *authorNetworkGuard) resumeUnmodifiedRoute(route playwright.Route) {
+	g.mu.Lock()
+	active := !g.closing && g.core.result() == nil
+	g.mu.Unlock()
+	if !active {
+		_ = route.Abort("blockedbyclient")
+		return
+	}
+	if err := route.Continue(); err != nil {
+		g.block("route_continue")
+	}
 }
 
 func (g *authorNetworkGuard) allow(rawURL, method string, navigation ...bool) bool {

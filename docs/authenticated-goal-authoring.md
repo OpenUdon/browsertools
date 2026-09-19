@@ -70,6 +70,22 @@ crosses a process boundary. Browsertools owns one non-persistent context for
 the lifetime of one child process. The context cannot be exported, resumed, or
 recovered after exit.
 
+## Ephemeral authoring cache policy
+
+Authenticated authoring disables HTTP cache before creating any page. A context
+route resumes unmodified Chromium requests while the existing guard is active;
+the browser-wide Fetch boundary still admits every request and redirect hop,
+including child frames and popups. Request routing alone is not the origin or
+POST authorization boundary. Cookies remain local to the ephemeral context.
+
+This avoids negative completed-body measurements reported by the pinned stack
+for cached responses. Missing, invalid or unavailable size measurements still
+fail closed, and declared/cumulative byte limits and request counts are unchanged.
+The implementation does not read response bodies, rewrite requests, export state
+or substitute a header declaration for actual transfer accounting. See
+[Playwright context routing](https://playwright.dev/docs/api/class-browsercontext#browser-context-route)
+for its HTTP-cache behavior.
+
 ## Human checkpoints and model disclosure
 
 The iCoT interview converts prose such as “follow the successful redirect”
