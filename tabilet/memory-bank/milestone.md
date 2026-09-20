@@ -305,8 +305,8 @@ E01, E02, E03, ...
 Task/status files use the lane ID:
 
 ```text
-memory-bank/status-M01.md
-memory-bank/status-M02.md
+tabilet/memory-bank/status-M01.md
+tabilet/memory-bank/status-M02.md
 ```
 
 Lane meanings:
@@ -673,10 +673,10 @@ metadata tooling, OpenUdon authoring, and runtime execution.
 
 Acceptance:
 
-- `AGENTS.md`, `memory-bank/product.md`, `memory-bank/architecture.md`,
-  `memory-bank/tech-stack.md`, `memory-bank/milestone.md`, and
-  `memory-bank/status-M01.md` exist through the tracked symlink target.
-- `evolution/prompt-v1.md` and `evolution/result-v1.md` record the initial
+- `AGENTS.md`, `tabilet/memory-bank/product.md`, `tabilet/memory-bank/architecture.md`,
+  `tabilet/memory-bank/tech-stack.md`, `tabilet/memory-bank/milestone.md`, and
+  `tabilet/memory-bank/status-M01.md` exist through the tracked symlink target.
+- `tabilet/evolution/prompt-v1.md` and `tabilet/evolution/result-v1.md` record the initial
   direction.
 - Documentation states the clean pipeline and the package boundaries.
 - No implementation dependency is introduced during harness setup.

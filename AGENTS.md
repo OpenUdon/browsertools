@@ -30,28 +30,28 @@ execution, session/credential storage, or production side effects.
 
 Before substantial changes, read these in order:
 
-1. [memory-bank/product.md](memory-bank/product.md)
-2. [memory-bank/architecture.md](memory-bank/architecture.md)
-3. [memory-bank/tech-stack.md](memory-bank/tech-stack.md)
-4. [memory-bank/milestone.md](memory-bank/milestone.md)
-5. The relevant per-milestone status file in [memory-bank/](memory-bank/)
+1. [tabilet/memory-bank/product.md](tabilet/memory-bank/product.md)
+2. [tabilet/memory-bank/architecture.md](tabilet/memory-bank/architecture.md)
+3. [tabilet/memory-bank/tech-stack.md](tabilet/memory-bank/tech-stack.md)
+4. [tabilet/memory-bank/milestone.md](tabilet/memory-bank/milestone.md)
+5. The relevant per-milestone status file in [tabilet/memory-bank/](tabilet/memory-bank/)
 
-`memory-bank/milestone.md` owns the roadmap, active milestone, status-file
+`tabilet/memory-bank/milestone.md` owns the roadmap, active milestone, status-file
 index, milestone scope, and acceptance criteria. Each
-`memory-bank/status-<LANE><NN>.md`
+`tabilet/memory-bank/status-<LANE><NN>.md`
 file owns the detailed task ledger and completion state for its milestone.
 
 Do not recreate duplicate root-level product, architecture, roadmap, or status
 documents. Long-form references live in `docs/` when needed; README is the
 public operator entry point once implementation exists.
 
-This project exposes [GOAL.md](GOAL.md), one optional protocol for goal requests
+This project exposes [tabilet/GOAL.md](tabilet/GOAL.md), one optional protocol for goal requests
 that span multiple status files. Follow it only when a request names it.
 
-A `GOAL.md` run is a deliberate exception to the row-level commit rule below.
+A `tabilet/GOAL.md` run is a deliberate exception to the row-level commit rule below.
 For that run, `COMMIT_POLICY: none` — the protocol default — means no commits,
 while `COMMIT_POLICY: task` keeps the usual one-commit-per-row cadence.
-Precedence is the request, then `GOAL.md`, then this file; only commits are
+Precedence is the request, then `tabilet/GOAL.md`, then this file; only commits are
 delegated, and only during the run.
 
 ## Boundary
@@ -151,8 +151,8 @@ When changing OpenUdon-facing exports, run the consumer checks when available:
   milestone scope/acceptance -> `milestone.md`; completion state -> matching
   `status-<LANE><NN>.md`.
 - Treat each row in a status file as a commit unit once implementation begins.
-- Keep one permanent, zero-padded `memory-bank/status-<LANE><NN>.md` file for
-  each milestone listed in [memory-bank/milestone.md](memory-bank/milestone.md).
+- Keep one permanent, zero-padded `tabilet/memory-bank/status-<LANE><NN>.md` file for
+  each milestone listed in [tabilet/memory-bank/milestone.md](tabilet/memory-bank/milestone.md).
   Never reuse an ID or create aggregate `status.md`.
 - Keep candidate directions unnumbered until fresh scope and dependency review
   promotes them.
@@ -162,6 +162,6 @@ When changing OpenUdon-facing exports, run the consumer checks when available:
 - Parallel rows in the profile and evidence lanes require explicit
   non-overlapping ownership, resolved prerequisites, and downstream impacts in
   `milestone.md`.
-- Check [evolution/](evolution/) after a major review, milestone, or boundary
+- Check [tabilet/evolution/](tabilet/evolution/) after a major review, milestone, or boundary
   change. Add a new version only when product direction, architecture boundary,
   milestone target, or public/private contract direction materially changes.
