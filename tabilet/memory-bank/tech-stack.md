@@ -1,8 +1,8 @@
 # Tech Stack
 
-## Reviewed query navigation candidate
+## Qualified reviewed query navigation
 
-Focused query admission, generated-profile, parent-attestation and synthetic application/package checks pass. The new helper uses existing dependencies; full owner checks pass and integration qualification follows.
+Focused query admission, generated-profile, parent-attestation and synthetic application/package checks pass. The helper uses existing dependencies; full owner checks, fresh affected smoke and full acceptance v2 pass on the selected frozen source versions.
 See the owning authenticated-authoring guide for limits and semantics.
 
 ## W13.1q qualified and adopted cache-compatible authoring

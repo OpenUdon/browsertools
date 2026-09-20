@@ -3,8 +3,9 @@
 ## Canonical authenticated navigation — W13.1u
 
 A14.7 implements retained structural-query navigation with existing containment and
-privacy boundaries. Focused source checks pass; owner verification and review remain; see [status-A14](status-A14.md).
-No runtime adoption or live capture is armed.
+privacy boundaries. Publication, fresh qualification, independent bindings/cleanup
+and exact retained-byte adoption pass; see [status-A14](status-A14.md).
+No live capture is armed; W13.1v requires current human readiness.
 
 ## W13.1q qualified and adopted cache-compatible authoring
 

@@ -251,7 +251,7 @@ full qualification and runtime adoption. No live login is armed.
 
 | Item | State | Notes |
 | --- | --- | --- |
-| A14.7 | `[~]` | In progress: retained structural-query navigation, secret rejection, unchanged observation redaction and synthetic capture/package verification. Local implementation, focused/browser checks and full owner gates pass; source review 1 passes. Publication and fresh integration qualification/adoption remain. |
+| A14.7 | `[+]` | Selected query-preserving source is published, freshly qualified and adopted by W8M. Focused/owner gates, affected smoke, 39 native stages/three W8M journeys, exact bindings and independent cleanup pass. Integration/adoption review 1 pass; no live capture. Later planning migrations are preserved outside the selected runtime inputs. |
 
 
 W13.1u focused candidate checks pass: query input/worker/generated navigation,
@@ -281,3 +281,19 @@ OpenUdon pins v0.0.0-20260919232210-7f551775d0f6. Published-module admission,
 attestation, compatibility/content-trust checks and standalone build pass. W8M
 will freeze these inputs for affected smoke and one fresh complete qualification.
 No runtime adoption or new live capture has occurred.
+
+W13.1u integration closeout: Browsertools 7f551775d0f6, OpenUdon 01998d6f9d2d,
+W8M 780fd9638a73 and tested Tofu coordination 6bcbb8694719 remain the selected
+frozen inputs. Fresh affected smoke and complete acceptance v2 pass: four
+offline stages, 39 native stages across three repetitions and three W8M journeys.
+All twenty source/twenty-four retained runtime bindings and independent unforced
+cleanup of 5,683 identities pass. Integration review 1 and exact pass-one
+adoption/preflight review 1 pass with no open P1/P2 in this selected scope.
+Acceptance SHA-256: `35372b78537e6ea9d1e38fe4267ad04886c567ec33e6ba58e7b629fec9a3ea1f`.
+W13.1v prepares a fresh capture and stops for current desktop readiness. No
+registration, live capture or cross-run session transfer occurred.
+
+The owner-published v2 planning relocation is preserved. This closeout updates
+the relocated ledger without changing or qualifying those later source heads,
+without repinning W8M, and without absorbing Tofu's migration deletions or other
+owner work. The tested coordination snapshot remains 6bcbb8694719.

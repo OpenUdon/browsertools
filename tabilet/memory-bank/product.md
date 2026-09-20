@@ -1,8 +1,8 @@
 # Product
 
-## Reviewed query navigation candidate
+## Qualified reviewed query navigation
 
-Authenticated authoring now retains reviewed structural-query navigation through generated profiles; observed query values remain undisclosed. This source candidate still requires publication and qualification before adoption.
+Authenticated authoring now retains reviewed structural-query navigation through generated profiles; observed query values remain undisclosed. W8M has published, qualified and adopted the exact selected query-preserving runtime.
 See the owning authenticated-authoring guide for limits and semantics.
 
 ## W13.1q qualified and adopted cache-compatible authoring

@@ -1,8 +1,9 @@
 # Architecture
 
-## Reviewed query navigation candidate
+## Qualified reviewed query navigation
 
 The shared Browsertools authorurl validator binds reviewed command URLs, parent/worker action traces and generated navigation. Origin/path observations and native redirect containment remain separate.
+W8M selects exact retained passing binaries; later planning-only source commits do not replace the qualified pins.
 See the owning authenticated-authoring guide for limits and semantics.
 
 ## W13.1q qualified and adopted cache-compatible authoring
