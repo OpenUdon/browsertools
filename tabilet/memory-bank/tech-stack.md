@@ -6,6 +6,9 @@ The standalone module pins published UWS
 `v0.0.0-20260924030503-e9b6181be0ab`. Browser 1.8 and 1.9 schema bytes and
 template validation come from that module; Browsertools keeps the embedded
 1.5 parity copy. Default tests use synthetic documents without browser launch.
+Go JSON decoders use `UseNumber` for interface-backed inline schemas; the YAML
+bridge converts those tokens to numeric scalars without rounding signed 64-bit
+integer defaults.
 
 ## Qualified reviewed query navigation
 

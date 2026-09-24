@@ -44,6 +44,21 @@ type Profile struct {
 	Contexts        map[string]Context `json:"contexts,omitempty" yaml:"contexts,omitempty"`
 }
 
+// UnmarshalJSON preserves number tokens inside inline parameter and output
+// schemas, including Browser 1.8 signed 64-bit integer defaults.
+func (p *Profile) UnmarshalJSON(data []byte) error {
+	type plain Profile
+	var decoded plain
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*p = Profile(decoded)
+	return nil
+}
+
 type Context struct {
 	Kind   string `json:"kind" yaml:"kind"`
 	Parent string `json:"parent" yaml:"parent"`
@@ -323,10 +338,10 @@ func (o Output) MarshalYAML() (any, error) {
 		return nil, err
 	}
 	var value map[string]any
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := decodeJSONWithNumbers(data, &value); err != nil {
 		return nil, err
 	}
-	return value, nil
+	return yamlCompatibleNumbers(value), nil
 }
 
 // ParseJSON validates and decodes a JSON browser profile.
@@ -339,7 +354,7 @@ func ParseJSON(data []byte) (*Profile, error) {
 		return nil, err
 	}
 	var p Profile
-	if err := json.Unmarshal(data, &p); err != nil {
+	if err := decodeJSONWithNumbers(data, &p); err != nil {
 		return nil, fmt.Errorf("decode typed JSON profile: %w", err)
 	}
 	return &p, nil
@@ -368,7 +383,7 @@ func ParseYAML(data []byte) (*Profile, error) {
 		return nil, fmt.Errorf("normalize YAML profile: %w", err)
 	}
 	var p Profile
-	if err := json.Unmarshal(jsonData, &p); err != nil {
+	if err := decodeJSONWithNumbers(jsonData, &p); err != nil {
 		return nil, fmt.Errorf("decode typed YAML profile: %w", err)
 	}
 	return &p, nil
@@ -402,7 +417,7 @@ func (p Profile) Value() (map[string]any, error) {
 		return nil, err
 	}
 	var result map[string]any
-	if err := json.Unmarshal(data, &result); err != nil {
+	if err := decodeJSONWithNumbers(data, &result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -415,7 +430,40 @@ func MarshalYAML(p Profile) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return yaml.Marshal(value)
+	return yaml.Marshal(yamlCompatibleNumbers(value))
+}
+
+// yamlCompatibleNumbers keeps the generic JSON-schema number tokens exact
+// without letting yaml.v3 quote json.Number values as strings.
+func yamlCompatibleNumbers(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		result := make(map[string]any, len(typed))
+		for key, child := range typed {
+			result[key] = yamlCompatibleNumbers(child)
+		}
+		return result
+	case []any:
+		result := make([]any, len(typed))
+		for i, child := range typed {
+			result[i] = yamlCompatibleNumbers(child)
+		}
+		return result
+	case json.Number:
+		literal := string(typed)
+		if !strings.ContainsAny(literal, ".eE") {
+			if number, err := strconv.ParseInt(literal, 10, 64); err == nil {
+				return number
+			}
+			if number, err := strconv.ParseUint(literal, 10, 64); err == nil {
+				return number
+			}
+			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: literal}
+		}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!float", Value: literal}
+	default:
+		return value
+	}
 }
 
 // ParseOrigin validates and canonicalizes an HTTP(S) origin.
@@ -741,6 +789,7 @@ func (w *WaitForCondition) UnmarshalJSON(data []byte) error {
 
 func decodeStrictJSON(data []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
@@ -753,6 +802,15 @@ func decodeStrictJSON(data []byte, target any) error {
 		return err
 	}
 	return nil
+}
+
+// decodeJSONWithNumbers retains exact JSON number tokens in interface-backed
+// inline schemas. Plain json.Unmarshal converts them to float64 and can round
+// valid Browser 1.8 signed 64-bit parameter defaults.
+func decodeJSONWithNumbers(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return decoder.Decode(target)
 }
 
 // MarshalJSON encodes the wait condition's union form.

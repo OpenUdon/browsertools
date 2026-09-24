@@ -55,6 +55,43 @@ func TestBuildVerifyDeterministicAndTimeBound(t *testing.T) {
 	}
 }
 
+func TestBundleDecodeKeepsBrowser18IntegerDefaultExact(t *testing.T) {
+	const exact = "9223372036854775807"
+	p := profile.Profile{Info: profile.Info{Origin: profile.Origins{"https://example.test"}}, Actions: map[string]profile.Action{
+		"lookup": {Parameters: profile.JSONSchema{"properties": map[string]any{"id": map[string]any{"type": "integer", "default": json.Number(exact)}}}},
+	}}
+	value := &Bundle{Payload: Payload{Profile: p, Review: review.Bundle{Profile: p}}}
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(label string, got profile.Profile) {
+		t.Helper()
+		defaultValue := got.Actions["lookup"].Parameters["properties"].(map[string]any)["id"].(map[string]any)["default"]
+		if number, ok := defaultValue.(json.Number); !ok || string(number) != exact {
+			t.Fatalf("%s rounded default: %T %v", label, defaultValue, defaultValue)
+		}
+	}
+	check("bundle payload", parsed.Payload.Profile)
+	check("bundle review", parsed.Payload.Review.Profile)
+	cloned, err := cloneReview(&parsed.Payload.Review)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("review clone", cloned.Profile)
+	bad := bytes.Replace(data, []byte(`"origin":"https://example.test"`), []byte(`"origin":"https://example.test","unexpected":true`), 1)
+	if bytes.Equal(bad, data) {
+		t.Fatal("test fixture did not contain the expected origin")
+	}
+	if _, err := Parse(bad); err == nil {
+		t.Fatal("bundle accepted an unknown nested profile field")
+	}
+}
+
 func TestSideEffectBundleRequiresConfirmationAndSafeReview(t *testing.T) {
 	built := buildFixture(t, "confirmed-side-effect", nil)
 	if !built.Payload.Review.SideEffects.HasWriteActions {

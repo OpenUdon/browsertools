@@ -3,6 +3,7 @@
 package draft
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -273,7 +274,9 @@ func cloneSchema(schema profile.JSONSchema) (profile.JSONSchema, error) {
 		return nil, err
 	}
 	var result profile.JSONSchema
-	if err := json.Unmarshal(data, &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, err
 	}
 	return result, nil

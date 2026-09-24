@@ -8,6 +8,9 @@ safety checks; Browsertools adds its existing origin-bound navigation check and
 handles 1.9 brace escapes when resolving that check. Offline drafting selects
 the earliest template version only after an explicit opt-in, preserving legacy
 1.5 output for previously authored specifications.
+Inline JSON Schema numbers remain `json.Number` when decoded into typed
+profiles, cloned, or read from review/publication bundles. YAML serialization
+emits those tokens as numeric scalars so signed 64-bit defaults round-trip.
 
 ## Qualified reviewed query navigation
 

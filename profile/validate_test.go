@@ -332,6 +332,72 @@ func TestBrowser19RejectsUnsafeTextAndTemplatePlacement(t *testing.T) {
 	}
 }
 
+func TestBrowser18IntegerDefaultKeepsSigned64BitValue(t *testing.T) {
+	const exact = "9223372036854775807"
+	p, err := LoadFile(filepath.Join("testdata", "valid_minimal.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Schema = SchemaV18
+	action := p.Actions["read_status"]
+	action.Parameters = JSONSchema{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "integer", "default": json.Number(exact)}}}
+	action.Sequence[0].Navigate = "/status/{{id}}"
+	p.Actions["read_status"] = action
+	assertExact := func(label string, got *Profile) {
+		t.Helper()
+		value := got.Actions["read_status"].Parameters["properties"].(map[string]any)["id"].(map[string]any)["default"]
+		if number, ok := value.(json.Number); !ok || string(number) != exact {
+			t.Fatalf("%s rounded integer default: %T %v", label, value, value)
+		}
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var direct Profile
+	if err := json.Unmarshal(data, &direct); err != nil {
+		t.Fatal(err)
+	}
+	assertExact("json.Unmarshal", &direct)
+	fromJSON, err := ParseJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExact("ParseJSON", fromJSON)
+	clone, err := CloneValidated(fromJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExact("CloneValidated", clone)
+	value, err := clone.Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultValue := value["actions"].(map[string]any)["read_status"].(map[string]any)["parameters"].(map[string]any)["properties"].(map[string]any)["id"].(map[string]any)["default"]
+	if number, ok := defaultValue.(json.Number); !ok || string(number) != exact {
+		t.Fatalf("Value rounded default: %T %v", defaultValue, defaultValue)
+	}
+	yamlData, err := MarshalYAML(*clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromYAML, err := ParseYAML(yamlData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExact("ParseYAML", fromYAML)
+	clonedAction, err := CloneAction(fromYAML.Actions["read_status"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromYAML.Actions["read_status"] = clonedAction
+	assertExact("CloneAction", fromYAML)
+	p.Schema = SchemaV19
+	if err := ValidateTyped(p); err == nil {
+		t.Fatal("Browser 1.9 accepted unsafe integer default")
+	}
+}
+
 func TestDurationAddToCalendarComponents(t *testing.T) {
 	reference := time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC)
 	got, err := Duration("P1M").AddTo(reference)

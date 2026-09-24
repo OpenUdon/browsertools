@@ -8,6 +8,10 @@ scalar templates and 1.9 when those templates use escaped literal braces.
 Legacy draft specifications retain their historical 1.5 output. Runtime
 substitution and trusted browser execution remain downstream.
 
+Browser 1.8 integer parameter defaults retain their exact signed 64-bit value
+through typed parsing, review, and publication artifacts. Browser 1.9 keeps
+its narrower safe-integer default rule from UWS.
+
 ## Qualified reviewed query navigation
 
 Authenticated authoring now retains reviewed structural-query navigation through generated profiles; observed query values remain undisclosed. W8M has published, qualified and adopted the exact selected query-preserving runtime.

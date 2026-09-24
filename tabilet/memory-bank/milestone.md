@@ -596,6 +596,7 @@ Build browsertools in reviewable slices:
 51. `M29`: first-class adoption of the pinned UWS browser, authentication, and
     registration profile set.
 52. `M30`: adopt UWS 1.11 and Browser 1.8/1.9 in browser-profile validation and offline authoring.
+53. `M31`: preserve exact Browser 1.8 integer defaults through typed profiles and offline drafts.
 
 ## Status Files
 
@@ -654,6 +655,7 @@ Build browsertools in reviewable slices:
 | A13 - Reviewed verification authoring | [status-A13.md](status-A13.md) | Implementation review complete; `995749d`; downstream qualification pending |
 | M29 - Latest Browser Profile Set Adoption | [status-M29.md](status-M29.md) | Complete and published at `5136589`; qualified-runtime adoption remains separate |
 | M30 - UWS 1.11 Browser Profile Adoption | [status-M30.md](status-M30.md) | Complete locally; publication and downstream pin adoption separate |
+| M31 - Browser 1.8 Integer Fidelity | [status-M31.md](status-M31.md) | Complete locally; downstream runtime integration separate |
 
 ## Candidate Directions
 
@@ -1754,3 +1756,14 @@ Acceptance: the standalone pinned module accepts and round-trips 1.8/1.9, reject
 
 Status: complete locally, bounded review iteration 2 passed with no open P1/P2;
 publication and downstream pin adoption remain separate. See [status-M30.md](status-M30.md).
+
+### M31 Browser 1.8 Integer Fidelity
+
+**Goal.** Preserve signed 64-bit Browser 1.8 integer defaults through typed parsing, value conversion, cloning, and offline draft construction, so downstream runtime parameter preparation receives the reviewed exact value.
+
+Dependencies: M30 local source adoption. Udon's Browser 1.8 execution integration is the downstream consumer.
+
+Acceptance: JSON and YAML parse, typed clone, generic value, review and publication bundle decode, and draft clone preserve a default above JavaScript's safe-integer range exactly; Browser 1.9 continues to reject unsafe integer defaults through the pinned UWS validator. Existing profile output and APIs remain compatible. Full pinned/workspace tests, vet, diff check, and bounded review pass. No live browser action or publication.
+
+Status: complete locally, bounded review iteration 2 passed with no open P1/P2;
+downstream runtime integration remains separate. See [status-M31.md](status-M31.md).

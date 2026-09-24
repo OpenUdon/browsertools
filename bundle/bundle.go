@@ -361,6 +361,7 @@ func Parse(data []byte) (*Bundle, error) {
 		return nil, fmt.Errorf("%w: bundle exceeds %d bytes", ErrLimit, MaxBundleBytes)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
 	decoder.DisallowUnknownFields()
 	var value Bundle
 	if err := decoder.Decode(&value); err != nil {
@@ -723,7 +724,9 @@ func cloneReview(value *review.Bundle) (*review.Bundle, error) {
 		return nil, err
 	}
 	var result review.Bundle
-	if err := json.Unmarshal(data, &result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
 		return nil, err
 	}
 	return &result, nil

@@ -16,7 +16,7 @@ func ValidateTyped(value *Profile) error {
 		return fmt.Errorf("marshal typed browser profile: %w", err)
 	}
 	var document map[string]any
-	if err := json.Unmarshal(data, &document); err != nil {
+	if err := decodeJSONWithNumbers(data, &document); err != nil {
 		return fmt.Errorf("decode typed browser profile: %w", err)
 	}
 	return Validate(document)
@@ -32,7 +32,7 @@ func Clone(value *Profile) (*Profile, error) {
 		return nil, fmt.Errorf("marshal browser profile clone: %w", err)
 	}
 	var cloned Profile
-	if err := json.Unmarshal(data, &cloned); err != nil {
+	if err := decodeJSONWithNumbers(data, &cloned); err != nil {
 		return nil, fmt.Errorf("decode browser profile clone: %w", err)
 	}
 	return &cloned, nil
@@ -54,7 +54,7 @@ func CloneAction(value Action) (Action, error) {
 		return Action{}, err
 	}
 	var cloned Action
-	if err := json.Unmarshal(data, &cloned); err != nil {
+	if err := decodeJSONWithNumbers(data, &cloned); err != nil {
 		return Action{}, err
 	}
 	return cloned, nil
@@ -67,7 +67,7 @@ func CloneOutput(value Output) (Output, error) {
 		return Output{}, err
 	}
 	var cloned Output
-	if err := json.Unmarshal(data, &cloned); err != nil {
+	if err := decodeJSONWithNumbers(data, &cloned); err != nil {
 		return Output{}, err
 	}
 	return cloned, nil

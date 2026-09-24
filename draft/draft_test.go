@@ -1,6 +1,7 @@
 package draft
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -90,6 +91,27 @@ func TestBuildChoosesOldestSufficientTemplateVersion(t *testing.T) {
 		if result.Profile.Schema != tc.want {
 			t.Fatalf("got %s, want %s", result.Profile.Schema, tc.want)
 		}
+	}
+}
+
+func TestBuildKeepsBrowser18IntegerDefaultExact(t *testing.T) {
+	const exact = "9223372036854775807"
+	spec := baseSpec()
+	spec.VersionedTemplates = true
+	action := spec.Actions["read_status"]
+	action.Parameters = profile.JSONSchema{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "integer", "default": json.Number(exact)}}}
+	action.Sequence[0].Navigate = "/status/{{id}}"
+	spec.Actions["read_status"] = action
+	result, err := Build([]evidence.Record{baseRecord("read_status")}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Profile.Schema != profile.SchemaV18 {
+		t.Fatalf("got %s", result.Profile.Schema)
+	}
+	defaultValue := result.Profile.Actions["read_status"].Parameters["properties"].(map[string]any)["id"].(map[string]any)["default"]
+	if number, ok := defaultValue.(json.Number); !ok || string(number) != exact {
+		t.Fatalf("draft rounded default: %T %v", defaultValue, defaultValue)
 	}
 }
 

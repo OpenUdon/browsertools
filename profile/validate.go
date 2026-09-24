@@ -125,7 +125,7 @@ func Check(value any) []Issue {
 		return []Issue{{Code: "typed_decode", Path: "$", Message: err.Error()}}
 	}
 	var p Profile
-	if err := json.Unmarshal(data, &p); err != nil {
+	if err := decodeJSONWithNumbers(data, &p); err != nil {
 		return []Issue{{Code: "typed_decode", Path: "$", Message: err.Error()}}
 	}
 	var issues []Issue
