@@ -1,5 +1,12 @@
 # Tech Stack
 
+## UWS 1.11 browser-profile adoption
+
+The standalone module pins published UWS
+`v0.0.0-20260924030503-e9b6181be0ab`. Browser 1.8 and 1.9 schema bytes and
+template validation come from that module; Browsertools keeps the embedded
+1.5 parity copy. Default tests use synthetic documents without browser launch.
+
 ## Qualified reviewed query navigation
 
 Focused query admission, generated-profile, parent-attestation and synthetic application/package checks pass. The helper uses existing dependencies; full owner checks, fresh affected smoke and full acceptance v2 pass on the selected frozen source versions.
@@ -266,7 +273,7 @@ git diff --check
 ## Go Dependencies
 
 - `github.com/santhosh-tekuri/jsonschema/v6` remains aligned with the pinned UWS
-  module. Production validation uses UWS' public browser 1.5-1.7 schema API
+  module. Production validation uses UWS' public browser 1.5-1.9 schema API
   through `profile.SchemaBytesFor`, which accepts only a supported
   discriminator; the embedded browser.1.5 copy is parity-tested on every run
   alongside every other accepted version.

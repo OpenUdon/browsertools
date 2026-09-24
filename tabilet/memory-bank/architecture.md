@@ -1,5 +1,14 @@
 # Architecture
 
+## UWS 1.11 browser-profile adoption
+
+The typed `profile.Profile` remains the complete wire view for Browser 1.5
+through 1.9. UWS' versioned validator owns template placement, scalar and text
+safety checks; Browsertools adds its existing origin-bound navigation check and
+handles 1.9 brace escapes when resolving that check. Offline drafting selects
+the earliest template version only after an explicit opt-in, preserving legacy
+1.5 output for previously authored specifications.
+
 ## Qualified reviewed query navigation
 
 The shared Browsertools authorurl validator binds reviewed command URLs, parent/worker action traces and generated navigation. Origin/path observations and native redirect containment remain separate.
@@ -254,7 +263,7 @@ website / local fixture / saved evidence
   -> UWS/OpenUdon/runtime consumers
 ```
 
-The browser-profile contracts live in UWS browser 1.5 through 1.7.
+The browser-profile contracts live in UWS browser 1.5 through 1.9.
 Browsertools validates every supported discriminator through the pinned UWS
 schema API, exposes the accepted set and its per-version schema bytes through
 `profile.SupportedSchemas` and `profile.SchemaBytesFor`, rejects future
@@ -657,7 +666,7 @@ format tokens before any I/O or mutation.
 ## Validation Strategy
 
 - Always validate generated profile documents against the pinned UWS public
-  browser-profile schema API for discriminators 1.5 through 1.7.
+  browser-profile schema API for discriminators 1.5 through 1.9.
 - Validate authentication recipes through UWS' additive authentication schema,
   then apply Browsertools' secret/PII, lifecycle, and deterministic review
   gates.

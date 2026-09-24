@@ -1,5 +1,13 @@
 # Product
 
+## UWS 1.11 browser-profile adoption
+
+Browsertools accepts Browser 1.5 through 1.9 against its pinned UWS 1.11
+module. Offline drafting selects 1.8 only when the author opts into versioned
+scalar templates and 1.9 when those templates use escaped literal braces.
+Legacy draft specifications retain their historical 1.5 output. Runtime
+substitution and trusted browser execution remain downstream.
+
 ## Qualified reviewed query navigation
 
 Authenticated authoring now retains reviewed structural-query navigation through generated profiles; observed query values remain undisclosed. W8M has published, qualified and adopted the exact selected query-preserving runtime.
@@ -265,7 +273,7 @@ real website UI
 ## Core Concepts
 
 - **Browser profile**: a UWS `browser-profile` source document conforming to a
-  pinned UWS browser 1.5, 1.6, or 1.7 schema. It records reviewed UI
+  pinned UWS browser 1.5 through 1.9 schema. It records reviewed UI
   capabilities, not browser command traces, and Browsertools emits the oldest
   sufficient version.
 - **Browser content-trust resolver**: an explicit adapter from reviewed browser

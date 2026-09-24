@@ -274,9 +274,61 @@ func TestSupportedProfileVersionsUsePinnedSchemasAndFutureVersionFails(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	value["profile"] = "uws.browser.1.8"
+	value["profile"] = "uws.browser.1.10"
 	if err := Validate(value); err == nil || !strings.Contains(err.Error(), "unsupported browser profile discriminator") {
 		t.Fatalf("future version did not fail explicitly: %v", err)
+	}
+}
+
+func TestBrowser18And19TypedTemplateRoundTrips(t *testing.T) {
+	for _, tc := range []struct{ version, navigate string }{
+		{SchemaV18, "/status/{{id}}?view={{id}}"},
+		{SchemaV19, "/status/{{{{literal}}}}/{{id}}?view={{id}}"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			p, err := LoadFile(filepath.Join("testdata", "valid_minimal.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Schema = tc.version
+			action := p.Actions["read_status"]
+			action.Parameters = JSONSchema{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}}
+			action.Sequence[0].Navigate = tc.navigate
+			action.ConfirmationPolicy.Prompt = "Open {{id}}"
+			p.Actions["read_status"] = action
+			data, err := MarshalYAML(*p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			roundTrip, err := ParseYAML(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if roundTrip.Schema != tc.version || roundTrip.Actions["read_status"].Sequence[0].Navigate != tc.navigate {
+				t.Fatalf("template changed during typed round trip: %+v", roundTrip)
+			}
+		})
+	}
+}
+
+func TestBrowser19RejectsUnsafeTextAndTemplatePlacement(t *testing.T) {
+	p, err := LoadFile(filepath.Join("testdata", "valid_minimal.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Schema = SchemaV19
+	action := p.Actions["read_status"]
+	action.Parameters = JSONSchema{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}}
+	action.Sequence[0].Navigate = "https://{{id}}.example.test/status"
+	p.Actions["read_status"] = action
+	if err := ValidateTyped(p); err == nil {
+		t.Fatal("authority placeholder accepted")
+	}
+	action.Sequence[0].Navigate = "/status"
+	action.ConfirmationPolicy.Prompt = "Unsafe\u202e text"
+	p.Actions["read_status"] = action
+	if err := ValidateTyped(p); err == nil {
+		t.Fatal("bidi control accepted in confirmation text")
 	}
 }
 
@@ -306,15 +358,15 @@ func TestDurationAddToCalendarComponents(t *testing.T) {
 // TestSchemaConstantsPinWireDiscriminators keeps the exported constants bound
 // to the exact published UWS discriminator strings.
 func TestSchemaConstantsPinWireDiscriminators(t *testing.T) {
-	if SchemaV15 != "uws.browser.1.5" || SchemaV16 != "uws.browser.1.6" || SchemaV17 != "uws.browser.1.7" {
-		t.Fatalf("schema constants drifted: %s %s %s", SchemaV15, SchemaV16, SchemaV17)
+	if SchemaV15 != "uws.browser.1.5" || SchemaV16 != "uws.browser.1.6" || SchemaV17 != "uws.browser.1.7" || SchemaV18 != "uws.browser.1.8" || SchemaV19 != "uws.browser.1.9" {
+		t.Fatal("schema constants drifted")
 	}
 	supported := SupportedSchemas()
 	supported[0] = "mutated"
 	if SupportedSchemas()[0] != SchemaV15 {
 		t.Fatal("SupportedSchemas returned a shared slice")
 	}
-	if SupportsSchema("uws.browser.1.8") || !SupportsSchema(SchemaV17) {
+	if SupportsSchema("uws.browser.1.10") || !SupportsSchema(SchemaV19) {
 		t.Fatal("SupportsSchema does not match the accepted set")
 	}
 }

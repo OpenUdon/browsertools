@@ -595,6 +595,7 @@ Build browsertools in reviewable slices:
     preview, and additive author-session/result contracts.
 51. `M29`: first-class adoption of the pinned UWS browser, authentication, and
     registration profile set.
+52. `M30`: adopt UWS 1.11 and Browser 1.8/1.9 in browser-profile validation and offline authoring.
 
 ## Status Files
 
@@ -652,6 +653,7 @@ Build browsertools in reviewable slices:
 | A12 - Generic Registration 1.1 Producer | [status-A12.md](status-A12.md) | Complete and published at `ec0b9e9d6ca1`; W8M W15 qualification and exact tested-runtime adoption pass |
 | A13 - Reviewed verification authoring | [status-A13.md](status-A13.md) | Implementation review complete; `995749d`; downstream qualification pending |
 | M29 - Latest Browser Profile Set Adoption | [status-M29.md](status-M29.md) | Complete and published at `5136589`; qualified-runtime adoption remains separate |
+| M30 - UWS 1.11 Browser Profile Adoption | [status-M30.md](status-M30.md) | Complete locally; publication and downstream pin adoption separate |
 
 ## Candidate Directions
 
@@ -1741,3 +1743,14 @@ pin adoption needs no further OpenUdon change.
 
 Status: complete and published at Browsertools `5136589`; source publication
 does not change the A12/W15 qualified runtime. See [status-M29.md](status-M29.md).
+
+### M30 UWS 1.11 Browser Profile Adoption
+
+**Goal.** Adopt the remotely published UWS 1.11 source revision and Browser 1.8/1.9 profiles in Browsertools' typed validation and offline draft authoring, while retaining oldest-sufficient output and the existing runtime authority boundary.
+
+Dependencies: published UWS `e9b6181be0abb7f683fdb624d4dba282a59991d1`; M29 complete. Browserdriver and OpenUdon adoption are separate downstream owners.
+
+Acceptance: the standalone pinned module accepts and round-trips 1.8/1.9, rejects unknown versions and invalid templates, emits 1.8/1.9 only when authored features require them, and preserves existing output digests. Full tests, vet, schema parity, documentation, and a bounded review pass. No live browser action or publication.
+
+Status: complete locally, bounded review iteration 2 passed with no open P1/P2;
+publication and downstream pin adoption remain separate. See [status-M30.md](status-M30.md).

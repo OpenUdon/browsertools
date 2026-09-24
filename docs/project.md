@@ -108,7 +108,8 @@ The browser profile itself owns UI action metadata:
 
 Browsertools should validate against the UWS browser-profile schema rather than
 forking the contract. Browsertools accepts the pinned `uws.browser.1.5`,
-`uws.browser.1.6`, and `uws.browser.1.7` contracts through UWS' public schema
+`uws.browser.1.6`, `uws.browser.1.7`, `uws.browser.1.8`, and
+`uws.browser.1.9` contracts through UWS' public schema
 API. Unsupported future discriminators fail explicitly; the embedded 1.5
 schema exists only for parity checks.
 
@@ -295,16 +296,21 @@ Browsertools must not commit:
 
 ## Supported Browser Contracts
 
-Browsertools validates browser profiles 1.5 through 1.7, authentication
+Browsertools validates browser profiles 1.5 through 1.9, authentication
 recipes 1.0 and 1.1, and registration recipes 1.0 and 1.1. Browser 1.6 adds
 reviewed popup/frame contexts, while 1.7 permits the typed accessibility output
-conversions used by authenticated authoring. Authentication 1.1 adds contexts,
+conversions used by authenticated authoring. Browser 1.8 adds scalar parameter
+templates in safe action fields; 1.9 adds escaped literal braces and text-sink
+safety checks. Authentication 1.1 adds contexts,
 context-qualified steps, the navigate object form, and an exact success path;
 registration 1.1 adds typed private input slots and input checkpoints. The
 oldest sufficient version is emitted: a recipe that uses none of those features
-keeps its 1.0 or 1.5 discriminator. Upload/download, arbitrary pointer or JavaScript behavior, raw
-coordinates, credential/session storage, and runtime retry policy remain
-outside the portable contract.
+keeps its 1.0 or 1.5 discriminator. Offline draft specifications set
+`versionedTemplates: true` to request the Browser 1.8 component-safe template
+contract; escaped braces then select 1.9. Existing draft specifications keep
+their historical Browser 1.5 output. Upload/download, arbitrary pointer or
+JavaScript behavior, raw coordinates, credential/session storage, and runtime
+retry policy remain outside the portable contract.
 
 ## Implemented Milestones
 

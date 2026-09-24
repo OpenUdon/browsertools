@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/OpenUdon/browsertools/evidence"
@@ -14,8 +15,9 @@ import (
 )
 
 // Spec is Browsertools-only authoring input. It is not part of the portable
-// browser.1.5 profile. Every action must explicitly describe its sequence and
-// safety policy; evidence alone never invents those semantics.
+// browser profile. Every action must explicitly describe its sequence and
+// safety policy; evidence alone never invents those semantics. Existing specs
+// retain Browser 1.5 output unless versionedTemplates is explicitly enabled.
 type Spec struct {
 	Info            profile.Info               `json:"info" yaml:"info"`
 	ObservationKind profile.ObservationKind    `json:"observationKind" yaml:"observationKind"`
@@ -23,6 +25,9 @@ type Spec struct {
 	ExpiresAfter    profile.Duration           `json:"expiresAfter" yaml:"expiresAfter"`
 	Actions         map[string]ActionSpec      `json:"actions" yaml:"actions"`
 	Decisions       []evidence.LocatorDecision `json:"decisions,omitempty" yaml:"decisions,omitempty"`
+	// VersionedTemplates opts into Browser 1.8 component-safe template semantics.
+	// Escaped literal braces select Browser 1.9. Absent means legacy 1.5 drafting.
+	VersionedTemplates bool `json:"versionedTemplates,omitempty" yaml:"versionedTemplates,omitempty"`
 }
 
 // ActionSpec is the explicit reviewed intent for one profile action. When
@@ -130,6 +135,9 @@ func Build(records []evidence.Record, spec Spec) (*Result, error) {
 		Verification:    profile.Verification{LastVerifiedAt: latest, SuccessfulRuns: 0},
 		Actions:         actions,
 	}
+	if spec.VersionedTemplates {
+		prof.Schema = oldestSufficientTemplateSchema(prof)
+	}
 	result := &Result{
 		Profile:   prof,
 		Decisions: append([]evidence.LocatorDecision(nil), spec.Decisions...),
@@ -155,6 +163,34 @@ func Build(records []evidence.Record, spec Spec) (*Result, error) {
 		return result, fmt.Errorf("draft: %d blocking diagnostic(s); first: %s: %s", len(result.Diagnostics), result.Diagnostics[0].Path, result.Diagnostics[0].Message)
 	}
 	return result, nil
+}
+
+// oldestSufficientTemplateSchema selects the first opt-in template contract
+// that can express the reviewed action values. UWS validates placement and
+// rejects malformed templates under the selected contract.
+func oldestSufficientTemplateSchema(prof *profile.Profile) string {
+	version := profile.SchemaV15
+	for _, action := range prof.Actions {
+		values := []string{action.ConfirmationPolicy.Prompt}
+		for _, step := range action.Sequence {
+			values = append(values, step.Navigate)
+			if step.TypeText != nil {
+				values = append(values, step.TypeText.Value)
+			}
+			if step.SelectOption != nil {
+				values = append(values, step.SelectOption.Value)
+			}
+		}
+		for _, value := range values {
+			if strings.Contains(value, "{{{{") || strings.Contains(value, "}}}}") {
+				return profile.SchemaV19
+			}
+			if strings.Contains(value, "{{") || strings.Contains(value, "}}") {
+				version = profile.SchemaV18
+			}
+		}
+	}
+	return version
 }
 
 // MarshalProfile serializes a typed draft as deterministic indented JSON.

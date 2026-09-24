@@ -4,7 +4,7 @@ go 1.26.6
 
 require (
 	github.com/OpenUdon/evidence v0.0.0-20260815084845-0c17258b9736
-	github.com/OpenUdon/uws v0.0.0-20260913141421-b6e62fcc9133
+	github.com/OpenUdon/uws v0.0.0-20260924030503-e9b6181be0ab
 	github.com/mxschmitt/playwright-go v0.6201.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
 	gopkg.in/yaml.v3 v3.0.1

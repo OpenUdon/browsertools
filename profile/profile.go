@@ -1,6 +1,6 @@
 // Package profile loads, models, and validates UWS browser-profile documents.
 //
-// The browser.1.5 schema and the additive browser.1.6 and browser.1.7 schemas
+// The browser.1.5 schema and the additive browser.1.6 through browser.1.9 schemas
 // are owned by github.com/OpenUdon/uws. This package reads each accepted
 // version from that pinned module, embeds a parity-checked 1.5 copy, and
 // provides a complete, engine-neutral Go view of the portable document. It deliberately contains no browser runtime,
@@ -30,7 +30,7 @@ import (
 // validation declarations.
 type JSONSchema map[string]any
 
-// Profile is the complete typed view of a uws.browser.1.5, 1.6, or 1.7
+// Profile is the complete typed view of a uws.browser.1.5 through 1.9
 // document.
 type Profile struct {
 	Schema          string             `json:"profile" yaml:"profile"`

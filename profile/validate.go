@@ -24,11 +24,15 @@ const (
 	SchemaV15 = "uws.browser.1.5"
 	SchemaV16 = "uws.browser.1.6"
 	SchemaV17 = "uws.browser.1.7"
+	SchemaV18 = "uws.browser.1.8"
+	SchemaV19 = "uws.browser.1.9"
 )
 
 // SupportedSchemas returns a fresh copy of the accepted schema discriminators
 // in ascending version order.
-func SupportedSchemas() []string { return []string{SchemaV15, SchemaV16, SchemaV17} }
+func SupportedSchemas() []string {
+	return []string{SchemaV15, SchemaV16, SchemaV17, SchemaV18, SchemaV19}
+}
 
 // SupportsSchema reports whether a schema discriminator is accepted.
 func SupportsSchema(schema string) bool {
@@ -139,7 +143,13 @@ func Check(value any) []Issue {
 				})
 				continue
 			}
-			resolved, templateErr := resolveNavigateTemplate(step.Navigate)
+			target := step.Navigate
+			if p.Schema == SchemaV19 {
+				// UWS has already checked brace escapes and their placement.
+				// For the local origin check, resolve them as URI octets.
+				target = strings.ReplaceAll(strings.ReplaceAll(target, "{{{{", "%7B"), "}}}}", "%7D")
+			}
+			resolved, templateErr := resolveNavigateTemplate(target)
 			if templateErr != nil {
 				issues = append(issues, Issue{Code: "invalid_navigate_target", Path: path, Message: templateErr.Error()})
 				continue

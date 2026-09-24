@@ -66,6 +66,33 @@ func TestBuildDoesNotInventStepsOrSafety(t *testing.T) {
 	}
 }
 
+func TestBuildChoosesOldestSufficientTemplateVersion(t *testing.T) {
+	for _, tc := range []struct {
+		navigate, want string
+		optIn          bool
+	}{
+		{"/status", profile.SchemaV15, false},
+		{"/status/{{id}}", profile.SchemaV15, false},
+		{"/status", profile.SchemaV15, true},
+		{"/status/{{id}}", profile.SchemaV18, true},
+		{"/status/{{{{literal}}}}/{{id}}", profile.SchemaV19, true},
+	} {
+		spec := baseSpec()
+		spec.VersionedTemplates = tc.optIn
+		action := spec.Actions["read_status"]
+		action.Parameters = profile.JSONSchema{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}}
+		action.Sequence[0].Navigate = tc.navigate
+		spec.Actions["read_status"] = action
+		result, err := Build([]evidence.Record{baseRecord("read_status")}, spec)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.want, err)
+		}
+		if result.Profile.Schema != tc.want {
+			t.Fatalf("got %s, want %s", result.Profile.Schema, tc.want)
+		}
+	}
+}
+
 func TestBuildRequiresDeclaredLocatorEvidence(t *testing.T) {
 	spec := baseSpec()
 	action := spec.Actions["read_status"]

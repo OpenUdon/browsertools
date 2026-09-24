@@ -3,7 +3,7 @@
 E04 exposes more of Playwright-Go without turning Playwright artifacts or
 engine-specific selectors into UWS browser semantics. Rich evidence remains
 private raw material. Cross-engine checks remain value-free observations of an
-already reviewed browser profile, 1.5 through 1.7.
+already reviewed browser profile, 1.5 through 1.9.
 
 Neither path is a runtime. Both are headless, non-interactive, GET/HEAD-only,
 exact-origin acquisitions in fresh ephemeral contexts. They cannot receive an
@@ -134,7 +134,9 @@ without changing `browser.1.5`:
 
 Any future portable change belongs in a reviewed UWS browser schema and
 version note. UWS has since published `browser.1.6` contexts and `browser.1.7`
-typed accessibility outputs, and Browsertools accepts 1.5 through 1.7.
+typed accessibility outputs; Browser 1.8 adds scalar templates and 1.9 adds
+escaped literal braces and text-sink checks. Browsertools accepts 1.5 through
+1.9.
 Browsertools does not add ad hoc keys to a profile of any version.
 
 ## Verification

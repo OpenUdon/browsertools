@@ -31,6 +31,9 @@ authentication profiles, plus offline validation/draft/review tooling for the
 separate UWS browser-registration profile. Its CLI is primarily a machine-
 facing protocol plus maintainer and offline tooling, not a parallel end-user
 authoring product.
+The pinned UWS 1.11 module validates Browser 1.5 through 1.9. Offline drafts
+select Browser 1.8 for explicitly opted-in scalar templates and 1.9 for escaped
+literal braces, while older drafts retain their historical discriminator.
 Browsertools is not the production runtime; runtime replay belongs to Udon and
 Browserdriver. See the [canonical OpenUdon integration
 reference](docs/openudon-integration.md) for the two integration paths and full

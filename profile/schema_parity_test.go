@@ -61,7 +61,7 @@ func TestSchemaBytesForMatchesPinnedUWS(t *testing.T) {
 			t.Errorf("schema for %s does not name its own discriminator", version)
 		}
 	}
-	if _, err := SchemaBytesFor("uws.browser.1.8"); err == nil {
+	if _, err := SchemaBytesFor("uws.browser.1.10"); err == nil {
 		t.Fatal("unsupported version did not fail explicitly")
 	}
 }
