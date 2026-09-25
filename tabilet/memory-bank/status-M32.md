@@ -1,6 +1,6 @@
 # Status M32 — Browser 1.10 match-count profile support
 
-**State:** Active. M32.1 and M32.2 are complete; M32.3 is in progress.
+**State:** Complete and published at Browsertools `3abe70efc03d9ccb97b8b30e5e86328f60a70c64`.
 
 **Goal.** Add the published UWS Browser 1.10 profile to typed validation,
 round-trip handling and offline draft authoring.
@@ -16,7 +16,7 @@ oldest-sufficient behavior. No live browser action is included.
 | --- | --- | --- |
 | M32.1 Add Browser 1.10 typed profile validation | `[+]` | Pins UWS `v0.0.0-20260925154821-80ee9bfb24a6`; adds Browser 1.10 schema dispatch and typed `matchCount`, `within`, and `visibility` fields. Focused profile tests, profile vet, pinned UWS tests, and `git diff --check` pass. |
 | M32.2 Add round-trip and offline authoring coverage | `[+]` | Explicit match-count outputs select Browser 1.10; valid profiles round-trip through JSON and YAML with typed nonnegative integer bounds. Invalid declarations fail draft validation, evidence candidates do not override explicit output intent, and legacy template/profile selection remains unchanged. Focused draft/profile tests, vet, and `git diff --check` pass. |
-| M32.3 Verify, review and publish | `[~]` | Standalone/workspace tests and vet, the pinned UWS suite, and diff checks pass. Bounded review iteration 1 finds no P1/P2. Publish and verify the exact Browsertools module for Browserdriver M15. |
+| M32.3 Verify, review and publish | `[+]` | Standalone/workspace tests and vet, the pinned UWS suite, and diff checks pass. Bounded review iteration 1 finds no P1/P2. Published and verified as `v0.0.0-20260925161530-3abe70efc03d`; Go module origin hash matches this commit. |
 
 ## Review Gate
 
@@ -34,5 +34,10 @@ oldest-sufficient behavior. No live browser action is included.
 - `(cd ../uws && go test ./...)` passes at the published UWS 1.10 source.
 - Focused draft/profile tests and vet pass; schema parity covers every accepted
   discriminator and unsupported 1.11 rejection.
-- Published Browsertools module resolution and remote-head verification remain
-  the final M32.3 steps.
+- GitHub `main` resolves to `3abe70efc03d9ccb97b8b30e5e86328f60a70c64`.
+  Go resolves `v0.0.0-20260925161530-3abe70efc03d` to the same origin hash,
+  with module sum `h1:MaR46QbewrQNNN453TIws0A3dZeen9QJwiUVBGehZiA=`.
+- Focused tests and vet pass in the downloaded published module using the
+  installed Go 1.26.6 binary with the module cache offline. The first offline
+  invocation selected a toolchain that required checksum lookup while SumDB
+  was disabled; the installed-toolchain rerun passed without changing sources.
