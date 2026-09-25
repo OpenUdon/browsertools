@@ -32,10 +32,10 @@ separate UWS browser-registration profile. Its CLI is primarily a machine-
 facing protocol plus maintainer and offline tooling, not a parallel end-user
 authoring product.
 The pinned UWS 1.11 module validates Browser 1.5 through 1.10. Browser 1.10
-adds typed CSS selector match-count outputs; offline drafts preserve their
-oldest-sufficient profile selection for the features they currently express.
-Browser 1.8 covers explicitly opted-in scalar templates and 1.9 covers escaped
-literal braces.
+adds typed CSS selector match-count outputs, which offline drafts select when
+the author explicitly declares them. Browser 1.8 covers explicitly opted-in
+scalar templates and 1.9 covers escaped literal braces; older drafts keep their
+historical profile versions.
 Browsertools is not the production runtime; runtime replay belongs to Udon and
 Browserdriver. See the [canonical OpenUdon integration
 reference](docs/openudon-integration.md) for the two integration paths and full

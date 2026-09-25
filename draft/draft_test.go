@@ -1,6 +1,7 @@
 package draft
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -91,6 +92,132 @@ func TestBuildChoosesOldestSufficientTemplateVersion(t *testing.T) {
 		if result.Profile.Schema != tc.want {
 			t.Fatalf("got %s, want %s", result.Profile.Schema, tc.want)
 		}
+	}
+}
+
+func TestBuildSelectsAndRoundTripsBrowser110MatchCountOutput(t *testing.T) {
+	for _, versionedTemplates := range []bool{false, true} {
+		t.Run(map[bool]string{false: "count only", true: "count and template"}[versionedTemplates], func(t *testing.T) {
+			spec := baseSpec()
+			spec.VersionedTemplates = versionedTemplates
+			action := spec.Actions["read_status"]
+			if versionedTemplates {
+				action.Parameters = profile.JSONSchema{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}}
+				action.Sequence[0].Navigate = "/status/{{id}}"
+			}
+			action.Outputs = map[string]profile.Output{
+				"card_count": {
+					Type: profile.OutputInteger, Source: profile.OutputCSS, Selector: ".card",
+					FallbackReason: profile.FallbackNoA11yRegion, MatchCount: true,
+					Within: ".results", Visibility: profile.OutputVisibilityRendered,
+					Validation: profile.JSONSchema{
+						"type": "integer", "minimum": json.Number("0"), "maximum": json.Number("24"),
+					},
+				},
+			}
+			spec.Actions["read_status"] = action
+
+			record := baseRecord("read_status")
+			// Candidate evidence cannot override explicit count intent or add an
+			// extracted text/attribute field to the authored output.
+			record.CandidateOutputs = []evidence.CandidateOutput{{
+				Key: "candidate_status", Type: "string", Source: "microdata", Property: "status",
+			}}
+			result, err := Build([]evidence.Record{record}, spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.ReadyForReview() {
+				t.Fatalf("unexpected diagnostics: %+v", result.Diagnostics)
+			}
+			if result.Profile.Schema != profile.SchemaV110 {
+				t.Fatalf("got schema %s, want %s", result.Profile.Schema, profile.SchemaV110)
+			}
+			outputs := result.Profile.Actions["read_status"].Outputs
+			if len(outputs) != 1 {
+				t.Fatalf("candidate evidence changed explicit outputs: %#v", outputs)
+			}
+			count := outputs["card_count"]
+			if count.Type != profile.OutputInteger || count.Source != profile.OutputCSS || !count.MatchCount ||
+				count.Within != ".results" || count.Visibility != profile.OutputVisibilityRendered ||
+				count.Attribute != "" || count.Property != "" {
+				t.Fatalf("count output changed or retained an extraction field: %+v", count)
+			}
+			if minimum, ok := count.Validation["minimum"].(json.Number); !ok || minimum != "0" {
+				t.Fatalf("zero lower bound changed: %#v", count.Validation["minimum"])
+			}
+			if maximum, ok := count.Validation["maximum"].(json.Number); !ok || maximum != "24" {
+				t.Fatalf("multiple-count upper bound changed: %#v", count.Validation["maximum"])
+			}
+
+			data, err := MarshalProfile(result.Profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := profile.ParseJSON(data)
+			if err != nil {
+				t.Fatalf("parse drafted Browser 1.10 profile: %v", err)
+			}
+			if decoded.Schema != profile.SchemaV110 {
+				t.Fatalf("round-trip schema changed: %s", decoded.Schema)
+			}
+			decodedOutput := decoded.Actions["read_status"].Outputs["card_count"]
+			got, marshalErr := json.Marshal(decodedOutput)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			want, marshalErr := json.Marshal(count)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("count output changed on round-trip: got %s, want %s", got, want)
+			}
+			roundTrip, err := MarshalProfile(decoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(data, roundTrip) {
+				t.Fatalf("Browser 1.10 draft bytes changed on round-trip:\n%s\n%s", data, roundTrip)
+			}
+
+			yamlData, err := profile.MarshalYAML(*result.Profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			yamlProfile, err := profile.ParseYAML(yamlData)
+			if err != nil {
+				t.Fatalf("parse drafted Browser 1.10 YAML profile: %v", err)
+			}
+			yamlJSON, err := MarshalProfile(yamlProfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(data, yamlJSON) {
+				t.Fatalf("Browser 1.10 YAML round-trip changed typed profile:\n%s\n%s", data, yamlJSON)
+			}
+		})
+	}
+}
+
+func TestBuildRejectsInvalidBrowser110CountOutput(t *testing.T) {
+	spec := baseSpec()
+	action := spec.Actions["read_status"]
+	action.Outputs = map[string]profile.Output{
+		"invalid_count": {
+			Type: profile.OutputString, Source: profile.OutputCSS, Selector: ".card",
+			FallbackReason: profile.FallbackNoA11yRegion, MatchCount: true,
+			Visibility: profile.OutputVisibilityAll,
+			Validation: profile.JSONSchema{"type": "integer", "minimum": json.Number("0")},
+		},
+	}
+	spec.Actions["read_status"] = action
+	result, err := Build([]evidence.Record{baseRecord("read_status")}, spec)
+	if err == nil || result == nil {
+		t.Fatal("invalid Browser 1.10 count output was accepted")
+	}
+	if result.ReadyForReview() {
+		t.Fatal("invalid Browser 1.10 draft was reported ready for review")
 	}
 }
 

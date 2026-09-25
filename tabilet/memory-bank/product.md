@@ -5,11 +5,12 @@
 Browsertools validates Browser 1.5 through 1.10 against its exact pinned UWS
 1.11 module. Browser 1.10 adds typed CSS match-count declarations with an
 optional unique scope root and explicit visibility semantics. Offline drafting
-continues to select 1.8 only when the author opts into versioned scalar
-templates and 1.9 when those templates use escaped literal braces; count-output
-draft selection remains a separate authoring task. Legacy draft specifications
-retain their historical 1.5 output. Runtime substitution and trusted browser
-execution remain downstream.
+selects 1.10 when an author explicitly declares a count output; those outputs
+are never inferred from evidence. Drafting continues to select 1.8 only when the
+author opts into versioned scalar templates and 1.9 when those templates use
+escaped literal braces. Legacy draft specifications retain their historical
+1.5 output. Runtime substitution and trusted browser execution remain
+downstream.
 
 Browser 1.8 integer parameter defaults retain their exact signed 64-bit value
 through typed parsing, review, and publication artifacts. Browser 1.9 keeps

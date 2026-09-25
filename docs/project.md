@@ -107,11 +107,10 @@ The browser profile itself owns UI action metadata:
 - verification metadata
 
 Browsertools should validate against the UWS browser-profile schema rather than
-forking the contract. Browsertools accepts the pinned `uws.browser.1.5`,
-`uws.browser.1.6`, `uws.browser.1.7`, `uws.browser.1.8`, and
-`uws.browser.1.9` contracts through UWS' public schema
-API. Unsupported future discriminators fail explicitly; the embedded 1.5
-schema exists only for parity checks.
+forking the contract. Browsertools accepts pinned `uws.browser.1.5` through
+`uws.browser.1.10` contracts through UWS' public schema API. Unsupported future
+discriminators fail explicitly; the embedded 1.5 schema exists only for parity
+checks.
 
 ## Relationship To OpenAPI
 
@@ -302,7 +301,9 @@ reviewed popup/frame contexts, while 1.7 permits the typed accessibility output
 conversions used by authenticated authoring. Browser 1.8 adds scalar parameter
 templates in safe action fields; 1.9 adds escaped literal braces and text-sink
 safety checks. Browser 1.10 adds typed CSS match-count outputs with unique
-optional scope roots and explicit `all`/`rendered` visibility. Authentication 1.1 adds contexts,
+optional scope roots and explicit `all`/`rendered` visibility. An explicitly
+declared count output selects Browser 1.10 during offline drafting; count outputs
+are not inferred from evidence. Authentication 1.1 adds contexts,
 context-qualified steps, the navigate object form, and an exact success path;
 registration 1.1 adds typed private input slots and input checkpoints. The
 oldest sufficient version is emitted: a recipe that uses none of those features

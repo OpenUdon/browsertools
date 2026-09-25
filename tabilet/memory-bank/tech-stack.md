@@ -279,7 +279,9 @@ git diff --check
   module. Production validation uses UWS' public browser 1.5-1.10 schema API
   through `profile.SchemaBytesFor`, which accepts only a supported
   discriminator; the embedded browser.1.5 copy is parity-tested on every run
-  alongside every other accepted version.
+  alongside every other accepted version. Offline draft construction selects
+  Browser 1.10 for explicitly authored match-count outputs while preserving
+  the existing opt-in behavior for scalar templates.
 - `gopkg.in/yaml.v3` decodes and encodes profiles, draft specifications, and
   review decisions.
 - `github.com/OpenUdon/uws` supplies the public embedded browser-profile

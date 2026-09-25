@@ -1,6 +1,6 @@
 # Status M32 — Browser 1.10 match-count profile support
 
-**State:** Active. M32.1 is complete; M32.2 is pending.
+**State:** Active. M32.1 and M32.2 are complete; M32.3 is pending.
 
 **Goal.** Add the published UWS Browser 1.10 profile to typed validation,
 round-trip handling and offline draft authoring.
@@ -15,5 +15,5 @@ oldest-sufficient behavior. No live browser action is included.
 | Item | State | Notes |
 | --- | --- | --- |
 | M32.1 Add Browser 1.10 typed profile validation | `[+]` | Pins UWS `v0.0.0-20260925154821-80ee9bfb24a6`; adds Browser 1.10 schema dispatch and typed `matchCount`, `within`, and `visibility` fields. Focused profile tests, profile vet, pinned UWS tests, and `git diff --check` pass. |
-| M32.2 Add round-trip and offline authoring coverage | `[ ]` | Preserve prior profile bytes and reject unsupported or invalid forms without retaining page text or attributes. |
+| M32.2 Add round-trip and offline authoring coverage | `[+]` | Explicit match-count outputs select Browser 1.10; valid profiles round-trip through JSON and YAML with typed nonnegative integer bounds. Invalid declarations fail draft validation, evidence candidates do not override explicit output intent, and legacy template/profile selection remains unchanged. Focused draft/profile tests, vet, and `git diff --check` pass. |
 | M32.3 Verify, review and publish | `[ ]` | Run focused/full tests and vet; complete bounded review and publish for Browserdriver M15. |

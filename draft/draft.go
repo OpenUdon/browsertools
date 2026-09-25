@@ -17,8 +17,9 @@ import (
 
 // Spec is Browsertools-only authoring input. It is not part of the portable
 // browser profile. Every action must explicitly describe its sequence and
-// safety policy; evidence alone never invents those semantics. Existing specs
-// retain Browser 1.5 output unless versionedTemplates is explicitly enabled.
+// safety policy; evidence alone never invents those semantics. Specs without
+// Browser 1.10 count outputs retain Browser 1.5 output unless
+// versionedTemplates is explicitly enabled.
 type Spec struct {
 	Info            profile.Info               `json:"info" yaml:"info"`
 	ObservationKind profile.ObservationKind    `json:"observationKind" yaml:"observationKind"`
@@ -27,7 +28,9 @@ type Spec struct {
 	Actions         map[string]ActionSpec      `json:"actions" yaml:"actions"`
 	Decisions       []evidence.LocatorDecision `json:"decisions,omitempty" yaml:"decisions,omitempty"`
 	// VersionedTemplates opts into Browser 1.8 component-safe template semantics.
-	// Escaped literal braces select Browser 1.9. Absent means legacy 1.5 drafting.
+	// Escaped literal braces select Browser 1.9. A declared match-count output
+	// independently selects Browser 1.10. Absent means legacy 1.5 drafting for
+	// profiles that use none of those features.
 	VersionedTemplates bool `json:"versionedTemplates,omitempty" yaml:"versionedTemplates,omitempty"`
 }
 
@@ -136,9 +139,7 @@ func Build(records []evidence.Record, spec Spec) (*Result, error) {
 		Verification:    profile.Verification{LastVerifiedAt: latest, SuccessfulRuns: 0},
 		Actions:         actions,
 	}
-	if spec.VersionedTemplates {
-		prof.Schema = oldestSufficientTemplateSchema(prof)
-	}
+	prof.Schema = oldestSufficientSchema(prof, spec.VersionedTemplates)
 	result := &Result{
 		Profile:   prof,
 		Decisions: append([]evidence.LocatorDecision(nil), spec.Decisions...),
@@ -164,6 +165,22 @@ func Build(records []evidence.Record, spec Spec) (*Result, error) {
 		return result, fmt.Errorf("draft: %d blocking diagnostic(s); first: %s: %s", len(result.Diagnostics), result.Diagnostics[0].Path, result.Diagnostics[0].Message)
 	}
 	return result, nil
+}
+
+// oldestSufficientSchema selects the oldest browser-profile contract that can
+// express every explicitly authored feature in the draft.
+func oldestSufficientSchema(prof *profile.Profile, versionedTemplates bool) string {
+	for _, action := range prof.Actions {
+		for _, output := range action.Outputs {
+			if output.MatchCount {
+				return profile.SchemaV110
+			}
+		}
+	}
+	if versionedTemplates {
+		return oldestSufficientTemplateSchema(prof)
+	}
+	return profile.SchemaV15
 }
 
 // oldestSufficientTemplateSchema selects the first opt-in template contract

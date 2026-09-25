@@ -657,7 +657,7 @@ Build browsertools in reviewable slices:
 | M29 - Latest Browser Profile Set Adoption | [status-M29.md](status-M29.md) | Complete and published at `5136589`; qualified-runtime adoption remains separate |
 | M30 - UWS 1.11 Browser Profile Adoption | [status-M30.md](status-M30.md) | Complete locally; publication and downstream pin adoption separate |
 | M31 - Browser 1.8 Integer Fidelity | [status-M31.md](status-M31.md) | Complete locally; downstream runtime integration separate |
-| M32 - Browser 1.10 Match-Count Profile Support | [status-M32.md](status-M32.md) | M32.1 complete locally; offline authoring and round-trip work pending |
+| M32 - Browser 1.10 Match-Count Profile Support | [status-M32.md](status-M32.md) | M32.1 and M32.2 complete locally; full verification, review, and publication pending |
 
 ## Candidate Directions
 
@@ -1791,6 +1791,8 @@ or unsupported values without retaining page text or attributes. Add fixtures an
 focused/full tests and vet; review the full milestone diff. No live browser
 action or publication beyond the reviewed Browsertools source is in scope.
 
-Status: M32.1 validates the published schema and typed count declarations; M32.2
-adds offline draft selection and round-trip coverage. The exact UWS dependency
-is `v0.0.0-20260925154821-80ee9bfb24a6`.
+Status: M32.1 validates the published schema and typed count declarations;
+M32.2 selects Browser 1.10 for explicit count outputs and passes JSON/YAML
+round-trip coverage. Full verification, bounded review, and publication remain
+pending in M32.3. The exact UWS dependency is
+`v0.0.0-20260925154821-80ee9bfb24a6`.

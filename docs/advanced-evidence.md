@@ -135,8 +135,8 @@ without changing `browser.1.5`:
 Any future portable change belongs in a reviewed UWS browser schema and
 version note. UWS has since published `browser.1.6` contexts and `browser.1.7`
 typed accessibility outputs; Browser 1.8 adds scalar templates and 1.9 adds
-escaped literal braces and text-sink checks. Browsertools accepts 1.5 through
-1.9.
+escaped literal braces and text-sink checks. Browser 1.10 adds typed CSS
+match-count outputs. Browsertools accepts 1.5 through 1.10.
 Browsertools does not add ad hoc keys to a profile of any version.
 
 ## Verification
