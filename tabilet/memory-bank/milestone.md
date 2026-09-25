@@ -597,6 +597,7 @@ Build browsertools in reviewable slices:
     registration profile set.
 52. `M30`: adopt UWS 1.11 and Browser 1.8/1.9 in browser-profile validation and offline authoring.
 53. `M31`: preserve exact Browser 1.8 integer defaults through typed profiles and offline drafts.
+54. `M32`: add typed Browser 1.10 selector match-count support to validation and offline authoring.
 
 ## Status Files
 
@@ -656,6 +657,7 @@ Build browsertools in reviewable slices:
 | M29 - Latest Browser Profile Set Adoption | [status-M29.md](status-M29.md) | Complete and published at `5136589`; qualified-runtime adoption remains separate |
 | M30 - UWS 1.11 Browser Profile Adoption | [status-M30.md](status-M30.md) | Complete locally; publication and downstream pin adoption separate |
 | M31 - Browser 1.8 Integer Fidelity | [status-M31.md](status-M31.md) | Complete locally; downstream runtime integration separate |
+| M32 - Browser 1.10 Match-Count Profile Support | [status-M32.md](status-M32.md) | M32.1 complete locally; offline authoring and round-trip work pending |
 
 ## Candidate Directions
 
@@ -1757,6 +1759,15 @@ Acceptance: the standalone pinned module accepts and round-trips 1.8/1.9, reject
 Status: complete locally, bounded review iteration 2 passed with no open P1/P2;
 publication and downstream pin adoption remain separate. See [status-M30.md](status-M30.md).
 
+### M32 Browser 1.10 Match-Count Profile Support
+
+Add the separately published UWS Browser 1.10 selector match-count profile to
+Browsertools typed validation and offline draft construction. Preserve Browser
+1.9 output and prior profile bytes. Tests must cover zero, one, multiple, invalid
+and missing count forms, with no page text or attributes in outputs. The exact
+UWS M05 commit is a prerequisite; runtime execution remains downstream. See
+[status-M32.md](status-M32.md).
+
 ### M31 Browser 1.8 Integer Fidelity
 
 **Goal.** Preserve signed 64-bit Browser 1.8 integer defaults through typed parsing, value conversion, cloning, and offline draft construction, so downstream runtime parameter preparation receives the reviewed exact value.
@@ -1767,3 +1778,19 @@ Acceptance: JSON and YAML parse, typed clone, generic value, review and publicat
 
 Status: complete locally, bounded review iteration 2 passed with no open P1/P2;
 downstream runtime integration remains separate. See [status-M31.md](status-M31.md).
+
+### M32 Browser 1.10 Match-Count Profile Support
+
+**Goal.** Add Browser 1.10 to typed profile validation, round-trip handling, and
+offline draft authoring using the published UWS M05 profile definition. Preserve
+Browser 1.9 and older bytes and oldest-sufficient output behavior.
+
+**Acceptance.** Validate and round-trip count action/output shapes, preserve
+zero and multiple-match results as typed nonnegative integers, and reject invalid
+or unsupported values without retaining page text or attributes. Add fixtures and
+focused/full tests and vet; review the full milestone diff. No live browser
+action or publication beyond the reviewed Browsertools source is in scope.
+
+Status: M32.1 validates the published schema and typed count declarations; M32.2
+adds offline draft selection and round-trip coverage. The exact UWS dependency
+is `v0.0.0-20260925154821-80ee9bfb24a6`.

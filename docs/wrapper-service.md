@@ -30,7 +30,7 @@ The browser-profile describes *how the wrapper service interacts with the web UI
 which actions to perform, which a11y locators to use, what to extract, and what
 side-effect/confirmation policy applies. It is the result of a human-reviewed
 evidence collection process and is validated against the pinned UWS
-browser-profile schema for its own version, 1.5 through 1.9.
+browser-profile schema for its own version, 1.5 through 1.10.
 
 ### wrapper OpenAPI
 

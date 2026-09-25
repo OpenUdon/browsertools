@@ -274,7 +274,7 @@ func TestSupportedProfileVersionsUsePinnedSchemasAndFutureVersionFails(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	value["profile"] = "uws.browser.1.10"
+	value["profile"] = "uws.browser.1.11"
 	if err := Validate(value); err == nil || !strings.Contains(err.Error(), "unsupported browser profile discriminator") {
 		t.Fatalf("future version did not fail explicitly: %v", err)
 	}
@@ -329,6 +329,118 @@ func TestBrowser19RejectsUnsafeTextAndTemplatePlacement(t *testing.T) {
 	p.Actions["read_status"] = action
 	if err := ValidateTyped(p); err == nil {
 		t.Fatal("bidi control accepted in confirmation text")
+	}
+}
+
+func TestBrowser110MatchCountOutputValidatesAndDecodesTypedFields(t *testing.T) {
+	p, err := LoadFile(filepath.Join("testdata", "valid_minimal.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Schema = SchemaV110
+	action := p.Actions["read_status"]
+	action.Outputs = map[string]Output{
+		"visible_cards": {
+			Type: OutputInteger, Source: OutputCSS, Selector: ".card", MatchCount: true,
+			Within: "[data-testid='results']", Visibility: OutputVisibilityRendered,
+			FallbackReason: FallbackNoA11yRegion,
+			Validation:     JSONSchema{"type": "integer", "minimum": json.Number("0"), "maximum": json.Number("9007199254740991")},
+		},
+		"all_cards": {
+			Type: OutputInteger, Source: OutputCSS, Selector: ".card", MatchCount: true,
+			Visibility: OutputVisibilityAll, FallbackReason: FallbackNoA11yRegion,
+			Validation: JSONSchema{"type": "integer", "minimum": json.Number("0")},
+		},
+	}
+	p.Actions["read_status"] = action
+
+	value, err := p.Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(value); err != nil {
+		t.Fatalf("valid Browser 1.10 count declarations rejected: %v", err)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := ParseJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decoded.Actions["read_status"].Outputs["visible_cards"]
+	if !got.MatchCount || got.Within != "[data-testid='results']" || got.Visibility != OutputVisibilityRendered {
+		t.Fatalf("Browser 1.10 count fields did not decode: %+v", got)
+	}
+	if got.Type != OutputInteger || got.Validation["minimum"] != json.Number("0") {
+		t.Fatalf("Browser 1.10 count type or lower bound changed: %+v", got)
+	}
+}
+
+func TestBrowser110MatchCountOutputRejectsInvalidDeclarations(t *testing.T) {
+	tests := map[string]func(*Output){
+		"not a count":          func(output *Output) { output.MatchCount = false },
+		"wrong value type":     func(output *Output) { output.Type = OutputNumber },
+		"wrong source":         func(output *Output) { output.Source = OutputMicrodata },
+		"missing visibility":   func(output *Output) { output.Visibility = "" },
+		"unknown visibility":   func(output *Output) { output.Visibility = "viewport" },
+		"attribute extraction": func(output *Output) { output.Attribute = "href" },
+		"missing lower bound":  func(output *Output) { output.Validation = JSONSchema{"type": "integer"} },
+		"negative lower bound": func(output *Output) { output.Validation = JSONSchema{"type": "integer", "minimum": json.Number("-1")} },
+		"unsafe upper bound": func(output *Output) {
+			output.Validation = JSONSchema{"type": "integer", "minimum": json.Number("0"), "maximum": json.Number("9007199254740992")}
+		},
+		"empty selector": func(output *Output) { output.Selector = "" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			p, err := LoadFile(filepath.Join("testdata", "valid_minimal.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Schema = SchemaV110
+			action := p.Actions["read_status"]
+			output := Output{
+				Type: OutputInteger, Source: OutputCSS, Selector: ".card", MatchCount: true,
+				Visibility: OutputVisibilityAll, FallbackReason: FallbackNoA11yRegion,
+				Validation: JSONSchema{"type": "integer", "minimum": json.Number("0")},
+			}
+			mutate(&output)
+			action.Outputs = map[string]Output{"count": output}
+			p.Actions["read_status"] = action
+			value, err := p.Value()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Validate(value); err == nil {
+				t.Fatal("invalid Browser 1.10 count declaration unexpectedly validated")
+			}
+		})
+	}
+}
+
+func TestBrowser110RejectsExplicitEmptyScopeSelector(t *testing.T) {
+	p, err := LoadFile(filepath.Join("testdata", "valid_minimal.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Schema = SchemaV110
+	action := p.Actions["read_status"]
+	action.Outputs = map[string]Output{"count": {
+		Type: OutputInteger, Source: OutputCSS, Selector: ".card", MatchCount: true,
+		Visibility: OutputVisibilityAll, FallbackReason: FallbackNoA11yRegion,
+		Validation: JSONSchema{"type": "integer", "minimum": json.Number("0")},
+	}}
+	p.Actions["read_status"] = action
+	value, err := p.Value()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs := value["actions"].(map[string]any)["read_status"].(map[string]any)["outputs"].(map[string]any)
+	outputs["count"].(map[string]any)["within"] = ""
+	if err := Validate(value); err == nil {
+		t.Fatal("explicit empty scope selector unexpectedly validated")
 	}
 }
 
@@ -424,7 +536,7 @@ func TestDurationAddToCalendarComponents(t *testing.T) {
 // TestSchemaConstantsPinWireDiscriminators keeps the exported constants bound
 // to the exact published UWS discriminator strings.
 func TestSchemaConstantsPinWireDiscriminators(t *testing.T) {
-	if SchemaV15 != "uws.browser.1.5" || SchemaV16 != "uws.browser.1.6" || SchemaV17 != "uws.browser.1.7" || SchemaV18 != "uws.browser.1.8" || SchemaV19 != "uws.browser.1.9" {
+	if SchemaV15 != "uws.browser.1.5" || SchemaV16 != "uws.browser.1.6" || SchemaV17 != "uws.browser.1.7" || SchemaV18 != "uws.browser.1.8" || SchemaV19 != "uws.browser.1.9" || SchemaV110 != "uws.browser.1.10" {
 		t.Fatal("schema constants drifted")
 	}
 	supported := SupportedSchemas()
@@ -432,7 +544,7 @@ func TestSchemaConstantsPinWireDiscriminators(t *testing.T) {
 	if SupportedSchemas()[0] != SchemaV15 {
 		t.Fatal("SupportedSchemas returned a shared slice")
 	}
-	if SupportsSchema("uws.browser.1.10") || !SupportsSchema(SchemaV19) {
+	if SupportsSchema("uws.browser.1.11") || !SupportsSchema(SchemaV19) || !SupportsSchema(SchemaV110) {
 		t.Fatal("SupportsSchema does not match the accepted set")
 	}
 }

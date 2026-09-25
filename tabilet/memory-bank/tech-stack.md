@@ -276,7 +276,7 @@ git diff --check
 ## Go Dependencies
 
 - `github.com/santhosh-tekuri/jsonschema/v6` remains aligned with the pinned UWS
-  module. Production validation uses UWS' public browser 1.5-1.9 schema API
+  module. Production validation uses UWS' public browser 1.5-1.10 schema API
   through `profile.SchemaBytesFor`, which accepts only a supported
   discriminator; the embedded browser.1.5 copy is parity-tested on every run
   alongside every other accepted version.
@@ -285,8 +285,9 @@ git diff --check
 - `github.com/OpenUdon/uws` supplies the public embedded browser-profile
   validator, additive browser-authentication and browser-registration wire
   types/validation, UWS document semantics used at publication boundaries, and
-  the UWS 1.9.1 advisory content-trust resolver interfaces. M28 pins
-  `v0.0.0-20260826233246-9e676eaa469e` exactly; Browsertools' resolver is an
+  the UWS 1.9.1 advisory content-trust resolver interfaces. M32 pins
+  `v0.0.0-20260925154821-80ee9bfb24a6` exactly for Browser 1.10 profile
+  validation; Browsertools' resolver is an
   explicit caller-selected adapter and is not part of ordinary profile
   validation or execution.
 - `github.com/OpenUdon/evidence/artifact` supplies product-neutral SHA-256

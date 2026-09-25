@@ -266,7 +266,7 @@ website / local fixture / saved evidence
   -> UWS/OpenUdon/runtime consumers
 ```
 
-The browser-profile contracts live in UWS browser 1.5 through 1.9.
+The browser-profile contracts live in UWS browser 1.5 through 1.10.
 Browsertools validates every supported discriminator through the pinned UWS
 schema API, exposes the accepted set and its per-version schema bytes through
 `profile.SupportedSchemas` and `profile.SchemaBytesFor`, rejects future
@@ -669,7 +669,7 @@ format tokens before any I/O or mutation.
 ## Validation Strategy
 
 - Always validate generated profile documents against the pinned UWS public
-  browser-profile schema API for discriminators 1.5 through 1.9.
+  browser-profile schema API for discriminators 1.5 through 1.10.
 - Validate authentication recipes through UWS' additive authentication schema,
   then apply Browsertools' secret/PII, lifecycle, and deterministic review
   gates.

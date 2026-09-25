@@ -296,12 +296,13 @@ Browsertools must not commit:
 
 ## Supported Browser Contracts
 
-Browsertools validates browser profiles 1.5 through 1.9, authentication
+Browsertools validates browser profiles 1.5 through 1.10, authentication
 recipes 1.0 and 1.1, and registration recipes 1.0 and 1.1. Browser 1.6 adds
 reviewed popup/frame contexts, while 1.7 permits the typed accessibility output
 conversions used by authenticated authoring. Browser 1.8 adds scalar parameter
 templates in safe action fields; 1.9 adds escaped literal braces and text-sink
-safety checks. Authentication 1.1 adds contexts,
+safety checks. Browser 1.10 adds typed CSS match-count outputs with unique
+optional scope roots and explicit `all`/`rendered` visibility. Authentication 1.1 adds contexts,
 context-qualified steps, the navigate object form, and an exact success path;
 registration 1.1 adds typed private input slots and input checkpoints. The
 oldest sufficient version is emitted: a recipe that uses none of those features

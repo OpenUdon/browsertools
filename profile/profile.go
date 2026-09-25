@@ -1,10 +1,11 @@
 // Package profile loads, models, and validates UWS browser-profile documents.
 //
-// The browser.1.5 schema and the additive browser.1.6 through browser.1.9 schemas
+// The browser.1.5 schema and the additive browser.1.6 through browser.1.10 schemas
 // are owned by github.com/OpenUdon/uws. This package reads each accepted
 // version from that pinned module, embeds a parity-checked 1.5 copy, and
-// provides a complete, engine-neutral Go view of the portable document. It deliberately contains no browser runtime,
-// session, credential, or Playwright behavior.
+// provides a complete, engine-neutral Go view of the portable document. It
+// deliberately contains no browser runtime, session, credential, or Playwright
+// behavior.
 package profile
 
 import (
@@ -30,7 +31,7 @@ import (
 // validation declarations.
 type JSONSchema map[string]any
 
-// Profile is the complete typed view of a uws.browser.1.5 through 1.9
+// Profile is the complete typed view of a uws.browser.1.5 through 1.10
 // document.
 type Profile struct {
 	Schema          string             `json:"profile" yaml:"profile"`
@@ -289,18 +290,30 @@ const (
 	OutputCSS       OutputSource = "css"
 )
 
+// OutputVisibility selects which CSS selector matches a Browser 1.10 count
+// output includes.
+type OutputVisibility string
+
+const (
+	OutputVisibilityAll      OutputVisibility = "all"
+	OutputVisibilityRendered OutputVisibility = "rendered"
+)
+
 // Output is a typed output extraction declaration.
 type Output struct {
-	Type           OutputType     `json:"type" yaml:"type"`
-	Source         OutputSource   `json:"source" yaml:"source"`
-	Locator        *Locator       `json:"locator,omitempty" yaml:"locator,omitempty"`
-	Selector       string         `json:"selector,omitempty" yaml:"selector,omitempty"`
-	FallbackReason FallbackReason `json:"fallbackReason,omitempty" yaml:"fallbackReason,omitempty"`
-	Validation     JSONSchema     `json:"validation,omitempty" yaml:"validation,omitempty"`
-	Presence       *bool          `json:"presence,omitempty" yaml:"presence,omitempty"`
-	Property       string         `json:"property,omitempty" yaml:"property,omitempty"`
-	Attribute      string         `json:"attribute,omitempty" yaml:"attribute,omitempty"`
-	Context        string         `json:"context,omitempty" yaml:"context,omitempty"`
+	Type           OutputType       `json:"type" yaml:"type"`
+	Source         OutputSource     `json:"source" yaml:"source"`
+	Locator        *Locator         `json:"locator,omitempty" yaml:"locator,omitempty"`
+	Selector       string           `json:"selector,omitempty" yaml:"selector,omitempty"`
+	FallbackReason FallbackReason   `json:"fallbackReason,omitempty" yaml:"fallbackReason,omitempty"`
+	Validation     JSONSchema       `json:"validation,omitempty" yaml:"validation,omitempty"`
+	Presence       *bool            `json:"presence,omitempty" yaml:"presence,omitempty"`
+	Property       string           `json:"property,omitempty" yaml:"property,omitempty"`
+	Attribute      string           `json:"attribute,omitempty" yaml:"attribute,omitempty"`
+	Context        string           `json:"context,omitempty" yaml:"context,omitempty"`
+	MatchCount     bool             `json:"matchCount,omitempty" yaml:"matchCount,omitempty"`
+	Within         string           `json:"within,omitempty" yaml:"within,omitempty"`
+	Visibility     OutputVisibility `json:"visibility,omitempty" yaml:"visibility,omitempty"`
 }
 
 // MarshalJSON preserves the distinction between an absent validation schema
@@ -308,21 +321,25 @@ type Output struct {
 // schema and must remain {} on the wire.
 func (o Output) MarshalJSON() ([]byte, error) {
 	type outputWire struct {
-		Type           OutputType     `json:"type"`
-		Source         OutputSource   `json:"source"`
-		Locator        *Locator       `json:"locator,omitempty"`
-		Selector       string         `json:"selector,omitempty"`
-		FallbackReason FallbackReason `json:"fallbackReason,omitempty"`
-		Validation     *JSONSchema    `json:"validation,omitempty"`
-		Presence       *bool          `json:"presence,omitempty"`
-		Property       string         `json:"property,omitempty"`
-		Attribute      string         `json:"attribute,omitempty"`
-		Context        string         `json:"context,omitempty"`
+		Type           OutputType       `json:"type"`
+		Source         OutputSource     `json:"source"`
+		Locator        *Locator         `json:"locator,omitempty"`
+		Selector       string           `json:"selector,omitempty"`
+		FallbackReason FallbackReason   `json:"fallbackReason,omitempty"`
+		Validation     *JSONSchema      `json:"validation,omitempty"`
+		Presence       *bool            `json:"presence,omitempty"`
+		Property       string           `json:"property,omitempty"`
+		Attribute      string           `json:"attribute,omitempty"`
+		Context        string           `json:"context,omitempty"`
+		MatchCount     bool             `json:"matchCount,omitempty"`
+		Within         string           `json:"within,omitempty"`
+		Visibility     OutputVisibility `json:"visibility,omitempty"`
 	}
 	value := outputWire{
 		Type: o.Type, Source: o.Source, Locator: o.Locator, Selector: o.Selector,
 		FallbackReason: o.FallbackReason, Presence: o.Presence, Property: o.Property,
-		Attribute: o.Attribute, Context: o.Context,
+		Attribute: o.Attribute, Context: o.Context, MatchCount: o.MatchCount,
+		Within: o.Within, Visibility: o.Visibility,
 	}
 	if o.Validation != nil {
 		validation := o.Validation

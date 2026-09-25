@@ -21,17 +21,18 @@ const schemaResource = "schema/browser.1.5.json"
 // the oldest sufficient version; validation dispatches every accepted version
 // to the pinned UWS schema for that exact discriminator.
 const (
-	SchemaV15 = "uws.browser.1.5"
-	SchemaV16 = "uws.browser.1.6"
-	SchemaV17 = "uws.browser.1.7"
-	SchemaV18 = "uws.browser.1.8"
-	SchemaV19 = "uws.browser.1.9"
+	SchemaV15  = "uws.browser.1.5"
+	SchemaV16  = "uws.browser.1.6"
+	SchemaV17  = "uws.browser.1.7"
+	SchemaV18  = "uws.browser.1.8"
+	SchemaV19  = "uws.browser.1.9"
+	SchemaV110 = "uws.browser.1.10"
 )
 
 // SupportedSchemas returns a fresh copy of the accepted schema discriminators
 // in ascending version order.
 func SupportedSchemas() []string {
-	return []string{SchemaV15, SchemaV16, SchemaV17, SchemaV18, SchemaV19}
+	return []string{SchemaV15, SchemaV16, SchemaV17, SchemaV18, SchemaV19, SchemaV110}
 }
 
 // SupportsSchema reports whether a schema discriminator is accepted.
@@ -144,7 +145,7 @@ func Check(value any) []Issue {
 				continue
 			}
 			target := step.Navigate
-			if p.Schema == SchemaV19 {
+			if p.Schema == SchemaV19 || p.Schema == SchemaV110 {
 				// UWS has already checked brace escapes and their placement.
 				// For the local origin check, resolve them as URI octets.
 				target = strings.ReplaceAll(strings.ReplaceAll(target, "{{{{", "%7B"), "}}}}", "%7D")

@@ -57,7 +57,8 @@ delegated, and only during the run.
 ## Boundary
 
 - `../uws` owns the public UWS schema, Go model, validator, and the
-  `versions/browser.1.{5,6,7}`, `versions/browser-authentication.1.{0,1}`, and
+  `versions/browser.1.5` through `versions/browser.1.10`,
+  `versions/browser-authentication.1.{0,1}`, and
   `versions/browser-registration.1.{0,1}` profile contracts.
 - `../browsertools` owns browser-profile tooling: explicitly acquiring or
   importing UI evidence, adapting Playwright / llm-scraper / Crawl4AI /
@@ -137,7 +138,7 @@ When changing OpenUdon-facing exports, run the consumer checks when available:
   of the portable profile unless represented through documented adapter
   evidence.
 - Validate generated profiles through the pinned UWS schema API for the
-  accepted set (browser 1.5-1.9, authentication 1.0-1.1, registration
+  accepted set (browser 1.5-1.10, authentication 1.0-1.1, registration
   1.0-1.1), and emit the oldest sufficient version, before treating them as
   review candidates.
 - Fail closed on ambiguous UI targets, expired evidence, origin violations, or
