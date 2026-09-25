@@ -657,7 +657,7 @@ Build browsertools in reviewable slices:
 | M29 - Latest Browser Profile Set Adoption | [status-M29.md](status-M29.md) | Complete and published at `5136589`; qualified-runtime adoption remains separate |
 | M30 - UWS 1.11 Browser Profile Adoption | [status-M30.md](status-M30.md) | Complete locally; publication and downstream pin adoption separate |
 | M31 - Browser 1.8 Integer Fidelity | [status-M31.md](status-M31.md) | Complete locally; downstream runtime integration separate |
-| M32 - Browser 1.10 Match-Count Profile Support | [status-M32.md](status-M32.md) | M32.1 and M32.2 complete locally; full verification, review, and publication pending |
+| M32 - Browser 1.10 Match-Count Profile Support | [status-M32.md](status-M32.md) | Full verification and bounded review pass; publication verification in progress |
 
 ## Candidate Directions
 
