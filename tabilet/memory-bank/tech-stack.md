@@ -630,3 +630,12 @@ native stages; all 1,119 identities are absent without force. Clean exact
 published candidate revisions/pins require a scoped exception to the confirmed no-commit
 policy before a fresh full run. Publication/adoption and new live authority remain
 separate. The old bridge limitations do not describe the selected implementation.
+
+
+## Received consumer TOTP/capture guidance
+
+The [consumer handoff](../../docs/consumer-totp-capture-handoff.md) records
+the existing authored TOTP slot contract, display/clipboard separation and
+value-free failure/cleanup evidence. The private consumer qualified the
+unchanged producer and completed its own TOTP count acceptance. No Browsertools
+code, profile schema, source pin or live acquisition is selected by this receipt.
