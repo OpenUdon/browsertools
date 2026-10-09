@@ -1913,3 +1913,10 @@ substitution requirements for ordinary published adoption remain in force.
 **Parallel-safe.** yes. Eligible only under the explicit Stage 12 lease opt-in, with no dependency path or bidirectional read/write conflict against any running lease.
 At most one live milestone per package. All tests use private lease ports,
 disposable stores/caches/browser profiles and unique output directories.
+
+## Stage 12 frozen consumer input checkpoint — 2026-10-09
+
+M33's status records exact Kinet:M51.3 contract/fixture input at `589b844628b358167fe0a0137eded11c1028875c`.
+M51 whole acceptance, producer qualification and independently verified
+publication remain required at their existing gates. No row or review starts;
+local-only source work grants no publication, browser or live authority.
