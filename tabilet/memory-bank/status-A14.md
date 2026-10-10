@@ -1,5 +1,11 @@
 # A14 — Private authenticated worker diagnostics
 
+**Ledger disposition:** Closed historical under the recorded consumer-owned
+W13.1c/.d/.f/.m/.q/.u acceptance and adoption. Seven task markers are terminal.
+This is a factual pointer/ownership correction, not new engineering acceptance,
+a restarted milestone review, fresh runtime qualification or live authority.
+Recorded review counts, pins, failed attempts and evidence below are preserved.
+
 ## W13.1q qualified and adopted cache-compatible authoring
 
 Published Browsertools `bbcb6ae76b5a` and OpenUdon `d96862d3797f`, W8M frozen
@@ -151,8 +157,8 @@ the consumer; this generic diagnostic change grants no browser authority.
 
 | Item | State | Notes |
 | --- | --- | --- |
-| A14.1 | `[~]` | Diagnostic implementation, focused/owner tests, race checks and affected authentication smoke pass. Public protocols/readers are preserved. Local closure awaited A14.3; W13.1c subsequently qualified the v1 repair and W13.1f qualifies its v2 diagnostic successor. |
-| A14.2 | `[~]` | Prior source publication, W13.1c full qualification and W13.1d exact runtime adoption completed. Historical consumed capture failures remain unchanged. |
+| A14.1 | `[+]` | Diagnostic implementation, focused/owner tests, race checks and affected authentication smoke pass. Public protocols/readers are preserved. Local closure awaited A14.3; W13.1c subsequently qualified the v1 repair and W13.1f qualifies its v2 diagnostic successor. |
+| A14.2 | `[+]` | Prior source publication, W13.1c full qualification and W13.1d exact runtime adoption completed. Historical consumed capture failures remain unchanged. |
 
 Private worker schema: `browsertools.author-diagnostic.v1`. Private application
 schema: `openudon.capture-diagnostic.v1`. Closed categories omit errors, URLs,
@@ -178,7 +184,7 @@ cannot establish request prevention. Preserve the failed control and cleanup.
 
 | Item | State | Notes |
 | --- | --- | --- |
-| A14.3 | `[~]` | Browser-wide redirect repair and exact OpenUdon dependency are published under the owner-approved exception. All 19 controls, owner checks and authentication smoke pass; W13.1c subsequently completed fresh clean-source scenario validation and full qualification before W13.1d adoption. Earlier failed prerequisite evidence is preserved. |
+| A14.3 | `[+]` | Browser-wide redirect repair and exact OpenUdon dependency are published under the owner-approved exception. All 19 controls, owner checks and authentication smoke pass; W13.1c subsequently completed fresh clean-source scenario validation and full qualification before W13.1d adoption. Earlier failed prerequisite evidence is preserved. |
 
 
 Implementation review 2: diagnostic findings are resolved, with no additional
@@ -212,17 +218,17 @@ adoption or live attempt occurred. The original live cause remains unresolved.
 
 | Item | State | Notes |
 | --- | --- | --- |
-| A14.4 | `[~]` | W13.1e private v2 metadata, strict reader/writer and first-cause propagation locally verified. Full tests/vet, containment controls, final authentication smoke and bounded review 3 pass. Source committed at `7409ac2`; W13.1f subsequently publishes, fully qualifies and adopts its exact bytes. No live authority or origin expansion. |
+| A14.4 | `[+]` | W13.1e private v2 metadata, strict reader/writer and first-cause propagation locally verified. Full tests/vet, containment controls, final authentication smoke and bounded review 3 pass. Source committed at `7409ac2`; W13.1f subsequently publishes, fully qualifies and adopts its exact bytes. No live authority or origin expansion. |
 
 | Item | State | Notes |
 | --- | --- | --- |
-| A14.5 | `[~]` | Immutable optional-script denial implemented; full tests/vet, seven-case fresh browser containment, independent unforced cleanup and W13.1l review 1 pass. Exact published dependency integration, affected stage and full qualification remain W13 follow-up; no live acceptance. |
+| A14.5 | `[+]` | Immutable optional-script denial implemented; full tests/vet, seven-case fresh browser containment, independent unforced cleanup and W13.1l review 1 pass. Existing W13.1m records published dependency integration, affected/full qualification and exact-byte adoption; no new live acceptance. |
 
 ## Cache-compatible authoring follow-up
 
 | Item | State | Notes |
 | --- | --- | --- |
-| A14.6 | `[~]` | W13.1p coordinated local implementation and focused checks. Cache-disabled ephemeral authoring, unchanged request/byte admission and frame/popup regression coverage. Scope publication/qualification/adoption separately under W13.1q; historical failures and unrelated edits preserved. |
+| A14.6 | `[+]` | W13.1p coordinated local implementation and focused checks. Cache-disabled ephemeral authoring, unchanged request/byte admission and frame/popup regression coverage. The subsequent W13.1q publication/qualification/adoption is recorded complete above; historical failures and unrelated edits preserved. |
 
 Local W13.1p verification passes: eight cache regressions, five route/error
 controls, the combined 35-browser containment matrix, full owner tests/vet,
@@ -297,3 +303,25 @@ The owner-published v2 planning relocation is preserved. This closeout updates
 the relocated ledger without changing or qualifying those later source heads,
 without repinning W8M, and without absorbing Tofu's migration deletions or other
 owner work. The tested coordination snapshot remains 6bcbb8694719.
+
+## Historical task-marker reconciliation — 2026-10-10
+
+A14.1/.3 lineage is the recorded W13.1c qualification/W13.1d adoption; A14.2
+already recorded completed publication/qualification/adoption. A14.4 is the
+recorded W13.1f exact-byte adoption; A14.5 is W13.1m and A14.6 is W13.1q.
+A14.7 already had a terminal marker under W13.1u. These accepted consumer
+records do not authorize another browser check, old grant, runtime selection or
+qualification. The Stage12 coordinator owns current ledger sequencing; the
+historical owners retain their accepted evidence, with no active A14 lease.
+
+Original stale rows are preserved here; their earlier pending wording applies
+to the recorded preparation phase, not a new executable task.
+
+``````markdown
+| A14.1 | `[~]` | Diagnostic implementation, focused/owner tests, race checks and affected authentication smoke pass. Public protocols/readers are preserved. Local closure awaited A14.3; W13.1c subsequently qualified the v1 repair and W13.1f qualifies its v2 diagnostic successor. |
+| A14.2 | `[~]` | Prior source publication, W13.1c full qualification and W13.1d exact runtime adoption completed. Historical consumed capture failures remain unchanged. |
+| A14.3 | `[~]` | Browser-wide redirect repair and exact OpenUdon dependency are published under the owner-approved exception. All 19 controls, owner checks and authentication smoke pass; W13.1c subsequently completed fresh clean-source scenario validation and full qualification before W13.1d adoption. Earlier failed prerequisite evidence is preserved. |
+| A14.4 | `[~]` | W13.1e private v2 metadata, strict reader/writer and first-cause propagation locally verified. Full tests/vet, containment controls, final authentication smoke and bounded review 3 pass. Source committed at `7409ac2`; W13.1f subsequently publishes, fully qualifies and adopts its exact bytes. No live authority or origin expansion. |
+| A14.5 | `[~]` | Immutable optional-script denial implemented; full tests/vet, seven-case fresh browser containment, independent unforced cleanup and W13.1l review 1 pass. Exact published dependency integration, affected stage and full qualification remain W13 follow-up; no live acceptance. |
+| A14.6 | `[~]` | W13.1p coordinated local implementation and focused checks. Cache-disabled ephemeral authoring, unchanged request/byte admission and frame/popup regression coverage. Scope publication/qualification/adoption separately under W13.1q; historical failures and unrelated edits preserved. |
+``````

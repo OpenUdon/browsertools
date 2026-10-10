@@ -1,5 +1,16 @@
 # Milestones
 
+## Historical ledger pointers reconciled — 2026-10-10
+
+A14 is indexed as closed historical under its existing consumer-owned accepted
+W13 records; its stale A14.1–.6 markers are corrected without a new engineering
+acceptance or review. A06.12 source publication is independently confirmed in
+origin/main and its marker is terminal. Original records, review counters,
+failed attempts, source/runtime pins and Stage12 scope remain intact.
+The Stage12 coordinator owns current sequencing; no legacy task is replayed.
+M33 remains pending and still requires its own implementation/verification/
+review and exact approved publication. Audit remains disabled.
+
 ## Stage 12 approved planning — 2026-10-09
 
 **Approved reconciliation.** Stage 12 planning review, 2026-10-09; source priority
@@ -279,6 +290,10 @@ unchanged. No runtime adoption or new target contact is authorized.
 Earlier preparation state:
 
 ## A14 — Private authenticated worker diagnostics
+
+The paragraphs below retain earlier preparation checkpoints. Current terminal
+task pointers and existing consumer-owned acceptance lineage are in
+[status-A14.md](status-A14.md); this reconciliation adds no new qualification.
 
 A14 coordinates the W13.1c diagnostic and redirect candidate. The browser-wide Chromium Fetch guard passes all 19 containment controls, the existing login-redirect fixture, native owner tests/vet and a fresh authentication smoke. Full qualification failed the clean-sibling prerequisite after seven native stages; cleanup of all 1,119 identities passes. Integration acceptance awaits authorized source commits/publication and matching pins and a fresh full run. The adopted runtime and consumed live evidence remain unchanged.
 
@@ -715,6 +730,7 @@ Build browsertools in reviewable slices:
 | A11 - Registration Route-Abort Containment Correction | [status-A11.md](status-A11.md) | Complete and published at `ce06b13bfef8d1776c3aa019322619c90dacbbd2` |
 | A12 - Generic Registration 1.1 Producer | [status-A12.md](status-A12.md) | Complete and published at `ec0b9e9d6ca1`; W8M W15 qualification and exact tested-runtime adoption pass |
 | A13 - Reviewed verification authoring | [status-A13.md](status-A13.md) | Implementation review complete; `995749d`; downstream qualification pending |
+| A14 - Private authenticated worker diagnostics | [status-A14.md](status-A14.md) | Closed historical under recorded W13.1c/.d/.f/.m/.q/.u consumer acceptance/adoption; task pointers reconciled, reviews unchanged |
 | M29 - Latest Browser Profile Set Adoption | [status-M29.md](status-M29.md) | Complete and published at `5136589`; qualified-runtime adoption remains separate |
 | M30 - UWS 1.11 Browser Profile Adoption | [status-M30.md](status-M30.md) | Complete locally; publication and downstream pin adoption separate |
 | M31 - Browser 1.8 Integer Fidelity | [status-M31.md](status-M31.md) | Complete locally; downstream runtime integration separate |
