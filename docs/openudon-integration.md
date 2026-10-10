@@ -1,4 +1,4 @@
-# OpenUdon Integration
+# Host integration and retained OpenUdon relationship
 
 Registration 1.2 uses author-session/result v4, review v3 and OpenUdon transaction
 v4. Explicitly review the detected widget, activation, submission destination and
@@ -6,11 +6,16 @@ bounded verification dependencies before authoring the profile. Provider POST
 authority remains separate from application mutation authority. See
 [registration verification](browser-registration.md).
 
-This is the canonical relationship reference for OpenUdon/iCoT and
-Browsertools. iCoT is the primary end-user authoring entry point across API,
-browser, and runtime-handoff sources. Browsertools is its specialized
-browser-source engine and shared validation library, not a parallel authoring
-product or the production runtime.
+Browsertools author and registration workers are host-neutral. Kinet and
+OpenUdon may consume their offline artifacts and use a separately isolated
+worker process; each host owns its user policy, exact approvals, executable
+selection and process lifecycle. [Managed host launch](host-worker-contract.md)
+defines the additive capture capability used by Kinet Stage12.
+
+The retained OpenUdon/iCoT relationship below records its accepted historical
+integration: iCoT is its end-user authoring entry across API, browser and
+runtime-handoff sources, while Browsertools supplies specialized browser-source
+authoring and validation. It does not restrict these libraries to that host.
 
 ## Relationship and ownership
 
@@ -27,7 +32,8 @@ profiles.
 
 | Component | Ownership |
 |---|---|
-| iCoT / OpenUdon | Primary user-facing authoring flow, API-first source selection, goal and safety interview, LLM/human interaction, independent validation, and atomic package staging |
+| Kinet | Kinet user-facing policy, exact confirmation, ledger custody, current dispatch claims, worker identity and local all-traffic containment |
+| iCoT / OpenUdon | Its user-facing authoring flow, API-first source selection, goal and safety interview, LLM/human interaction, independent validation, and atomic package staging |
 | Browsertools | Playwright-based acquisition, live browser safety enforcement, reduced observations, portable profile synthesis, review artifacts, and shared profile validation |
 | UWS | Portable browser profile, authentication, context, and workflow schemas plus semantic validation |
 | Udon | Separate runtime approval, lowering, credential-slot and MFA challenge brokering, and executor lifecycle |
@@ -115,9 +121,11 @@ channel, verifies its exact result/source/review digests and freshness, and
 copies only canonical source plus value-free digest/lifecycle facts into its
 transaction. Browsertools exposes the separate
 `registrationauthorworker.Run` process entry and
-`registration-author-session chromium` standalone command; OpenUdon must
-re-execute its reviewed worker image with a minimal environment and own
-process-group cancellation. OpenUdon must select v2 deliberately when it needs
+`registration-author-session chromium` standalone command; The embedding host (including Kinet or OpenUdon) must re-execute its reviewed
+worker image with a minimal environment and own process-group cancellation.
+The managed Stage12 path additionally requires exact pre-process containment
+through the explicit Launch/Join capability; it cannot fall back to a retained
+CLI launch. OpenUdon must select v2 deliberately when it needs
 structural-query retention; queries never enter observation, diagnostics,
 logs, filenames, result paths, or qualification evidence. Registration runtime
 remains unsupported at this producer boundary.

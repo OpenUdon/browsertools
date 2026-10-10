@@ -53,6 +53,10 @@ The offline [browser shape-table API](docs/browser-shapes.md) projects and
 independently reproduces exact browser, authentication and registration profile
 metadata through published UWS C10. It performs no browser or credential action.
 
+The [host-neutral worker contract](docs/host-worker-contract.md) adds managed
+Launch/Join entries for Kinet capture while preserving the explicit retained
+worker and CLI profiles. Actual containment remains a host qualification gate.
+
 Authenticated live authoring uses the strict
 `browsertools.author-session.v2` NDJSON boundary. Human-reviewed MFA kinds and
 up to 16 final accessibility outputs produce one private
