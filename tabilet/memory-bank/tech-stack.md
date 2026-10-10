@@ -1,6 +1,23 @@
 # Tech Stack
 
-## UWS 1.11 browser-profile adoption
+## Accepted M33 verification inputs
+
+The current Browsertools module selects ordinary published UWS
+`v0.0.0-20261009220914-f01a2542410c`, module sum
+`h1:TTjAn0++TdGHY0vahbXw3XsICQaavBytoqTSHu0K6o0=` and GoMod sum
+`h1:DlqFOnO9lbmYWLLIh5WicNX6NTWIuytU6mIHmxj9BVw=`. Public ZIP
+SHA256 is `5f0478a4a2a87fa54e921a685d70364ade125d01cb5dacc0bcd09ec11d7a2c47`.
+No workspace/directory replacement supplies ordinary adoption.
+
+Cached Go1.26.6, private caches/temp outputs and compiler parallelism2 qualify
+standalone tests/vet/tidy, pinned C10 tests, worker races and frozen consumer
+builds/full OpenUdon tests. Separately labelled two-entry frozen workspace tests
+and vet also pass. Existing tools/browser dependencies, defaults and wires stay
+unchanged; no actual browser or download ran. [Closure](../../docs/m33-closure.md)
+and its linked proof metadata bind source/checks. New ordinary M33 acquisition
+requires its own exact human scope before downstream adoption. Audit is disabled.
+
+## Pre-M33 UWS 1.11 browser-profile adoption
 
 The standalone module pins published UWS
 `v0.0.0-20260924030503-e9b6181be0ab`. Browser 1.8 and 1.9 schema bytes and

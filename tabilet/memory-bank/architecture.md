@@ -1,6 +1,24 @@
 # Architecture
 
-## UWS 1.11 browser-profile adoption
+## Accepted M33 shape and capture boundaries
+
+M33 whole review2 and integrated offline checks pass. Source SHA256 binds exact
+JSON/YAML bytes; selected SHA256 binds the complete lossless native action/flow.
+Build/Verify independently reproduce the entire C10 shape table under fixed
+source, operation, depth, schema and table budgets; no browser/file/network or
+credential lookup occurs. [Shape contract](../../docs/browser-shapes.md).
+
+`authorworker.Launch`, `registrationauthorworker.Launch` and capture-only
+`workerhost.RunManaged` use an explicit trusted Host Launch/Join contract.
+Exact closure, nonce, origins and admitted deadline match before channel use;
+effectful sends require the host's current authority and durable claim. Partial
+launches still join, channels fence cancellation/closure, and late teardown
+acknowledgements retain uncertain custody. No legacy fallback or copied native
+execution/session policy exists. [Host contract](../../docs/host-worker-contract.md).
+Host attestations are not actual M56 containment or M52 custody proof.
+[Closure](../../docs/m33-closure.md) preserves verification and compatibility.
+
+## Pre-M33 UWS 1.11 browser-profile adoption
 
 The typed `profile.Profile` remains the complete wire view for Browser 1.5
 through 1.9. UWS' versioned validator owns template placement, scalar and text

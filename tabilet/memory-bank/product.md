@@ -1,6 +1,23 @@
 # Product
 
-## UWS 1.11 browser-profile adoption
+## Accepted M33 browser shapes and managed capture
+
+M33 is accepted locally after all four rows, whole review2 and integration
+checks. [Closure](../../docs/m33-closure.md) records exact source/evidence.
+`BuildBrowserShapeTable` and `VerifyBrowserShapeTable` produce and independently
+reproduce bounded inert metadata from exact browser/authentication/registration
+profile bytes. Full selected values and numeric lexemes survive; credential-slot
+names and named-session declarations carry no private values or authority.
+
+Author and registration workers now offer additive host-neutral managed capture
+entrypoints. Kinet supplies exact launch identity, original deadline, current
+claims and pre-process all-traffic containment. Existing Run/CLI, supported
+profile behavior and wires remain unchanged. Synthetic witnesses qualify this
+contract only; Kinet:M56 actual containment and M52 encrypted sessions remain
+pending. Ordinary M33 archive acquisition and consumer adoption are separate.
+Audit stays disabled.
+
+## Pre-M33 UWS 1.11 browser-profile adoption
 
 Browsertools validates Browser 1.5 through 1.10 against its exact pinned UWS
 1.11 module. Browser 1.10 adds typed CSS match-count declarations with an

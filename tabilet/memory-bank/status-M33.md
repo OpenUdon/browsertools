@@ -1,12 +1,12 @@
 # Status M33 — Browser shape producer and host-neutral worker contract
 
-**State:** All four task rows complete; whole review2 passed with no P1/P2/P3, awaiting coordinator integration/acceptance. Not accepted. Bounded review 2/10.
+**State:** Accepted locally; all four rows complete, whole review2 passes with zero remaining P1/P2/P3. Coordinator integration/consolidation complete; final closure publication is verified separately.
 
 **Stage.** Kinet STG-12, Phase A. The [Stage 12 contract](../../../kinet/docs/stage12.md)
 coordinates the work; this milestone and status own acceptance. Planning was
 approved on 2026-10-09 (Kinet R65). It authorizes these planning files only.
 
-**Source baseline.** `2cdd788e2f9ed38536fd48d743200e89eff7cf32` (clean at planning).
+**Planning source baseline.** `2cdd788e2f9ed38536fd48d743200e89eff7cf32` (clean at planning).
 The planning UWS pin was `v0.0.0-20260925154821-80ee9bfb24a6`; M33.1 now adopts exact ordinary published C10 `v0.0.0-20261009220914-f01a2542410c`.
 
 **Goal.** Produce verifiable UWS browser-profile shape tables from exact profile
@@ -173,3 +173,22 @@ This correction is preparation before formal whole review2 fanout, which had not
 Counter2/start time `2026-10-10T11:42:55+00:00` remain unchanged. Failed iteration1, its premature task-marker lineage and verified repair remain permanent evidence; neither counter nor history was reset. Reviewer performed no mutation/test/network/counter action. This status records the coordinator-confirmed authoritative result, not acceptance authority.
 
 Captured primary was rechecked clean at actual `refs/heads/main` commit `c209612df309228c26d8645d0fadb653b6334911` before result persistence. Published initial `c7cf3fb6382ada13bfe93081abd2f2c612d48613` and its ancestry were not rebased/rewritten. All task/verification/review work is complete; coordinator serialized fast-forward integration, integration verification, shared-memory/downstream reconciliation, acceptance/retirement and final publication remain pending. No ordinary Browsertools acquisition scope has human approval; no retrieval/downstream adoption/live authority follows. Child protected grants remain empty, audit disabled, and lease ownership returns to the coordinator.
+
+## Coordinator local acceptance and integration — 2026-10-10
+
+Whole review2 passes0P1/0P2/0P3; M33-R1-F01 is closed and review1's failed
+workspace gate/premature marker lineage remains intact. Reviewed candidate is
+77323eb3dd708b5a30fd09b3f2379ec0b61dcb45; persisted result0448aa17bbbb6a74cd0f2bcbee3a297bf87a9c78 changes only this status.
+Coordinator verified all37 assigned paths and fast-forwarded the clean captured
+refs/heads/main fromc209612df309228c26d8645d0fadb653b6334911. Original goalbase
+c146fa8db0675ab3cba01748aafaecd1c5ae9f83 remains unchanged. Primary standalone
+tests/vet/tidy pass; integration manifest SHA256
+81df7eb419da54c84b2530454ed7abf859b4131186c4b87cfc730015b30e47d1.
+Shared product/architecture/tooling and milestone records are consolidated by
+the coordinator. This package has no adopted retirement procedure, so the
+completed status/specification stay in place. [Closure](../../docs/m33-closure.md)
+records included coordinator metadata and exact observed evidence baseline.
+Final source/evidence/closure publication is independently resolved before
+consumer readiness. Ordinary M33 public archive retrieval remains unapproved;
+no workspace fixture supplies actual published adoption. M56/M52 acceptance,
+all browser/live/deployment authority and audit-disabled state remain unchanged.

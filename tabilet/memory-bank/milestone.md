@@ -1,5 +1,17 @@
 # Milestones
 
+## Current M33 local acceptance — 2026-10-10
+
+M33 completes four rows and whole review2 with zero remaining P1/P2/P3.
+Fast-forward integration from captured mainc209 preserves published source and
+the one consumed approved documentation merge. Standalone tests/vet/tidy pass
+again on the integrated primary. [Closure](../../docs/m33-closure.md) binds the
+reviewed implementation, workspace repair, source proof and consumer checks.
+Final closure publication is coordinator-owned; ordinary module acquisition and
+actual consumer adoption remain separate gates. M56 containment/M52 custody
+remain pending; audit stays disabled. Historical planning snapshots below retain
+their original context and grant no authority.
+
 ## Historical ledger pointers reconciled — 2026-10-10
 
 A14 is indexed as closed historical under its existing consumer-owned accepted
@@ -735,7 +747,7 @@ Build browsertools in reviewable slices:
 | M30 - UWS 1.11 Browser Profile Adoption | [status-M30.md](status-M30.md) | Complete locally; publication and downstream pin adoption separate |
 | M31 - Browser 1.8 Integer Fidelity | [status-M31.md](status-M31.md) | Complete locally; downstream runtime integration separate |
 | M32 - Browser 1.10 Match-Count Profile Support | [status-M32.md](status-M32.md) | Complete and published at `3abe70efc03d`; Browserdriver M15 pin adoption follows |
-| M33 - Browser Shape Producer And Host-Neutral Worker Contract | [status-M33.md](status-M33.md) | Pending; Kinet STG-12 (R65) |
+| M33 - Browser Shape Producer And Host-Neutral Worker Contract | [status-M33.md](status-M33.md) | Complete locally; whole review2, exact publication handoff |
 
 ## Candidate Directions
 
@@ -1901,7 +1913,7 @@ revision. OpenUdon:P10, Udon:M53, Kinet:M56 and Kinet:W20 are downstream. The co
 - Full tests, vet, the pinned UWS suite and consumer builds pass, followed by
   bounded review and an exact publication handoff.
 
-Status: pending; see [status-M33.md](status-M33.md).
+Status: accepted locally after whole review2 and integration checks; see [status-M33.md](status-M33.md) and [closure](../../docs/m33-closure.md).
 
 **Depends on.** Kinet:M51, UWS:C10. All required prerequisites must have
 accepted closure at exact revisions; sibling producer adoption also needs
