@@ -1,0 +1,30 @@
+{
+  "actual_browser_containment_qualified": false,
+  "consumer_adoption_allowed": false,
+  "focused_review": {
+    "P1": 0,
+    "P2": 0,
+    "P3": 0
+  },
+  "formal_review_at_publication": "not-started",
+  "independent_verification": {
+    "all_paths_bytes_modes_equal": true,
+    "git_transport_only": true,
+    "receipt_sha256": "a2e52da5dccf6469779563beed22b0c1ccb8fc658c793f8575df99063842eb5c",
+    "source_equal": true,
+    "tree_equal": true
+  },
+  "milestone_accepted": false,
+  "offline_verification_manifest_sha256": "72483d0cfc7053ea7da7200d7a8a9247daf6455356cfc67f11176109401728fc",
+  "ordinary_browsertools_module_acquired": false,
+  "phase": "initial-reviewed-source-published-and-independently-fetched",
+  "previous": "b45a66ba43114409af62dcf851de14d45648a5b1",
+  "project_audit_enabled": false,
+  "ref": "refs/heads/main",
+  "repository": "https://github.com/OpenUdon/browsertools",
+  "source": "c7cf3fb6382ada13bfe93081abd2f2c612d48613",
+  "tracked_file_count": 345,
+  "tracked_inventory_sha256": "06d3b13d68234e560ea48ead2041b1935586505913229ae8f679f9a84b49af39",
+  "tree": "a5766d314912dbfcdc992fd6e8707f8b50b6a015",
+  "version": "browsertools.m33-source-publication.v1"
+}
