@@ -1,6 +1,6 @@
 # Status M33 — Browser shape producer and host-neutral worker contract
 
-**State:** All four task rows complete; whole review iteration2 started after failed iteration1 and verified repair of its sole P2. Bounded review 2/10.
+**State:** All four task rows complete; whole review2 passed with no P1/P2/P3, awaiting coordinator integration/acceptance. Not accepted. Bounded review 2/10.
 
 **Stage.** Kinet STG-12, Phase A. The [Stage 12 contract](../../../kinet/docs/stage12.md)
 coordinates the work; this milestone and status own acceptance. Planning was
@@ -87,7 +87,7 @@ disposable stores/caches/browser profiles and unique output directories.
 
 **Iteration2 started — 2026-10-10T11:42:55+00:00.** Persisted before the fresh authoritative whole review. Prior iteration1 failed with sole M33-R1-F01/P2; its workspace repair is verified, and full finding/provenance lineage remains below. Review baseline is unchanged captured `refs/heads/main` commit `c209612df309228c26d8645d0fadb653b6334911`; primary ref/tip/cleanliness were rechecked. Verified corrective task commit is `bbf0a767ee4c2f754460bee0fca682098fa051ed`; this iteration2-start checkpoint is committed separately before freezing the full candidate.
 
-Iteration2 findings/result are pending fresh coordinator read-only fanout on all implementation, source/qualification/correction docs and assigned status. Published `c7cf3fb6382ada13bfe93081abd2f2c612d48613` and its ancestry remain immutable. Review counters never reset; an interrupted second pass resumes iteration2. The lease writer pauses during inspection. Whole acceptance, shared-memory/downstream reconciliation, integration/retirement/final publication remain coordinator-only. No new protected grants or ordinary-module/browser/live authority.
+Iteration2 findings/result: **PASS,0P1/0P2/0P3.** Authoritative full coordinator read-only review verified final candidate `77323eb3dd708b5a30fd09b3f2379ec0b61dcb45` and explicitly closed M33-R1-F01 after the workspace proof. Full retained result/provenance is below. Published `c7cf3fb6382ada13bfe93081abd2f2c612d48613` and its ancestry remain immutable. Review counters never reset; an interrupted second pass resumes iteration2. The lease writer pauses during inspection. Whole acceptance, shared-memory/downstream reconciliation, integration/retirement/final publication remain coordinator-only. No new protected grants or ordinary-module/browser/live authority.
 
 ## Verification
 
@@ -165,3 +165,11 @@ The coordinator Stage12 Go-sibling verification gate requires tidy. Its initial 
 Correction verified: offline `go mod tidy -diff` exits0/clean; fresh full standalone tests/vet pass. All11selected module inputs/1486compiled source hashes/251compiled archives match the existing public closure. No implementation/protocol/schema/browser/runtime/source-adoption change occurred; existing workspace compatibility proof remains valid without rerunning it. Before/after go.sum SHA256 `fc8930d4d2039711cd7f344dd5a8699b989b6f9dc8c633dd17f6eb4aca467803` → `262c6c29a3a7d695bfb1621a672d30272ca2e6542be0694c02158c5f584c7360`; unchanged go.mod SHA256 `d9d7087f304ff65f71abc9cf614f6868163edacd2b7e53e4ea10a79a58df5436`. Retained `outputs/m33-post-tidy-proof.json` SHA256 `b4eaae9fab86a1fccef1c674fee2e417c13e734392326216cc9d9cf309ad51b6`; [public tidy metadata](../../docs/m33-tidy-verification.json) omits private paths/details.
 
 This correction is preparation before formal whole review2 fanout, which had not begun. Counter2/start `2026-10-10T11:42:55+00:00` remain unchanged; no passed/failed second-pass result is claimed. A new complete candidate freeze includes this checksum/evidence correction; prior snapshots remain unchanged. Root alone accepts/integrates/reconciles/retires/finally publishes. No new protected/module-retrieval/browser authority was granted and audit stays disabled.
+
+## Authoritative whole review2 final result
+
+**Iteration2 PASS —0P1/0P2/0P3.** The authoritative full reviewer inspected the entire final candidate `77323eb3dd708b5a30fd09b3f2379ec0b61dcb45`,350blob/37assigned-path immutable snapshot, complete proof/corpus/source-publication/qualification/correction/status envelope and exact frozen producer/consumer contracts. Review manifest SHA256 `e56cdb59f741862144fa5c20246d6fec2681b891d0e68e590d438b60b951840e`, assignment diff SHA256 `7f40208e36e68d0f53df9d79f58b906be815e5c9043c0aacd32354b6ee6dd1d3`. Independent unchanged closure is11selected modules/1486compiled sources/251compiled archives/252packages. No remaining findings; sole review1 M33-R1-F01 is explicitly closed by the required workspace tests/vet and retained proof.
+
+Counter2/start time `2026-10-10T11:42:55+00:00` remain unchanged. Failed iteration1, its premature task-marker lineage and verified repair remain permanent evidence; neither counter nor history was reset. Reviewer performed no mutation/test/network/counter action. This status records the coordinator-confirmed authoritative result, not acceptance authority.
+
+Captured primary was rechecked clean at actual `refs/heads/main` commit `c209612df309228c26d8645d0fadb653b6334911` before result persistence. Published initial `c7cf3fb6382ada13bfe93081abd2f2c612d48613` and its ancestry were not rebased/rewritten. All task/verification/review work is complete; coordinator serialized fast-forward integration, integration verification, shared-memory/downstream reconciliation, acceptance/retirement and final publication remain pending. No ordinary Browsertools acquisition scope has human approval; no retrieval/downstream adoption/live authority follows. Child protected grants remain empty, audit disabled, and lease ownership returns to the coordinator.
