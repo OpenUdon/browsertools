@@ -1,6 +1,6 @@
 # Status M33 — Browser shape producer and host-neutral worker contract
 
-**State:** Pending. No row has started. Bounded review 0/10.
+**State:** M33.1 complete; remaining rows pending. Bounded review 0/10.
 
 **Stage.** Kinet STG-12, Phase A. The [Stage 12 contract](../../../kinet/docs/stage12.md)
 coordinates the work; this milestone and status own acceptance. Planning was
@@ -78,7 +78,7 @@ disposable stores/caches/browser profiles and unique output directories.
 
 | Item | State | Notes |
 | --- | --- | --- |
-| M33.1 Adopt the published UWS C10 contract | `[ ]` | Move from UWS `80ee9bf` to the exact accepted and published C10 revision. Preserve Browser 1.5–1.10 schema dispatch, typed profiles, round trips and every listed wire. |
+| M33.1 Adopt the published UWS C10 contract | `[X]` | Adopted `v0.0.0-20261009220914-f01a2542410c` from independently qualified public archive, no replacement. Full offline standalone tests and vet pass, including schema/round-trip/wire compatibility.  Move from UWS `80ee9bf` to the exact accepted and published C10 revision. Preserve Browser 1.5–1.10 schema dispatch, typed profiles, round trips and every listed wire. |
 | M33.2 Browser shape-table producer and verifier | `[ ]` | Public `BuildBrowserShapeTable` / `VerifyBrowserShapeTable` from exact browser, authentication and registration profile bytes. Deterministic, bounded and offline. Projects action keys, typed parameters and outputs, side-effect class, confirmation policy, origins, credential-slot names and existing named-session metadata. Malformed or unsupported input refuses. |
 | M33.3 — Host-neutral worker contract | `[ ]` | Document and test `authorworker` and `registrationauthorworker` as host-neutral, naming Kinet as a host. Include M51-required launch capabilities so M56 can contain the browser process tree and bind exact origins/identity/lifetime before any capture dispatch; no unconstrained fallback launch. Host owns network policy/claims, workers preserve conservative post-dispatch outcomes. Replace OpenUdon-only host text in `docs/openudon-integration.md` while preserving its historical meaning. No wire change. |
 | M33.4 Verify, review and publish | `[ ]` | Standalone and workspace tests and vet, the pinned UWS suite, consumer builds (OpenUdon, Udon, Kinet workers), bounded review, and an exact publication handoff under named authority. |
@@ -105,3 +105,11 @@ Use the exact source/extraction/identity maps, per-leaf old driver protocols, co
 ## Accepted UWS:C10 prerequisite — 2026-10-09
 
 Exact public implementation f01a2542410c583d0ea909dadd8f17527cc0d27d resolves as v0.0.0-20261009220914-f01a2542410c, archive h1:TTjAn0++TdGHY0vahbXw3XsICQaavBytoqTSHu0K6o0= and GoMod h1:DlqFOnO9lbmYWLLIh5WicNX6NTWIuytU6mIHmxj9BVw=. Whole review1 and independently fetched closing publication 60e1baa0470cd7dca5d3166d344896bc0689abf7 qualify this input. See [public proof](../../../uws/docs/c10-publication.md). Own adoption, other prerequisites, custody and qualification remain pending; no task/review/pin change. Scoped source-publication authority is separate conversation approval; this record grants none. Audit stays disabled.
+
+## Authorized lease checkpoint — 2026-10-10
+
+Assigned `Browsertools:M33` only, `goal/M33` in `/home/peter/Workspace/browsertools.goal/M33`. Captured integration is `refs/heads/main` in `/home/peter/Workspace/browsertools`; original goal base `c146fa8db0675ab3cba01748aafaecd1c5ae9f83` remains unchanged. Dispatch/review baseline is `c209612df309228c26d8645d0fadb653b6334911`. Task commits and offline verification are authorized under the resolved Stage12 goal. Protected child grants are empty; the coordinator alone integrates, closes and publishes. Shared memory and historical records are excluded. Audit remains disabled.
+
+Frozen protocol SHA256 `cad15b1c175094505d380c581f577bde7ced4109ffda40b4b39d5ffe6ae88113`; resolved request `71c9cd3cb4126d6c40b89f491495dc849805aaee281815d729946d6d85519f8c`; context `54bd2fe09d3f67a01c31f911976349cff15e572e8e3460a09811f5916caeaa9b`. The existing human approval context was passed by the coordinator; these hashes and status notes are evidence, never approval. Exact M51 manifest `0c445a5c90d2c09be561e713c364747f4ab9a3698ea8ab46e7b7b774ccf16bad` and frozen consumer sources are used without editing siblings. No live/browser/download operation is authorized.
+
+M33.1 verification: sanitized `GOWORK=off GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local` Go1.26.6, private module/build/temp caches, compiler parallelism2. `go test ./...` and `go vet ./...` pass. First setup attempt refused missing cached dependencies offline; copying exact already-cached dependency archives resolved it without retrieval. C10 public archive SHA256 `5f0478a4a2a87fa54e921a685d70364ade125d01cb5dacc0bcd09ec11d7a2c47` is preserved; module/GoMod sums match the accepted prerequisite. No schema, wire, default or browser action changed.
