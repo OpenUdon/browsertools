@@ -1,6 +1,6 @@
 # Status M33 — Browser shape producer and host-neutral worker contract
 
-**State:** All four task rows complete; formal whole review pending. Bounded review 0/10.
+**State:** All four task rows complete; whole review iteration1 started. Bounded review 1/10.
 
 **Stage.** Kinet STG-12, Phase A. The [Stage 12 contract](../../../kinet/docs/stage12.md)
 coordinates the work; this milestone and status own acceptance. Planning was
@@ -85,7 +85,9 @@ disposable stores/caches/browser profiles and unique output directories.
 
 ## Review Gate
 
-Not started. Persist each iteration before reviewing.
+**Iteration1 started — 2026-10-10T11:32:16+00:00.** This checkpoint is persisted before the formal whole review. Review baseline is exact captured `refs/heads/main` commit `c209612df309228c26d8645d0fadb653b6334911`; the actual primary symbolic ref/tip were rechecked unchanged. The task-complete source is commit `80fcbbe26692f970268a68e2490db6d707f3b3b3`; this started-review status checkpoint is committed separately before the final immutable freeze, whose manifest records the complete candidate commit. Published source `c7cf3fb6382ada13bfe93081abd2f2c612d48613` and its ancestry remain immutable.
+
+Findings/result: pending the coordinator formal read-only fanout on the complete frozen candidate, including all task documentation/source-proof/status changes. Earlier focused preparation reviews are evidence only and do not establish this whole-review result. Resume any interrupted pass at iteration1; never reset the persisted counter. The lease writer pauses while reviewers inspect. Whole acceptance, shared-memory reconciliation, integration/retirement and final closure publication remain coordinator-owned. No downstream adoption or ordinary-module retrieval is authorized by this checkpoint.
 
 ## Verification
 
