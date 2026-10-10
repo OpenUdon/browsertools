@@ -1,0 +1,25 @@
+{
+  "allCompiledArchivesUnchanged": true,
+  "allCompiledSourceHashesUnchanged": true,
+  "formalReview2Result": "pending; no fanout at preparation",
+  "goModSHA256": "d9d7087f304ff65f71abc9cf614f6868163edacd2b7e53e4ea10a79a58df5436",
+  "goSumAfterSHA256": "262c6c29a3a7d695bfb1621a672d30272ca2e6542be0694c02158c5f584c7360",
+  "goSumBeforeSHA256": "fc8930d4d2039711cd7f344dd5a8699b989b6f9dc8c633dd17f6eb4aca467803",
+  "logs": {
+    "m33-post-tidy-tests.log": "a0c877ab7e9a9a5de2a0c7e1b661a3173f2839b8180363635bb875f500daa95b",
+    "m33-post-tidy-vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "m33-tidy-clean.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "m33-tidy-diff-final.log": "b06fb816db62b1352f83b335eee1eb1629c392ca4378c7e2d6d46589335d5878"
+  },
+  "noRetrieval": true,
+  "retainedProofSHA256": "b4eaae9fab86a1fccef1c674fee2e417c13e734392326216cc9d9cf309ad51b6",
+  "reviewCounter": 2,
+  "scope": "Approved offline go.sum-only tidy correction before formal review2 fanout; no code/graph/protocol/pin change",
+  "selectedModuleInputsUnchanged": true,
+  "sourcePublicationCommitImmutable": "c7cf3fb6382ada13bfe93081abd2f2c612d48613",
+  "standaloneTests": "pass",
+  "standaloneVet": "pass",
+  "tidyDiffAfter": "clean exit0",
+  "tidyDiffBefore": "go.sum only,15lines removed4added",
+  "version": "browsertools.m33-tidy-verification.v1"
+}

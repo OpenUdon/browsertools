@@ -52,6 +52,8 @@ Passing gates:
 - Browsertools full standalone tests and vet; focused shape corpus/adversarial
   tests; workerhost/authorworker/registrationauthorworker race tests; diff check.
 - The full exact pinned ordinary C10 module suite.
+- Offline `go mod tidy -diff`, clean after the exact approved go.sum-only
+  correction; post-correction full standalone tests/vet pass.
 - Explicit frozen two-module workspace tests and vet, added after formal
   review1 exposed their omission; [compatibility proof](m33-workspace-compatibility.json).
 - Frozen OpenUdon and Udon full compatibility builds.
@@ -158,3 +160,28 @@ M33.4 is complete after this verified correction. A fresh whole review is still
 required; the failed iteration1 remains permanent lineage. Workspace proof is
 compatibility evidence and cannot replace independently acquired ordinary
 published Browsertools artifacts or grant downstream adoption.
+
+## Offline tidy preparation before whole review2
+
+The coordinator's Go-sibling tidy gate initially refused missing cached
+dependency-test metadata/artifacts offline. Exact already-cached test inputs
+and their two transitive dependencies were copied into the isolated cache;
+no new module retrieval or network action ran. The resulting read-only tidy
+diff affected only `go.sum`:15obsolete/unused checksum lines removed and4
+checksum lines added for already-selected C10 test dependencies. The exact
+coordinator-approved correction leaves `go.mod`, the qualified C10 pin/sums,
+production code, public wires and every selected compiled module unchanged.
+
+`go mod tidy -diff` now returns clean; full standalone tests/vet pass. All11
+selected public-worker module inputs,1486compiled source hashes and251compiled
+archive hashes equal the previously verified closure. The unchanged workspace
+proof remains applicable; no redundant workspace/race/consumer run is claimed.
+[Public tidy evidence](m33-tidy-verification.json) binds retained proof SHA256
+`b4eaae9fab86a1fccef1c674fee2e417c13e734392326216cc9d9cf309ad51b6`. Setup-refusal and exact pre-correction diff logs remain retained.
+
+This was paused preparation within the already-started iteration2, before its
+formal reviewer fanout. Counter2 and original start time remain unchanged; no
+whole-review result was inferred or invented. Published initial `c7cf3fb…`
+and all earlier frozen snapshots remain immutable. Ordinary acquisition must
+later target the coordinator's final accepted published revision under its
+separate exact scope.

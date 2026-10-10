@@ -2,18 +2,6 @@ github.com/OpenUdon/evidence v0.0.0-20260815084845-0c17258b9736 h1:m66ctgDRK/pv4
 github.com/OpenUdon/evidence v0.0.0-20260815084845-0c17258b9736/go.mod h1:AUZKUpFNDa5j56Vpi64YR1PkcK8JYZJSEGjNkZNdMFI=
 github.com/OpenUdon/schema v0.0.0-20260507023912-6ea3308bb955 h1:dwQPNJKFpa6ndPagc3bKvS8ITuVopArFVsE2JgVFJfY=
 github.com/OpenUdon/schema v0.0.0-20260507023912-6ea3308bb955/go.mod h1:Q0QXMOpiSZlXZpdnMV/FpUaZ85SJWi+h7E5vEU85Rik=
-github.com/OpenUdon/uws v0.0.0-20260825191727-895aa4546067 h1:yiwPo/8eZIct4K8iB0U8G4qmWOSp2JidjlyH35tDEn0=
-github.com/OpenUdon/uws v0.0.0-20260825191727-895aa4546067/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
-github.com/OpenUdon/uws v0.0.0-20260826233246-9e676eaa469e h1:zlLV0dVfZbEvxZcWKZkksxZB1QAeI8ghV0j51kPJB6Y=
-github.com/OpenUdon/uws v0.0.0-20260826233246-9e676eaa469e/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
-github.com/OpenUdon/uws v0.0.0-20260907155543-9ff877ebce55 h1:orIC4LJMNK0FAIheRhnUwUnsFknEYLK9nKuGxSBB1mg=
-github.com/OpenUdon/uws v0.0.0-20260907155543-9ff877ebce55/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
-github.com/OpenUdon/uws v0.0.0-20260913141421-b6e62fcc9133 h1:duy+XrOppZwHA6MVE1yKo/R12Fo69GLKMY1pK3aKs4c=
-github.com/OpenUdon/uws v0.0.0-20260913141421-b6e62fcc9133/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
-github.com/OpenUdon/uws v0.0.0-20260924030503-e9b6181be0ab h1:tUREZ/ZMRlP3qhDrVRZRryeN3K9UlFCH8TLJWLCNKnA=
-github.com/OpenUdon/uws v0.0.0-20260924030503-e9b6181be0ab/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
-github.com/OpenUdon/uws v0.0.0-20260925154821-80ee9bfb24a6 h1:4qZplaKCTKhiavGnBBeuARWiHrfTSUxDjDsgHV98xbM=
-github.com/OpenUdon/uws v0.0.0-20260925154821-80ee9bfb24a6/go.mod h1:Qa5BAWWPuYeYeN/HnmEnMvQc2hoKrygyaZyzHgsHqwo=
 github.com/OpenUdon/uws v0.0.0-20261009220914-f01a2542410c h1:TTjAn0++TdGHY0vahbXw3XsICQaavBytoqTSHu0K6o0=
 github.com/OpenUdon/uws v0.0.0-20261009220914-f01a2542410c/go.mod h1:DlqFOnO9lbmYWLLIh5WicNX6NTWIuytU6mIHmxj9BVw=
 github.com/agext/levenshtein v1.2.1 h1:QmvMAjj2aEICytGiWzmxoE0x2KZvE0fvmqMOfy2tjT8=
@@ -67,7 +55,6 @@ github.com/mitchellh/go-wordwrap v1.0.1 h1:TLuKupo69TCn6TQSyGxwI1EblZZEsQ0vMlAFQ
 github.com/mitchellh/go-wordwrap v1.0.1/go.mod h1:R62XHJLzvMFRBbcrT7m7WgmE1eOyTSsCt+hzestvNj0=
 github.com/mxschmitt/playwright-go v0.6201.0 h1:VfBN0/A+8hIKhbJA/GrQZ4OIywXy12n8tcY073N9STs=
 github.com/mxschmitt/playwright-go v0.6201.0/go.mod h1:A7VtrS3j/c8ToGnSVUaOfNtQQVxi6JotUS0jeuus6r4=
-github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/rogpeppe/go-internal v1.12.0 h1:exVL4IDcn6na9z1rAb56Vxr+CgyK3nn3O+epU5NdKM8=
 github.com/rogpeppe/go-internal v1.12.0/go.mod h1:E+RYuTGaKKdloAfM02xzb0FW3Paa99yedzYV+kq4uf4=
@@ -75,8 +62,8 @@ github.com/santhosh-tekuri/jsonschema/v6 v6.0.1 h1:PKK9DyHxif4LZo+uQSgXNqs0jj5+x
 github.com/santhosh-tekuri/jsonschema/v6 v6.0.1/go.mod h1:JXeL+ps8p7/KNMjDQk3TCwPpBy0wYklyWTfbkIzdIFU=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
-github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
-github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
+github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/theory/jsonpath v0.12.0 h1:NQeuE0ohHHhss0DoxU9Xu2IpTTrlx9x4mv4F3pcmDME=
 github.com/theory/jsonpath v0.12.0/go.mod h1:vl8nfJyq9MKMbcAiKv+7N9W3jDCH8qPr0mZoZj8wRk8=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
@@ -86,6 +73,8 @@ github.com/zclconf/go-cty-debug v0.0.0-20240509010212-0d6042c53940 h1:4r45xpDWB6
 github.com/zclconf/go-cty-debug v0.0.0-20240509010212-0d6042c53940/go.mod h1:CmBdvvj3nqzfzJ6nTCIwDTPZ56aVGvDrmztiO5g3qrM=
 github.com/zclconf/go-cty-yaml v1.1.0 h1:nP+jp0qPHv2IhUVqmQSzjvqAWcObN0KBkUl2rWBdig0=
 github.com/zclconf/go-cty-yaml v1.1.0/go.mod h1:9YLUH4g7lOhVWqUbctnVlZ5KLpg7JAprQNgxSZ1Gyxs=
+go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
+go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/crypto v0.0.0-20210921155107-089bfa567519/go.mod h1:GvvjBRRGRdwPK5ydBHafDWAxML/pGHZbMvKqRZ5+Abc=
 golang.org/x/crypto v0.13.0/go.mod h1:y6Z2r+Rw4iayiXXAIxJIDAJ1zMW4yaTpebo8fPOliYc=
