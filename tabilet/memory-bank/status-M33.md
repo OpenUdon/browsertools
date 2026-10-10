@@ -1,6 +1,6 @@
 # Status M33 — Browser shape producer and host-neutral worker contract
 
-**State:** All four task rows complete after verified workspace repair; whole review iteration1 failed with its sole P2 repaired. Next whole pass not started. Bounded review 1/10.
+**State:** All four task rows complete; whole review iteration2 started after failed iteration1 and verified repair of its sole P2. Bounded review 2/10.
 
 **Stage.** Kinet STG-12, Phase A. The [Stage 12 contract](../../../kinet/docs/stage12.md)
 coordinates the work; this milestone and status own acceptance. Planning was
@@ -85,9 +85,9 @@ disposable stores/caches/browser profiles and unique output directories.
 
 ## Review Gate
 
-**Iteration1 started — 2026-10-10T11:32:16+00:00.** This checkpoint is persisted before the formal whole review. Review baseline is exact captured `refs/heads/main` commit `c209612df309228c26d8645d0fadb653b6334911`; the actual primary symbolic ref/tip were rechecked unchanged. The task-complete source is commit `80fcbbe26692f970268a68e2490db6d707f3b3b3`; this started-review status checkpoint is committed separately before the final immutable freeze, whose manifest records the complete candidate commit. Published source `c7cf3fb6382ada13bfe93081abd2f2c612d48613` and its ancestry remain immutable.
+**Iteration2 started — 2026-10-10T11:42:55+00:00.** Persisted before the fresh authoritative whole review. Prior iteration1 failed with sole M33-R1-F01/P2; its workspace repair is verified, and full finding/provenance lineage remains below. Review baseline is unchanged captured `refs/heads/main` commit `c209612df309228c26d8645d0fadb653b6334911`; primary ref/tip/cleanliness were rechecked. Verified corrective task commit is `bbf0a767ee4c2f754460bee0fca682098fa051ed`; this iteration2-start checkpoint is committed separately before freezing the full candidate.
 
-Findings/result: pending the coordinator formal read-only fanout on the complete frozen candidate, including all task documentation/source-proof/status changes. Earlier focused preparation reviews are evidence only and do not establish this whole-review result. Resume any interrupted pass at iteration1; never reset the persisted counter. The lease writer pauses while reviewers inspect. Whole acceptance, shared-memory reconciliation, integration/retirement and final closure publication remain coordinator-owned. No downstream adoption or ordinary-module retrieval is authorized by this checkpoint.
+Iteration2 findings/result are pending fresh coordinator read-only fanout on all implementation, source/qualification/correction docs and assigned status. Published `c7cf3fb6382ada13bfe93081abd2f2c612d48613` and its ancestry remain immutable. Review counters never reset; an interrupted second pass resumes iteration2. The lease writer pauses during inspection. Whole acceptance, shared-memory/downstream reconciliation, integration/retirement/final publication remain coordinator-only. No new protected grants or ordinary-module/browser/live authority.
 
 ## Verification
 
@@ -151,3 +151,10 @@ Persisted iteration1/start time/review baseline remain unchanged; other formal f
 **M33-R1-F01 repaired and verified.** Exact approved two-entry frozen workspace uses M33 candidate `4901429d237cc12069eb9efa94b1f8cf6ea1d10c` and actual qualified public C10f01 source. Explicit workspace `go test ./...` and `go vet ./...` pass. All348M33/396C10 input bytes are unchanged before/after. Retained proof `outputs/m33-workspace-compatibility-v1/proof.json` SHA256 `21300bce0444a99f4fd3aeb370fd0b10cbdeafd94273ea76cf098096b4cbfe53`; workspace SHA256 `4697e610b6590d5cd958fd48663752723ca4bee98968960e6b393c250d15b5dd`; passing tests SHA256 `2122cc91f4c08cd64ec4517c752b906f9dba4a9ac6185ac5dc83e1140d4574d4`; vet SHA256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. [Public compatibility metadata](../../docs/m33-workspace-compatibility.json) and handoff correction preserve private evidence locations only in the retained resource. No production code/contract/source-adoption change occurred; ordinary published-adoption proof remains `GOWORK=off` and separate.
 
 Initial offline workspace setup refused an uncopied39-byte existing `github.com/creack/pty v1.1.9` metadata file. Copying its exact already-cached `.mod` (SHA256 `eab0705bc4a18dd315c27a4e3dba8f20a9e123065fa20633966332b5cccf7731`) resolved setup; no retrieval. Failed test/vet logs and the optional all-module metadata probe are retained. Targeted exact workspace-root identity checks pass; no required gate is skipped or waived. The sole P2 is fixed, M33.4 is complete after correction, and a fresh whole iteration2 is required before acceptance. No redundant standalone/race suite or published-source rewrite was performed.
+
+## Retained iteration1 start checkpoint
+
+**Iteration1 started — 2026-10-10T11:32:16+00:00.** This checkpoint is persisted before the formal whole review. Review baseline is exact captured `refs/heads/main` commit `c209612df309228c26d8645d0fadb653b6334911`; the actual primary symbolic ref/tip were rechecked unchanged. The task-complete source is commit `80fcbbe26692f970268a68e2490db6d707f3b3b3`; this started-review status checkpoint is committed separately before the final immutable freeze, whose manifest records the complete candidate commit. Published source `c7cf3fb6382ada13bfe93081abd2f2c612d48613` and its ancestry remain immutable.
+
+Findings/result: pending the coordinator formal read-only fanout on the complete frozen candidate, including all task documentation/source-proof/status changes. Earlier focused preparation reviews are evidence only and do not establish this whole-review result. Resume any interrupted pass at iteration1; never reset the persisted counter. The lease writer pauses while reviewers inspect. Whole acceptance, shared-memory reconciliation, integration/retirement and final closure publication remain coordinator-owned. No downstream adoption or ordinary-module retrieval is authorized by this checkpoint.
+
