@@ -25,3 +25,10 @@ No ordinary published Browsertools module has been acquired; Git source proof
 does not authorize or substitute for new module retrieval or consumer adoption.
 Actual M56 containment and M52 encrypted session qualification remain pending.
 Audit stays disabled; source publication grants no browser or live authority.
+
+Formal review1 subsequently found one P2: the required workspace-mode tests/vet
+were absent despite the earlier task completion marker. The [handoff correction](m33-source-handoff.md#formal-review1-verification-correction)
+and [workspace proof](m33-workspace-compatibility.json) retain that premature
+marker lineage and the verified offline repair. The Git source/tree proof above
+remains accurate; initial publication did not establish complete verification
+or whole acceptance. A fresh whole review precedes final closure.

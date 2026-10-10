@@ -9,8 +9,9 @@ Verified implementation source is
 `c209612df309228c26d8645d0fadb653b6334911`. The actual primary ref/tip were
 rechecked unchanged before the initial source publication. The coordinator
 published and independently fetched this exact source and all345tracked paths,
-bytes and modes; see [source proof](m33-source-publication.md). M33.4 verification
-and the source-publication handoff are complete. Integration, formal whole
+bytes and modes; see [source proof](m33-source-publication.md). The initial source-publication handoff was complete; formal review1 later
+identified the missing required workspace checks, whose repair is recorded
+below. The prior all-required-verification completion claim was premature. Integration, formal whole
 acceptance, retirement and final closure publication remain coordinator gates.
 
 The approved documentation carrier ancestry (`a8119bf…` then `c209612…`) is
@@ -39,9 +40,11 @@ Run/CLI, profile defaults and all retained author/result/review wires are
 unchanged. M56 containment and M52 encrypted/current-generation/session/race/
 backup acceptance remain pending with their existing owners.
 
-All verification used cached Go1.26.6, sanitized environment, `GOWORK=off`,
-`GOPROXY=off`, `GOSUMDB=off`, local toolchain, compiler parallelism2 and private
-lease caches/temporary/output directories. No download, browser, model/provider,
+Standalone/adoption verification used cached Go1.26.6, sanitized environment,
+`GOWORK=off`, `GOPROXY=off`, `GOSUMDB=off`, local toolchain, compiler parallelism2
+and private lease caches/temporary/output directories. The separately labelled
+workspace compatibility repair below uses an explicit disposable workspace file
+with the same offline toolchain/cache bounds. No download, browser, model/provider,
 real user ledger, deployment or project audit action ran.
 
 Passing gates:
@@ -49,6 +52,8 @@ Passing gates:
 - Browsertools full standalone tests and vet; focused shape corpus/adversarial
   tests; workerhost/authorworker/registrationauthorworker race tests; diff check.
 - The full exact pinned ordinary C10 module suite.
+- Explicit frozen two-module workspace tests and vet, added after formal
+  review1 exposed their omission; [compatibility proof](m33-workspace-compatibility.json).
 - Frozen OpenUdon and Udon full compatibility builds.
 - Existing frozen Kinet author and exec worker builds, using independently
   qualified ordinary APItools409d/Udon9c99 archives and retained SDK801.
@@ -123,3 +128,33 @@ Coordinator shared-memory/downstream proposals:
 These are proposed coordinator changes, not child shared-memory edits or
 milestone acceptance. The established Stage12 direction is unchanged; no new
 evolution version is proposed.
+
+## Formal review1 verification correction
+
+Iteration1 confirmed exactly one P2, **M33-R1-F01**: M33.4 explicitly required
+workspace tests/vet, but all prior checks were `GOWORK=off`. Separate consumer
+module builds did not satisfy that requirement, so its earlier terminal task
+marker and all-required-verification claims were premature. No other P1/P2/P3
+was found. The first whole pass is failed, not accepted or reset.
+
+The approved repair ran full Browsertools tests and vet in one isolated
+workspace containing frozen M33 candidate
+`4901429d237cc12069eb9efa94b1f8cf6ea1d10c` and the exact qualified cached public
+C10 source. Both commands pass. All348M33 and396C10 input files are byte-identical
+before/after; production code/contracts, frozen reviewers' inputs, published
+source and ordinary adoption evidence are unchanged. Workspace file SHA256 is
+`4697e610b6590d5cd958fd48663752723ca4bee98968960e6b393c250d15b5dd`;
+retained proof SHA256 is
+`21300bce0444a99f4fd3aeb370fd0b10cbdeafd94273ea76cf098096b4cbfe53`.
+
+The first workspace attempts refused missing already-cached39-byte dependency
+metadata offline; copying only that exact cached metadata resolved setup.
+Failed setup logs remain retained. An optional all-module metadata inventory
+could not resolve unused module metadata offline; the exact two workspace-root
+identity check passes, and neither required test/vet gate is omitted. No
+network/browser/model action, source workaround or assertion relaxation occurred.
+
+M33.4 is complete after this verified correction. A fresh whole review is still
+required; the failed iteration1 remains permanent lineage. Workspace proof is
+compatibility evidence and cannot replace independently acquired ordinary
+published Browsertools artifacts or grant downstream adoption.

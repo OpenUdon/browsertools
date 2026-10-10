@@ -1,0 +1,33 @@
+{
+  "after_input_inventory_sha256": "2a893856e3a49ea853400fca6334ac4eac63990d43dc03470f151b8518de558b",
+  "all_input_bytes_unchanged": true,
+  "before_input_inventory_sha256": "2a893856e3a49ea853400fca6334ac4eac63990d43dc03470f151b8518de558b",
+  "browsertools_candidate": "4901429d237cc12069eb9efa94b1f8cf6ea1d10c",
+  "finding_disposition": "repaired-and-verified",
+  "finding_severity": "P2",
+  "formal_finding": "M33-R1-F01",
+  "go_version": "1.26.6",
+  "go_work_sha256": "4697e610b6590d5cd958fd48663752723ca4bee98968960e6b393c250d15b5dd",
+  "input_file_counts": {
+    "browsertools": 348,
+    "uws": 396
+  },
+  "no_network_browser_model_actions": true,
+  "ordinary_adoption_evidence_remains_separate": true,
+  "production_code_contract_changes": false,
+  "purpose": "Explicit frozen workspace compatibility only; not ordinary published adoption",
+  "retained_private_proof_sha256": "21300bce0444a99f4fd3aeb370fd0b10cbdeafd94273ea76cf098096b4cbfe53",
+  "review_iteration_found": 1,
+  "source_publication_commit_immutable": "c7cf3fb6382ada13bfe93081abd2f2c612d48613",
+  "test_log_sha256": "2122cc91f4c08cd64ec4517c752b906f9dba4a9ac6185ac5dc83e1140d4574d4",
+  "tests": "passed",
+  "uws_public_zip_sha256": "5f0478a4a2a87fa54e921a685d70364ade125d01cb5dacc0bcd09ec11d7a2c47",
+  "uws_source": "f01a2542410c583d0ea909dadd8f17527cc0d27d",
+  "version": "browsertools.m33-workspace-compatibility.v1",
+  "vet": "passed",
+  "vet_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "workspace_modules": [
+    "github.com/OpenUdon/browsertools",
+    "github.com/OpenUdon/uws"
+  ]
+}
