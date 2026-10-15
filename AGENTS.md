@@ -2,11 +2,13 @@
 
 ## Stage 12 concurrent goal ownership
 
-For an explicitly authorized STG-12 goal, the governing protocol is
-[../kinet/tabilet/GOAL.md](../kinet/tabilet/GOAL.md). The coordinator passes that exact protocol and the
-complete resolved request to each child; sibling standalone goal protocols
-remain unchanged. Use the goal skill through a hosting agent with subagents;
-the Python API runner/controller remains serial.
+For an explicitly authorized STG-12 goal, use the memory-bank goal protocol
+bundled with the skills and each participating package's applicable addendum.
+The coordinator passes the exact selected protocol path/hash, `GOAL_IDENTITY`,
+complete resolved request, human approval context and narrowed assignment
+grants to every child; read-only reviewers receive no mutation authority.
+Use the goal skill through a hosting agent with subagents; the Python API
+runner/controller remains serial.
 
 This is a scoped exception to serial and whole-ledger single-row wording:
 
@@ -106,14 +108,30 @@ Do not recreate duplicate root-level product, architecture, roadmap, or status
 documents. Long-form references live in `docs/` when needed; README is the
 public operator entry point once implementation exists.
 
-This project exposes [tabilet/GOAL.md](tabilet/GOAL.md), one optional protocol for goal requests
-that span multiple status files. Follow it only when a request names it.
+Goal requests may use the memory-bank goal protocol bundled with the skills.
+Follow it only when the request selects it; another protocol or no protocol
+remains supported. Optional `tabilet/GOAL.md` is a project addendum that adds
+or narrows local rules, never a replacement or merged protocol.
 
-A `tabilet/GOAL.md` run is a deliberate exception to the row-level commit rule below.
-For that run, `COMMIT_POLICY: none` — the protocol default — means no commits,
-while `COMMIT_POLICY: task` keeps the usual one-commit-per-row cadence.
-Precedence is the request, then `tabilet/GOAL.md`, then this file; commit rules and explicitly authorized lease ownership/integration are
-delegated only during the run; all other project boundaries remain in force.
+A goal run uses its resolved `COMMIT_POLICY`: `none` means no commits and
+`task` selects the usual per-row cadence. Precedence is the request, then the
+project addendum, then the selected goal protocol, then this file. Existing
+project restrictions and explicitly authorized lease ownership/integration
+still apply; local integration grants no remote push.
+
+Resolve the selected full protocol before a run. Verify the bundled stock
+protocol against its bundled fingerprint registry.
+Record `GOAL_IDENTITY` for the protocol and every participating package's
+addendum, `ignored-stock` copy or absence. Recheck it on resume and child
+dispatch; compare hashes and classifications, not diagnostic version labels.
+Protocol/addendum fingerprints normalize CRLF to LF only; launch approval
+checksums hash raw bytes. Preserve an explicitly selected `GOAL_PROTOCOL`
+alternative. Recognized stock project copies are ignored and removable; a
+modified full copy stops execution until explicitly reduced or selected.
+For a legacy launch or paused goal without identity, show the resolved identity
+and recover the original human-approved request where available; obtain any
+missing or changed identity approval without resetting grants, counters or
+limits. An upgrade never resumes execution or activates launch grants.
 
 ## Boundary
 
@@ -259,7 +277,7 @@ When changing OpenUdon-facing exports, run the consumer checks when available:
   because a later review concerns it.
 - Across the active ledger, keep zero or one general row in progress unless an
   authorized goal request explicitly defines safe parallel ownership: in
-  concurrent lease execution under `tabilet/GOAL.md`, each external lease
+  concurrent lease execution under the goal protocol, each external lease
   maintains at most one `[~]` row in its own status file, only the orchestrator
   writes the captured integration branch and shared memory documents
   (`architecture.md`, `product.md`, `tech-stack.md`, `lessons.md`), and integration occurs
