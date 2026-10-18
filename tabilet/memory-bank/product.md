@@ -262,13 +262,13 @@ failure validation is separate from observation warnings; failed teardown takes
 precedence. Browser-free tests/vet, local synthetic authoring and bounded review
 iteration 2 pass. Published Browsertools e5a49ff68235 now passes complete fresh integration
 qualification and exact tested-byte adoption under W16.4i.4.
-See [status-A13.md](status-A13.md).
+See [retired A13 record](../docs/history/status-A13.md).
 
 A12 completes generic registration 1.1 authoring and full consumer
 qualification under the approved cross-repository plan. It reuses UWS typed
 input definitions and adds reviewed public-option preview and field suggestions.
 Browsertools never accepts actual
-registration inputs or executes account creation. See [status-A12.md](status-A12.md).
+registration inputs or executes account creation. See [retired A12 record](../docs/history/status-A12.md).
 
 `browsertools` is a Go-first tooling project for producing reviewed UWS
 browser capability profiles from real website UI evidence. Its job is to make

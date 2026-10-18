@@ -262,7 +262,7 @@ failure validation is separate from observation warnings; failed teardown takes
 precedence. Browser-free tests/vet, local synthetic authoring and bounded review
 iteration 2 pass. Published Browsertools e5a49ff68235 now passes complete fresh integration
 qualification and exact tested-byte adoption under W16.4i.4.
-See [status-A13.md](status-A13.md).
+See [retired A13 record](../docs/history/status-A13.md).
 
 A12 explicitly adopts published UWS
 `v0.0.0-20260907155543-9ff877ebce55` for registration 1.1 tooling. Go,

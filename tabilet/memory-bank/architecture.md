@@ -260,7 +260,7 @@ failure validation is separate from observation warnings; failed teardown takes
 precedence. Browser-free tests/vet, local synthetic authoring and bounded review
 iteration 2 pass. Published Browsertools e5a49ff68235 now passes complete fresh integration
 qualification and exact tested-byte adoption under W16.4i.4.
-See [status-A13.md](status-A13.md).
+See [retired A13 record](../docs/history/status-A13.md).
 
 A12 adds an explicit registration author-session/result v3 for 1.1 recipes.
 Legacy v1/v2 remain fixed. Public control definitions and bounded preview stay
