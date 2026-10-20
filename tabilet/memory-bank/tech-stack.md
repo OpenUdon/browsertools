@@ -1,5 +1,9 @@
 # Tech Stack
 
+## M34 verification and cache inputs
+
+Go1.26.6 with existing ordinary module/build caches, GOWORK/GOPROXY/GOSUMDB/GOAUTH off and readonly modules qualified focused fake-browser/real-Serve tests, a ring race check, one complete offline regression and standalone vet. No dependency pins changed. Live-browser tests were explicitly skipped; mocks and native framing are executed proof, actual browser startup remains Kinet:M53.4. [Closure](../../docs/m34-closure.md) retains counts and exact output hashes. Tests enforce0700 private roots explicitly.
+
 ## Accepted M33 verification inputs
 
 The current Browsertools module selects ordinary published UWS

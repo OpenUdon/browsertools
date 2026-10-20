@@ -23,4 +23,6 @@ applying it to current work. Knowledge preservation is triggered by material
 supersession or removal, even outside milestone closure; routine wording edits
 need no journal entry or separate archive run.
 
-No durable lessons have been recorded yet.
+## Make connected fixture success observable
+
+When comparing enabled/disabled diagnostic paths, assert the expected successful or refused native frames and backend call counts before comparing bytes. Identical empty failures cannot prove compatibility. Private Serve fixtures must explicitly chmod their temporary root0700; the testing helper alone is not a privacy contract. M34 task review1 caught both issues; focused03 and task review2 verified their correction. [Evidence](../docs/history/status-M34.md).

@@ -1,5 +1,9 @@
 # Architecture
 
+## M34 startup diagnostic boundary
+
+`authorworker.Options.StartupDiagnosticSink` and the explicit capture constructor opt into a nonblocking caller-owned channel. Closed/full/nil sinks cannot replace operation errors. Each Open owns a mutex-protected64KiB driver-stderr ring and copies at most16KiB of original error text; typed classifications are independent of text. Snapshotting precedes cleanup and generic backend conversion. No new wire field, authority, effect or Join proof follows; Kinet:M53.33 owns the separate bound carrier and consumption. [API](../../docs/author-diagnostics.md).
+
 ## Accepted M33 shape and capture boundaries
 
 M33 whole review2 and integrated offline checks pass. Source SHA256 binds exact

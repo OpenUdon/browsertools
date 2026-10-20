@@ -1,6 +1,6 @@
 # AGENTS.md
 
-**Approved M34 repair — 2026-10-20.** Bounded optional author startup diagnostics are a pending STG-12 producer prerequisite for Kinet:M53.33/M53.4. Root owns ledgers/integration; offline checks and fresh task/whole reviews precede exact publication/adoption. Retired M33 and closed historical A14 remain unchanged. No browser authority; audit disabled.
+**Accepted M34 repair — 2026-10-20.** Task review2, focused/race/full offline tests, vet and fresh whole review1 pass. The complete record is retired in tabilet/docs/history/status-M34.md. Exact publication and independently verified ordinary adoption precede Kinet:M53.33. Retired M33/closed A14 remain unchanged; no browser authority, audit disabled.
 
 ## Stage 12 concurrent goal ownership
 

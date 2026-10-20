@@ -308,3 +308,12 @@ frozen in the [history index](../docs/history/index.md).
 ```
 
 Replacement: memory-bank/milestone.md Current State and M34 specification; status-M34.md. No implemented behavior is claimed.
+
+## M34 closure current-pointer supersession — 2026-10-20
+
+Source: tabilet/memory-bank/milestone.md Current State. Superseded pending pointer after accepted implementation/task review2/whole review1; replacement is current local acceptance with separate publication/adoption gates. Previous wording:
+
+```text
+Browsertools:M34 is an approved STG-12 corrective producer prerequisite for
+Kinet:M53.33/M53.4, pending implementation.
+```

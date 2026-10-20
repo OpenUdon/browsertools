@@ -1,5 +1,9 @@
 # Product
 
+## Accepted M34 optional startup diagnostics
+
+The author worker can opt into a bounded private snapshot of an original startup failure, before public-error flattening and cleanup. Ordinary errors, native protocol bytes and diagnostic files remain unchanged. Raw error/stderr are synthetic-only caller-owned data; missing delivery is incomplete evidence. [API](../../docs/author-diagnostics.md) and [closure](../../docs/m34-closure.md) define the limits. Kinet owns secure transport, final diagnostic reporting and physical acceptance.
+
 ## Accepted M33 browser shapes and managed capture
 
 M33 is accepted locally after all four rows, whole review2 and integration
