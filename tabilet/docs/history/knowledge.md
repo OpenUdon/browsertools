@@ -290,3 +290,21 @@ Build browsertools in reviewable slices:
 53. `M31`: preserve exact Browser 1.8 integer defaults through typed profiles and offline drafts.
 54. `M32`: add typed Browser 1.10 selector match-count support to validation and offline authoring.
 ````
+
+
+## Superseded current planning pointers — causal startup repair, 2026-10-20
+
+Source: memory-bank/milestone.md, Current State / Delivery Strategy / Milestones. M34 adds approved pending work; delivered history remains unchanged. Literal prior wording:
+
+```text
+Browsertools has no executable milestone work in flight. The delivered
+milestones through M33 and A13, including every P- and E-lane unit, are retired;
+No numbered delivery sequence remains active. New work requires an approved
+requested-change proposal and a fresh, unused milestone ID; it is scheduled by
+dependency and priority rather than by reusing retired slices.
+No executable milestone specification remains. A14's closed-historical
+record is in [status-A14.md](status-A14.md); delivered specifications are
+frozen in the [history index](../docs/history/index.md).
+```
+
+Replacement: memory-bank/milestone.md Current State and M34 specification; status-M34.md. No implemented behavior is claimed.

@@ -437,13 +437,14 @@ Additional rules:
 
 ## Current State
 
-Browsertools has no executable milestone work in flight. The delivered
+Browsertools:M34 is an approved STG-12 corrective producer prerequisite for
+Kinet:M53.33/M53.4, pending implementation. The delivered
 milestones through M33 and A13, including every P- and E-lane unit, are retired;
 their complete final specifications, status ledgers, review evidence and legacy
 closure records are frozen in the [history index](../docs/history/index.md).
 Retired IDs remain reserved.
 
-A14 - Private authenticated worker diagnostics remains the only active status
+A14 - Private authenticated worker diagnostics retains its active historical status
 record. It is closed historical under the recorded consumer-owned
 W13.1c/.d/.f/.m/.q/.u acceptance and adoption, and its own record states that it
 does not claim new engineering acceptance under this package's review gate. No
@@ -456,14 +457,15 @@ and Kinet W20 remain separate external owners. Audit remains disabled.
 ## Delivery Strategy
 
 Delivered work through M33 is recorded in the [history index](../docs/history/index.md).
-No numbered delivery sequence remains active. New work requires an approved
-requested-change proposal and a fresh, unused milestone ID; it is scheduled by
-dependency and priority rather than by reusing retired slices.
+Required order: M34 local implementation/tests/reviews and exact publication,
+then Kinet:M53.33 adoption. Other new work still requires approved planning
+and unused IDs; retired slices remain frozen.
 
 ## Status Files
 
 | Milestone | Status File | State |
 |---|---|---|
+| M34 - Bounded author startup failure diagnostics | [status-M34.md](status-M34.md) | Approved pending; required Kinet release prerequisite |
 | A14 - Private authenticated worker diagnostics | [status-A14.md](status-A14.md) | Closed historical under recorded W13.1c/.d/.f/.m/.q/.u consumer acceptance/adoption; task pointers reconciled, reviews unchanged |
 
 Retired milestones are not listed here. Their frozen records, outcomes and
@@ -884,6 +886,25 @@ instruction. Never initialize Git merely to make retirement possible.
 
 ## Milestones
 
-No executable milestone specification remains. A14's closed-historical
-record is in [status-A14.md](status-A14.md); delivered specifications are
-frozen in the [history index](../docs/history/index.md).
+### M34 — Bounded author startup failure diagnostics
+
+Status: [status-M34.md](status-M34.md). Stage STG-12. Required successor repair to accepted M33/A14 diagnostics, not historical reopening.
+
+Depends on: accepted M33 backend/worker/privacy contracts. Downstream impacts: Kinet:M53.33 -> M53.4 -> M53.5/whole -> OpenUdon:A32.
+Write set: `authordiagnostic/`, `capture/playwright_author.go` and focused diagnostic tests, `authorworker/worker.go` and corresponding tests, `docs/author-diagnostics.md`; coordinator-only planning/closure records. Contracts read: frozen native author protocol and existing Kinet startup/privacy/boundary interfaces. Parallel-safe: no; one isolated producer lease, serialized review/integration/publication, frozen inputs.
+
+Review provenance: M53 causal diagnostics deep review, 2026-10-20; source priorities not supplied. Review baseline Kinet `f68a0f1447dceda9bf085d935f76975fad2caf79`, Browsertools `49f6dadce58a25a95908ed6e98d158a7b8d283f1`; frozen producer `1859f5e34367cb0a3fbc34ddbc2446b59ce3f2bc` source matches current relevant files. Kinet's existing uncommitted startup qualification fixture is included. Intake is not a task or whole-milestone review iteration.
+
+F01 (confirmed P2) original backend/stderr loss belongs to Browsertools:M34, successor repair of accepted M33/A14 diagnostics without reopening their history. F02 (confirmed P2) contained-wrapper loss of surviving Classify/RejectionOf belongs to M53.33. F03 (confirmed P2) original Channel.Receive/managed bridge failure collapse and omitted bounded boundary observations belong to M53.33. F04 (confirmed P2) early qualification exits and incomplete target/settlement reporting belong to M53.33. F05 (confirmed P2) pre-Open refusals and incomplete connected failure-path coverage belong to M53.33 with M34 producer tests. The existing browser hold already owns the no-retry disposition; no duplicate operational row is created. Existing stderr/display limits and synthetic-only privacy policy are design constraints, not a new privacy waiver.
+
+Acceptance: optional bounded producer failure snapshot before flattening/cleanup; existing native NDJSON/public errors/default privacy unchanged. Original operation/typed timeout or target-closed/policy class and private synthetic-only bounded original error/driver-stderr fallback remain separate from cleanup/capture failure. Kinet carries validated closed producer codes (including refusals before Open), source-owned channel reasons and existing provisional Bootstrap/Launcher/Display observations. A narrowly activated lease-owned stderr carrier demultiplexes diagnostics before the existing display observer, drains after overflow, retains strict binding/size/completeness and never grants effects/Join/retry authority. Do not reuse the M56 Observe-only trace. One startup fixture finalizer records target fixed buckets (including unexpected contacts), Run/nativeJoin/boundaryJoin/manager/HTTP/capture states even on ordinary failure/deadline; missing evidence remains incomplete, including abrupt process loss.
+
+Verification: offline Go fake browser operations, actual pinned producer Serve/turn framing/host adapters/workflow mapping, actual local pipes and httptest only. Cover pre-Open refusals with Open count0, original failure plus failed cleanup/sink/output, wrapped typed errors and deceptive strings, fragmented/oversized/unbound/partial diagnostic records, actual channel EOF/framing/size/context branches, fixed target buckets and partial final reports; retain success/refusal wire bytes and no replay. No browser, Xvfb, new supervisor, snapshots, new persistent cache or raw public/ledger diagnostics. Focused120s+5kill; race300s only where changed shared state requires it; full owner regression once at closure under1200s. Freeze coherent recipes and independently review before counted checks, preserving all failure gates. Do not transfer Kinet-only supplements to sibling checks; producer ordinary owner-repair verification uses existing applicable local authority and its own persisted attempts. Existing publication/acquisition envelope is bound to exact reviewed revisions before dispatch; no new authority/quantity or expired grant revival. Original M53.4 owns exact final artifacts/installation/currentness and separately scoped physical qualification.
+
+AUTHORIZATION_REQUIREMENTS:
+  git.commit: {via: goal-policy, scope: completed reviewed local task/closure only}
+  cli.local: {via: goal-policy, scope: bounded offline implementation/verification with cached inputs}
+  git.push: {via: explicit, scope: exact reviewed source/closure under existing completion-envelope repository/remote/main and remaining quantities}
+  browser: {via: explicit, scope: not part of M34; physical proof remains Kinet:M53.4}
+
+A14 remains closed historical; delivered specifications stay frozen in the history index.
