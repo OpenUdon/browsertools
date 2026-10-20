@@ -62,7 +62,6 @@ their source-document meaning.
 | A11 | completed | 2026-10-18 | [A11](status-A11.md) | Registration Route-Abort Containment Correction. Review iteration 1 passed. Complete. |
 | A12 | completed | 2026-10-18 | [A12](status-A12.md) | Generic registration 1.1 producer. Review iteration 6 passed. Complete. |
 | A13 | completed | 2026-10-18 | [A13](status-A13.md) | Reviewed verification authoring; implementation and downstream qualification complete; review iteration 3 passed; exact tested-byte adoption passed. |
-
 | M34 | completed | 2026-10-20 | [M34](status-M34.md) | Bounded opt-in original startup diagnostics; task review2 and whole review1 pass; offline-only proof, publication/adoption separate. |
 
 ## Knowledge journal
