@@ -1,6 +1,7 @@
 // Package authordiagnostic carries closed private worker failure metadata. It
-// is independent of the public author-session protocol and contains no errors,
-// URLs, page text, credentials, or browser state.
+// is independent of the public author-session protocol. Its v1/v2 records
+// contain no errors, URLs, page text, credentials, or browser state. The separate
+// opt-in startup snapshot can contain private synthetic error/stderr text.
 package authordiagnostic
 
 import (

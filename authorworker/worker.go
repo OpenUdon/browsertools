@@ -22,14 +22,17 @@ import (
 // Options contains the complete worker boundary. Stdin and Stdout carry only
 // browsertools.author-session.v2 messages. PrivateRoot receives the private
 // result envelope; DriverDirectory points at an already installed Playwright
-// runtime.
+// runtime. StartupDiagnosticSink is opt-in synthetic-only private output; use a
+// buffered channel and a finite caller-owned drain. It never carries native wire
+// messages and a missing delivery is incomplete evidence.
 type Options struct {
-	BlockedScriptOrigin string
-	DiagnosticPath      string
-	PrivateRoot         string
-	DriverDirectory     string
-	Stdin               io.ReadCloser
-	Stdout              io.Writer
+	StartupDiagnosticSink chan<- authordiagnostic.StartupFailure
+	BlockedScriptOrigin   string
+	DiagnosticPath        string
+	PrivateRoot           string
+	DriverDirectory       string
+	Stdin                 io.ReadCloser
+	Stdout                io.Writer
 }
 
 // Run serves one Chromium author session until completion, cancellation, or a
@@ -49,12 +52,20 @@ func Run(ctx context.Context, options Options) (result error) {
 			result = errors.Join(result, authordiagnostic.WriteV2(diagnostic, result), diagnostic.Close())
 		}()
 	}
-	browser, err := capture.NewPlaywrightAuthorBrowserWithPolicy(options.DriverDirectory, options.BlockedScriptOrigin)
+	browser, err := capture.NewPlaywrightAuthorBrowserWithDiagnostics(options.DriverDirectory, options.BlockedScriptOrigin, options.StartupDiagnosticSink)
 	if err != nil {
 		return err
 	}
 	if _, err := capture.PreflightPlaywrightDriver(options.DriverDirectory); err != nil {
-		return &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: "driver", Reason: "failed"}}
+		closed := &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: "driver", Reason: "failed"}}
+		if options.StartupDiagnosticSink != nil {
+			authordiagnostic.OfferStartup(options.StartupDiagnosticSink, authordiagnostic.StartupFailure{
+				Operation: "preflight", Class: closed.Class, Rejection: authordiagnostic.NoRejection(),
+				Types:    authordiagnostic.StartupTypes{Canceled: errors.Is(err, context.Canceled), Deadline: errors.Is(err, context.DeadlineExceeded)},
+				RawError: authordiagnostic.CaptureErrorText(err), DriverStderr: authordiagnostic.PrivateCapture{Missing: true},
+			})
+		}
+		return closed
 	}
 	return run(ctx, options, time.Now, func(string) authorsession.Browser { return browser })
 }

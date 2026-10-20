@@ -37,12 +37,41 @@ func NewPlaywrightAuthorBrowserWithPolicy(driverDirectory, blockedScriptOrigin s
 	return &playwrightAuthorBrowser{driverDirectory: strings.TrimSpace(driverDirectory), policy: policy}, nil
 }
 
+// NewPlaywrightAuthorBrowserWithDiagnostics opts into synthetic-only private
+// startup snapshots. The caller owns a buffered sink and must drain it within
+// its own finite lifetime; delivery is best effort and never blocks cleanup.
+func NewPlaywrightAuthorBrowserWithDiagnostics(driverDirectory, blockedScriptOrigin string, sink chan<- authordiagnostic.StartupFailure) (authorsession.Browser, error) {
+	browser, err := NewPlaywrightAuthorBrowserWithPolicy(driverDirectory, blockedScriptOrigin)
+	if err != nil {
+		return nil, err
+	}
+	browser.(*playwrightAuthorBrowser).startupDiagnosticSink = sink
+	return browser, nil
+}
+
 type playwrightAuthorBrowser struct {
-	driverDirectory string
-	policy          authorpolicy.Policy
+	driverDirectory       string
+	policy                authorpolicy.Policy
+	startupDiagnosticSink chan<- authordiagnostic.StartupFailure
+	// Per-instance internal driver seams keep offline failure-path tests browser-free.
+	startDriver func(*playwright.RunOptions) (*playwright.Playwright, error)
+	stopDriver  func(*playwright.Playwright) error
 }
 
 func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsession.BrowserRequest) (_ authorsession.Session, err error) {
+	var stderr *authordiagnostic.StderrRing
+	var stderrWriter io.Writer = io.Discard
+	if b.startupDiagnosticSink != nil {
+		stderr = &authordiagnostic.StderrRing{}
+		stderrWriter = stderr
+	}
+	fail := func(operation, stage string, original error) error {
+		b.captureStartupFailure(operation, stage, original, stderr)
+		if stage != "" {
+			return authorBackendError(stage, original)
+		}
+		return original
+	}
 	defer func() {
 		var policy *policyError
 		if errors.As(err, &policy) {
@@ -60,15 +89,19 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		ctx = context.Background()
 	}
 	if err := validateAuthorBrowserRequest(request); err != nil {
-		return nil, err
+		return nil, fail("validate", "", err)
 	}
-	pw, err := playwright.Run(&playwright.RunOptions{
+	startDriver := b.startDriver
+	if startDriver == nil {
+		startDriver = func(options *playwright.RunOptions) (*playwright.Playwright, error) { return playwright.Run(options) }
+	}
+	pw, err := startDriver(&playwright.RunOptions{
 		DriverDirectory: b.driverDirectory, SkipInstallBrowsers: true, Verbose: false,
-		Stdout: io.Discard, Stderr: io.Discard,
+		Stdout: io.Discard, Stderr: stderrWriter,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
-		return nil, authorBackendError("driver", err)
+		return nil, fail("driver", "driver", err)
 	}
 	var browser playwright.Browser
 	var browserContext playwright.BrowserContext
@@ -88,7 +121,11 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 				result = errors.Join(result, fmt.Errorf("close headed Chromium"))
 			}
 		}
-		if stopErr := pw.Stop(); stopErr != nil {
+		stopDriver := b.stopDriver
+		if stopDriver == nil {
+			stopDriver = func(pw *playwright.Playwright) error { return pw.Stop() }
+		}
+		if stopErr := stopDriver(pw); stopErr != nil {
 			result = errors.Join(result, fmt.Errorf("stop Playwright driver"))
 		}
 		return result
@@ -101,7 +138,7 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 
 	timeout, err := operationTimeout(ctx, request.NavigationTimeout)
 	if err != nil {
-		return nil, err
+		return nil, fail("timeout", "", err)
 	}
 	browser, err = pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
 		Headless: playwright.Bool(false), ChromiumSandbox: playwright.Bool(true),
@@ -109,7 +146,7 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		Args: []string{"--deny-permission-prompts"},
 	})
 	if err != nil {
-		return nil, authorBackendError("launch", err)
+		return nil, fail("launch", "launch", err)
 	}
 	browserContext, err = browser.NewContext(playwright.BrowserNewContextOptions{
 		AcceptDownloads: playwright.Bool(false), NoViewport: playwright.Bool(true),
@@ -117,10 +154,10 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		Permissions: []string{},
 	})
 	if err != nil {
-		return nil, authorBackendError("context", err)
+		return nil, fail("context", "context", err)
 	}
 	if err := browserContext.ClearPermissions(); err != nil {
-		return nil, authorBackendError("context", err)
+		return nil, fail("permissions", "context", err)
 	}
 	browserContext.SetDefaultNavigationTimeout(float64(request.NavigationTimeout.Milliseconds()))
 	browserContext.SetDefaultTimeout(float64(request.NavigationTimeout.Milliseconds()))
@@ -128,14 +165,14 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 	guard.policy = b.policy
 	interception, err = installAuthorInterception(browser, guard, request.NavigationTimeout)
 	if err != nil {
-		return nil, authorBackendError("guard", err)
+		return nil, fail("guard", "guard", err)
 	}
 	if err := installAuthorNetworkPolicy(browserContext, guard); err != nil {
-		return nil, authorBackendError("guard", err)
+		return nil, fail("guard", "guard", err)
 	}
 	page, err := browserContext.NewPage()
 	if err != nil {
-		return nil, authorBackendError("page", err)
+		return nil, fail("page", "page", err)
 	}
 	session := &playwrightAuthorSession{
 		pw: pw, browser: browser, browserContext: browserContext, request: request, guard: guard, interception: interception,
@@ -153,7 +190,7 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		session.installSurfacePolicy(popup)
 	})
 	if err := guard.beginNavigation(); err != nil {
-		return nil, err
+		return nil, fail("navigation", "", err)
 	}
 	response, navigationErr := page.Goto(request.URL, playwright.PageGotoOptions{
 		Timeout: playwright.Float(timeout), WaitUntil: playwright.WaitUntilStateLoad,
@@ -161,10 +198,10 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 	guard.endNavigation()
 	// Check the guard first: a policy abort also causes Goto to fail.
 	if err := guard.result(); err != nil {
-		return nil, err
+		return nil, fail("guard", "", err)
 	}
 	if navigationErr != nil {
-		return nil, authorBackendError("navigation", navigationErr)
+		return nil, fail("navigation", "navigation", navigationErr)
 	}
 	reason := ""
 	switch {
@@ -176,7 +213,7 @@ func (b *playwrightAuthorBrowser) Open(ctx context.Context, request authorsessio
 		reason = "service_worker"
 	}
 	if reason != "" {
-		return nil, &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: "navigation", Reason: reason}}
+		return nil, fail("navigation_response", "", &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: "navigation", Reason: reason}})
 	}
 	return session, nil
 }
@@ -1133,7 +1170,41 @@ var (
 	}
 )
 
+func (b *playwrightAuthorBrowser) captureStartupFailure(operation, stage string, original error, stderr *authordiagnostic.StderrRing) {
+	if b.startupDiagnosticSink == nil {
+		return
+	}
+	class := authordiagnostic.Classify(original)
+	rejection := authordiagnostic.RejectionOf(original)
+	if stage != "" {
+		class = authorBackendClass(stage, original)
+		rejection = authordiagnostic.NoRejection()
+	}
+	var policy *policyError
+	if errors.As(original, &policy) {
+		candidate := authordiagnostic.Class{Stage: "policy", Reason: policy.Code}
+		if candidate.Valid() {
+			class = candidate
+			if class.Reason == "origin_escape" {
+				rejection = authordiagnostic.RejectionOf(original)
+			}
+		}
+	}
+	authordiagnostic.OfferStartup(b.startupDiagnosticSink, authordiagnostic.StartupFailure{
+		Operation: operation, Class: class, Rejection: rejection,
+		Types: authordiagnostic.StartupTypes{
+			Timeout: errors.Is(original, playwright.ErrTimeout), TargetClosed: errors.Is(original, playwright.ErrTargetClosed),
+			Canceled: errors.Is(original, context.Canceled), Deadline: errors.Is(original, context.DeadlineExceeded),
+		},
+		RawError: authordiagnostic.CaptureErrorText(original), DriverStderr: stderr.Snapshot(),
+	})
+}
+
 func authorBackendError(stage string, err error) error {
+	return &authordiagnostic.Error{Class: authorBackendClass(stage, err)}
+}
+
+func authorBackendClass(stage string, err error) authordiagnostic.Class {
 	reason := "failed"
 	if stage == "navigation" {
 		reason = "transport"
@@ -1141,5 +1212,5 @@ func authorBackendError(stage string, err error) error {
 	if errors.Is(err, playwright.ErrTimeout) || errors.Is(err, context.DeadlineExceeded) {
 		reason = "timeout"
 	}
-	return &authordiagnostic.Error{Class: authordiagnostic.Class{Stage: stage, Reason: reason}}
+	return authordiagnostic.Class{Stage: stage, Reason: reason}
 }

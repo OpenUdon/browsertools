@@ -18,12 +18,26 @@ Verification: offline Go fake browser operations, actual pinned producer Serve/t
 
 | Item | State | Notes |
 |---|---|---|
-| M34.1 — Implement bounded optional original startup failure diagnostics | `[~]` | Coherently add opt-in backend failure/driver-stderr sink, original operation/typed classifications before privacy flattening and cleanup, authorworker options/caller plumbing, meaningful connected offline success/failure/privacy tests and API documentation. Default disabled; existing errors/wires/cleanup unchanged. Bounded memory/capture failure states; no browser or broad logging. Separate verified source commit after fresh task review; fresh whole review and ordinary exact publication before Kinet adoption. |
+| M34.1 — Implement bounded optional original startup failure diagnostics | `[+]` | Taskreview2 PASS/allfive/no findings; focused03 PASS2.824s/16top28RUN, race01 PASS2.794s; exit0/originalWait/pinsstable/stderr0. Source task complete, whole review/publication pending. Coherently add opt-in backend failure/driver-stderr sink, original operation/typed classifications before privacy flattening and cleanup, authorworker options/caller plumbing, meaningful connected offline success/failure/privacy tests and API documentation. Default disabled; existing errors/wires/cleanup unchanged. Bounded memory/capture failure states; no browser or broad logging. Separate verified source commit after fresh task review; fresh whole review and ordinary exact publication before Kinet adoption. |
 
 ## Review
 
-Task M34.1 review0; whole-milestone review0/10, not started. All five lenses required. No acceptance claimed.
+Task M34.1 review1 FAIL: M34-R1-F01/P2 nonprivate Serve fixtures and M34-R1-F02/P2 vacuous success/refusal parity. Both test-only corrections prepared; original outcomes retained. Fresh Sol/high task review2 PASS, allfive/no findings, actualfocused03/race01 verified. Whole-milestone review0/10, not started. All five lenses required. No acceptance claimed.
 
 ## Verification attempts
 
-None dispatched. Serial offline recipe/readiness/claim/outcome records will be retained here and in existing coordinator state. No Kinet-only allowance transfer.
+Focused01 claimed before dispatch under ordinary local owner-repair authority; exact inputs b13743d0, independent readiness PASS,120s original deadline+5s kill grace. Goal release check341; producer own ordinal1; Kinet13 supplement unchanged. Outcome FAIL0.604s, original outer Wait/exit1/pins stable. authordiagnostic selected tests PASS0.068s; three dependent packages setup failed because exact UWS f01 is absent from the selected ordinary cache. Offline download blocked; no network/browser. Failure retained; input-cache correction required before successor. Producer same-stage failure1.
+
+m34-focused02 claimed: producer2/goal342, independently reviewed recipe, original deadline 2026-10-20T02:32:54.647087+00:00; outcome pending.
+
+m34-focused02 FAIL, exit1/original outerWait, tool wall not individually measured across yielded session, 16 top-level/26 RUN/0 skips, pins stable=True, stderr0B. Exact receipt in coordinator qualification state; no browser proof.
+
+m34-focused03 claimed: producer3/goal343, independently reviewed recipe, original deadline 2026-10-20T02:36:11.500839+00:00; outcome pending.
+
+m34-focused03 PASS, exit0/original outerWait, tool wall 2.824s, 16 top-level/28 RUN/0 skips, pins stable=True, stderr0B. Exact receipt in coordinator qualification state; no browser proof.
+
+m34-race01 claimed: producer4/goal344, independently reviewed recipe, original deadline 2026-10-20T02:39:28.318349+00:00; outcome pending.
+
+m34-race01 PASS, exit0/original outerWait, tool wall 2.794s, 1 top-level/1 RUN/0 skips, pins stable=True, stderr0B. Exact receipt in coordinator qualification state; no browser proof.
+
+Readiness provenance correction: immutable focused03/race01 claims incorrectly name taskreview1 in a metadata field. Actual exact-manifest readiness came from fresh reviewer /root/m34_task_review2 before dispatch. Claims remain immutable; commands, pins, scopes, deadlines and quantities unchanged.
