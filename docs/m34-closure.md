@@ -4,7 +4,7 @@ Implementation `e8d0966fba8584762355078c7e319890b95b7d8b` preserves the native/p
 
 Focused03 passed2.824s (16 top-level/28 RUN), ring race01 passed2.794s, complete regression passed477 top-level/1205 RUN with14 explicit live opt-in skips, and standalone vet passed. Exact full/vet wall time was unavailable across yielded tool sessions; package timings were retained. All completed with exit0/original outer Wait/stable pins/empty stderr. Focused01 failed on an incomplete existing cache; an independently verified105281B local-only cache fill corrected inputs. Focused02 exposed nonprivate temporary roots and vacuous byte parity; test-only repairs enforce0700 and positive frames/call counts. Neither failure was erased or retried unchanged.
 
-- `focused`: CLAIMED; stdout SHA256 `fdf84fb17ca483e94e95f9ceb8f09b7e95fe7f8a99df6d1c87e8d9da6b0d06a4`.
+- `m34-focused01`: FAIL_MISSING_OFFLINE_DEPENDENCY; stdout SHA256 `fdf84fb17ca483e94e95f9ceb8f09b7e95fe7f8a99df6d1c87e8d9da6b0d06a4`.
 - `m34-focused02`: FAIL; stdout SHA256 `93378d87a1d1090e879a5a333d31b0e16ed6ea7106d73adf00544e31f7cc5f52`.
 - `m34-focused03`: PASS; stdout SHA256 `eca824c2f2b11b95b6778b0518312a2923f46d920695b3430da91469437cc78a`.
 - `m34-race01`: PASS; stdout SHA256 `2a7ef74d7e0c0aee404714f26c3ea24b069bda9600759e798105121ec7c0761c`.
