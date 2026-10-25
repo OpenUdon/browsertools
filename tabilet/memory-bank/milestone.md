@@ -1,3 +1,84 @@
+## Approved Stage 13 planning — 2026-10-25
+
+The owner approved the revised **8-milestone / 34-pending-task** STG-13 plan after
+the Kinet Stage 13 plan review (`kinet-stage13.md`). Owner-approved full rescope on 2026-10-25 (approval: “I aapaprove”), following the earlier whole-stage approval. Planning only; no execution, commit or grant activation.
+Seven former cleanup milestones / 24 rows remain withdrawn history; HCL removal
+and legacy-wrapper retirement are separate unnumbered candidates.
+[Coordinator and acceptance](../../../kinet/docs/stage13.md); [stage overview](../../../kinet/tabilet/stages.md#stg-13).
+
+**Current Browsertools Stage 13 horizon.** None; this package supplies retained compatible contracts only. One serial execution owner; parallel-safe no. The Kinet launch reference includes only the eight active milestones. This current section governs over earlier dated checkpoints.
+
+Preserve supported Ramen/Udon HCL input/output and supporting UWS codecs;
+Ramen remains YAML-first. Stage 12 stays closed. Withdrawn Kinet:M54/M55,
+Udon:M54, UWS:C11 and APItools:M86, accepted/retired evidence, all historical
+UNKNOWNs and consumed grants remain unchanged. Stage 14 stays unscheduled;
+audit stays disabled. No old permission, budget or trigger is reactivated.
+
+| ID | Status file | State | Dependencies |
+|---|---|---|---|
+| M35 | [status-M35.md](status-M35.md) | Withdrawn; 3 rows `[X]`; undelivered; review 0/10 | None active; original dependencies retained in the withdrawn record. |
+
+<a id="stg13-m35"></a>
+
+### M35 — UWS adoption and browser-profile contract preservation
+
+**State.** Withdrawn by the owner on 2026-10-25; 3 untouched rows are `[X]`, review 0/10 unchanged. Withdrawn by the owner-approved 2026-10-25 rescope: retain supported HCL in Ramen/Udon and the supporting UWS codecs. This obligation is undelivered, not accepted. HCL removal and legacy-wrapper retirement move to separate unnumbered Candidate Directions; no replacement is scheduled and no active milestone depends on this row.
+**Active dependencies/downstream.** None. M61 now owns product integration without this cleanup; it does not deliver the withdrawn removal outcome.
+**Disposition and preserved task text.** [status-M35.md](status-M35.md). See the [unnumbered candidates](../../../kinet/tabilet/memory-bank/milestone.md#candidate-directions).
+
+The following original specification is frozen planning history. Its dependency,
+verification, execution-policy and authorization declarations are non-effective.
+
+<details>
+<summary>Original withdrawn specification (undelivered)</summary>
+
+````text
+### M35 — UWS adoption and browser-profile contract preservation
+
+**Stage/owner.** Kinet STG-13; Browsertools. **State.** Approved planning; 3 pending rows; review 0/10.
+**Depends on.** [UWS:C13](../../../uws/tabilet/memory-bank/status-C13.md)
+**Downstream.** [Kinet:M61](../../../kinet/tabilet/memory-bank/status-M61.md)
+**Outcome.** Browsertools adopts the published UWS core retirement without changing browser-profile, capture or authentication authority.
+
+**Write set.** Browsertools public UWS adapters and serialization, module pins, focused fixtures and compatibility documentation. Package-local documentation and status follow the owning change. Other repositories have their own owners. **Parallel-safe: no.**
+
+**Lineage.** New Browsertools consumer milestone; accepted M33/M34 and historical A14 records stay unchanged.
+
+**Acceptance.**
+
+- Adopt exact published C13 with normal module resolution and preserve immutable browser profiles and producer identity rules.
+- No retained HCL parser bypass accepts UWS input; independent historical/display behavior remains explicit. Actual native/physical browser proof is not inferred from compile or mocks.
+
+**Verification.** Existing offline Go tests/vet and profile/schema/source fixtures, UWS HCL/wrapper refusal and JSON/YAML preservation; no physical capture or browser launch. Preserve existing package verification standards, attempt limits and review gates. Use focused checks during coherent changes and required closure checks; reuse valid evidence, rerun affected checks after fixes and distinguish executed, mocked, compile-only and deferred proof. No implementation tests have run under this plan.
+
+**Execution policy.** Future launch proposes workspace-contained local work, task commits, corrective-planning auto and option-ignore. Planning activates no grants. No live model/provider/browser, sudo, SSH, deployment or real user-ledger access is implicit. Substantial necessary discoveries use amendments; external testing-tool repair remains optional. No old budget, authority or historical UNKNOWN is reset.
+
+```yaml
+AUTHORIZATION_REQUIREMENTS:
+  git.commit:
+    via: goal-policy
+    executor: coordinator
+  cli.local:
+    via: goal-policy
+    executor: coordinator
+    scope:
+      repository: /home/peter/Workspace/browsertools
+      task: declared-implementation-and-verification
+  git.push:
+    via: explicit
+    executor: coordinator
+    scope:
+      repository: /home/peter/Workspace/browsertools
+      remote: git@github.com-tabilet:OpenUdon/browsertools.git
+      ref: refs/heads/main
+      mode: fast-forward
+```
+
+**Task/review owner.** [status-M35.md](status-M35.md) owns the 3 rows and persisted review; [the coordinator](../../../kinet/docs/stage13.md) owns cross-package acceptance and order.
+````
+
+</details>
+
 # Milestones
 
 Each milestone section is a review unit: after no `[ ]`, `[~]`, or `[!]` rows
@@ -540,6 +621,8 @@ Required order: exact accepted M34 publication/verification, then Kinet:M53.33 a
 and unused IDs; retired slices remain frozen.
 
 ## Status Files
+
+New Stage 13 records are indexed in [Approved Stage 13 planning](#approved-stage-13-planning--2026-10-25) above. Existing records below retain their earlier dispositions.
 
 | Milestone | Status File | State |
 |---|---|---|
