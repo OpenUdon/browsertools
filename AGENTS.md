@@ -224,11 +224,15 @@ When changing OpenUdon-facing exports, run the consumer checks when available:
   review candidates.
 - Fail closed on ambiguous UI targets, expired evidence, origin violations, or
   missing side-effect/confirmation metadata.
+- Prefer the language's native core/standard library before adding helpers,
+  frameworks, or dependencies. Keep trivial comparisons and transformations
+  inline when that is clearer than introducing a local abstraction.
 
 ## Work Cadence
 
 - Update memory-bank files in the same change as implementation work:
-  product scope -> `product.md`; architecture/data flow/contracts ->
+  product scope/domain terminology/concept relationships/business invariants ->
+  `product.md`; architecture/data flow/contracts ->
   `architecture.md`; tools/dependencies/commands -> `tech-stack.md`;
   milestone scope/acceptance -> `milestone.md`; completion state -> matching
   `status-<LANE><NN>.md`.
@@ -297,6 +301,11 @@ When changing OpenUdon-facing exports, run the consumer checks when available:
   review unit. See that file for milestone review rules.
 - After the last task in a milestone is complete, run a deep code review of the
   milestone before closing it.
+- For substantial discoveries, follow
+  [milestone families](tabilet/memory-bank/milestone.md#milestone-families):
+  required amendments preserve original acceptance; options wait until parent
+  closure or remain deferred under `OPTION_POLICY: ignore`. External testing-tool
+  repair requires explicit owner promotion before it becomes a blocking amendment.
 - `CORRECTIVE_PLANNING` defaults to `confirm`. With human-approved `auto`, the
   Goal/Next owner may prepare and check necessary corrective plans within the
   original delivery outcome, owning repositories, existing grants and limits,

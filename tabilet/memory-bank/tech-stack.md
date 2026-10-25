@@ -294,6 +294,39 @@ git diff --check
 ../skills/harness/tackle-memory-bank-api-loop --model lane-audit .
 ```
 
+### API runner compatibility
+
+The installed API runner is not currently compatible with this package's frozen
+retirement records. Read-only inspection on 2026-10-25 of
+`../skills/harness/tackle-memory-bank-api-loop` (SHA-256
+`599ca6049d60f8971ce161736153282df52f00eb1714ab9ce70146b4ae6f88fa`)
+rejects all 57 records because their retained original specifications use
+level-three headings while its parser requires level-two headings. The runner
+command above remains documented, but API execution/retirement readiness is
+blocked until a separately authorized tools-package compatibility repair passes
+read-only validation of the existing records. Preserve those records byte-for-byte;
+this workflow-rule merge does not repair the runner or revalidate old acceptance.
+
+## Verification and testing standards
+
+- Keep the existing standard verification stance; this rule merge selects no
+  light profile or new time/attempt budget. Explicit milestone, tool and
+  human-approved authorization limits remain authoritative.
+- Run focused affected-package checks during task loops. Run full regression
+  once per unchanged closure candidate; repeat for changes, failures or unresolved
+  coverage. Run race/UI checks when affected shared state or UI behavior requires
+  them and when milestone acceptance requires them. Separate initial compilation
+  from uncached test timing, and rerun affected checks after review fixes.
+- Preserve meaningful success and failure coverage when replacing an
+  implementation. Remove a test only after its behavior moves or is removed.
+- Acceptance readiness: identify missing final inputs, capabilities and authority
+  early. Before each counted expensive attempt, run a fast preflight of the exact
+  fixtures, schemas, launchers, required inputs and available capabilities, and
+  check the scoped authority and remaining budget. A preflight or mock does not
+  replace required real acceptance. Missing evidence pauses the affected gate.
+- Routine fixtures remain offline and small. Physical/browser proof belongs to
+  its named authorized acceptance gate; existing coverage is not reduced.
+
 ## Go Dependencies
 
 - `github.com/santhosh-tekuri/jsonschema/v6` remains aligned with the pinned UWS

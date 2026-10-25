@@ -9,6 +9,10 @@ learning, and consolidate them during milestone closure. A still-applicable
 lesson stays here even after its supporting milestone retires; closing a task
 or reaching an arbitrary file size is not a reason to discard useful knowledge.
 
+Before recording a lesson about a mistake, ask whether a deterministic check
+(a linter rule, test, or CI job) could catch it. If so, propose the check; keep
+lessons for judgement calls no tool can make.
+
 For each lesson, use a descriptive heading and record when it applies, the
 lesson, why it matters, and links to supporting tasks, verification, or retired
 records. Keep product facts in `product.md`, system contracts in

@@ -25,6 +25,69 @@ milestone is parallel-safe only when unordered against other active work, its
 write set is disjoint, and its inputs are frozen. Parallel safety never prunes
 downstream impact reconciliation.
 
+## Milestone families
+
+Keep the original delivery outcome stable. Small directly related fixes stay in
+the current task. Substantial required repairs belong in amendment records;
+optional features, broader coverage and environment conveniences belong in
+option records. An amendment identifies the original unmet requirement, evidence
+and why a simpler implementation or verification route cannot meet it. External
+testing-tool repair is optional unless the owner explicitly promotes it, even
+under `CORRECTIVE_PLANNING: auto`. A failed testing method alone does not prove a
+product defect. Mocks cannot prove unexecuted real acceptance; missing original
+requirements need repair or an explicit owner disposition.
+
+Each child owns its specification, task table and review in one file under
+`tabilet/memory-bank/`, using the child names in
+[Status ID Pattern](#status-id-pattern). Its first heading is a level-two heading
+containing its child ID and title, followed by exactly one unfenced `Parent:`
+declaration naming the root ID; ordinary Markdown bold and trailing whitespace
+are accepted. Subsection headings are allowed. Keep concise links in the parent
+and roadmap instead of duplicate specifications. An initial option may be a
+short finding without rows; required amendments and selected options need full
+scope, acceptance, tasks and ordinary review. Reclassification needs an explicit
+owner decision, preserved lineage and a fresh ID.
+
+Finish independent parent work, then required amendments, then resume deferred
+parent acceptance and its final review. Affected rows remain `[!]` with the
+amendment IDs and resumption conditions. Preserve completed work, evidence and
+review counters. `Parent:` is a relationship, never a dependency on a completed
+parent; avoid circular edges. Each child has its own review, which cannot replace
+the parent's review or reset its persisted ten-iteration limit. Keep detailed
+state in the owning record and Git history, not dated AGENTS prose.
+
+`OPTION_POLICY: confirm` is the default; `ignore` leaves options deferred during
+the goal. During parent execution, record optional findings briefly without
+detailed planning, repeated inspection or implementation. Under `confirm`,
+consolidate useful options after parent closure and present one proposed batch
+for actual owner approval. Under `ignore`, omit refinement, prompts and execution
+throughout that goal. Options never block parent closure, and approval enters a
+new execution horizon without reopening the parent. Neither option policy nor
+launch refresh expands authority or budgets. An explicit request may select named
+options later. Next stays within its selected task.
+
+For multi-milestone execution, use the selected goal protocol's family ordering:
+strict `STATUS_ORDER` keeps the parent and required active amendments contiguous
+before downstream work; `STATUS_PRIORITY` adds no ordering edges. Required children
+inherit parent dispatch priority while ordinary dependencies, frozen inputs and
+write ownership still apply. A claimed option still owns the in-progress slot.
+The standalone API loop indexes options but cannot select them; explicit controller
+execution needs an approved horizon binding each actual child path and any
+`resume_after` amendment blockers. It never imports Goal grants or expands that
+horizon automatically. Parent resumption requires accepted prerequisites and all
+other blockers to clear. The existing Stage 12 ownership exception still applies.
+
+Retire children under their original filenames and permanent IDs. The literal
+retirement envelope preserves the complete child specification, status and
+`Parent:` declaration; both Source status and Source specification name the child
+file. Earlier rows and specification prose survive a closing-row transition.
+Required amendments must pass acceptance and review before parent retirement;
+deferred options may remain linked to a frozen parent. A declined rowless option
+may retire as cancelled or explicitly superseded with owner Disposition, Review
+`not applicable` and Review iterations `0`. That exception proves no delivery.
+Supersession names an accepted successor retaining the obligations. Frozen
+records are never rewritten to adopt these rules.
+
 ## Historical ledger pointers reconciled — 2026-10-10
 
 A14 is indexed as closed historical under its existing consumer-owned accepted
@@ -326,7 +389,18 @@ Under the optional bundled goal protocol, `AUTHORIZATION_GRANTS` belongs
 to the resolved human-approved request, not to this file. Requirements,
 proposed grants, status notes, and `suggested.txt` are evidence, not approval.
 Check authority before the action; pause affected work and dependents when it
-is missing. Independent authorized work may continue under the governing
+is missing. A changed input to a protected action is changed scope unless the
+selected goal protocol's human-approved standing revision envelope covers it.
+That envelope reaches only bounded, unprivileged workspace-local verification;
+it never covers `sudo`, `ssh`, live browsers, push or other external effects.
+Under strict scope without a standing grant, changed inputs need fresh approval.
+An optional `standing` grant records permitted revisions, fixed boundaries,
+budget, recovery and stop conditions through the selected protocol. Failed and
+cancelled protected runs consume its approved budget. The owner reserves each
+attempt before dispatch, persists usage across resumes and shared leases, and
+never infers a higher limit from a preset. Adopting this guidance activates no
+grant and adds no grant consumption to the Python API runner/controller.
+Independent authorized work may continue under the governing
 order and ownership rules. Required unperformed task or acceptance actions
 prevent closure; listing an action here alone does not require its performance.
 Outside a goal, use the current scoped human request and applicable project
@@ -398,6 +472,12 @@ Task/status files use the lane ID:
 tabilet/memory-bank/status-M01.md
 tabilet/memory-bank/status-M02.md
 ```
+
+Required children use `amend-<parent>-<NN>.md`; optional children use
+`option-<parent>-<NN>.md`. Both kinds share one permanent zero-padded `01`–`99`
+child sequence per root parent across active and retired records. Reserve those
+IDs independently of archive IDs. No recursive child families, silent renaming
+or ID reuse is allowed. Root status naming and lane meanings remain unchanged.
 
 Lane meanings:
 
@@ -631,7 +711,9 @@ per run. For a row whose acceptance depends on one:
 - Each expensive run is one attempt. Persist the row's attempt count in its
   status notes; a session change does not reset it. Stop after three
   consecutive failed attempts at the same stage (or the limit the milestone
-  sets), or when the failing stage lies outside the behavior the milestone owns.
+  or a human-approved goal budget sets), or when the failing stage lies outside
+  the behavior the milestone owns. Before each counted attempt, run the fast
+  preflight in the [acceptance-readiness rule](tech-stack.md#verification-and-testing-standards).
   Mark the row `[!]` with a short diagnosis and options, such as a correction, a
   rescope or an environment change, and ask the user. Approval to continue sets
   a new explicit limit. Never repeat an unchanged failed attempt.
